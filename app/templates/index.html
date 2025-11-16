@@ -9,25 +9,32 @@
     body { margin: 24px; background: #0b0e11; color: #e6e6e6; }
     h1 { margin: 0 0 10px 0; }
     .muted { color: #8c95a3; font-size: 13px; margin-bottom: 16px; }
-    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); }
-    .card { background: #14171c; border: 1px solid #232933; border-radius: 12px; padding: 14px; }
-    .row { display: flex; justify-content: space-between; align-items: baseline; }
+    .grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
+    .card { background: #11161d; border: 1px solid #232933; border-radius: 12px; overflow: hidden; }
+    .card-head { padding: 12px 14px; display: flex; justify-content: space-between; align-items: baseline; }
     .sym { font-weight: 700; font-size: 18px; letter-spacing: 0.3px; }
-    .val { font-variant-numeric: tabular-nums; }
-    .bid { color: #6fe6a8; }
-    .ask { color: #ff8a8a; }
-    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-    th, td { padding: 4px 6px; text-align: right; border-bottom: 1px solid #232933; }
-    th { color: #a4acb8; font-weight: 600; }
-    td.empty { color: #6b7280; }
-    .left { text-align: left; }
+    .ref { font-variant-numeric: tabular-nums; color: #cbd5e1; }
+    table { width: 100%; border-collapse: collapse; }
+    thead th { background: #0d131a; color: #9aa6b2; font-weight: 600; padding: 8px 10px; font-size: 13px; }
+    tbody td { padding: 6px 10px; border-top: 1px solid #1c2330; height: 28px; }
+    th.right, td.right { text-align: right; }
+    th.center, td.center { text-align: center; }
+    th.left, td.left { text-align: left; }
+    .price { font-variant-numeric: tabular-nums; letter-spacing: 0.2px; }
+    .qty { position: relative; display: inline-block; min-width: 64px; padding: 2px 8px; border-radius: 8px;
+           font-variant-numeric: tabular-nums; }
+    .qty.bid::before { content: ""; position: absolute; inset: 0; right: 0;
+                       width: calc(var(--pct, 0) * 1%); background: #6fe6a8; opacity: 0.25; border-radius: 8px; }
+    .qty.ask::before { content: ""; position: absolute; inset: 0; left: 0;
+                       width: calc(var(--pct, 0) * 1%); background: #ff8a8a; opacity: 0.25; border-radius: 8px; }
+    .qty.empty { opacity: 0.35; }
     a.btn { color: #0cf; text-decoration: none; }
   </style>
 </head>
 <body>
   <h1>Mini Exchange</h1>
   <div class="muted">
-    Live top-10 order book per symbol (price & qty), plus a periodically refreshed reference price.
+    Top-10 ladder per side, with a centered price column. Qty pills scale with size.
     — <a class="btn" href="/docs">Open API docs</a>
   </div>
 
