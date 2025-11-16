@@ -138,6 +138,7 @@ def login_json(
     token = create_token(user.id)
     return {"access_token": token, "token_type": "bearer"}
 
+
 @router.get("/session/token")
 def session_token(user: User = Depends(current_user)):
     """Get a fresh token using your current cookie session."""
