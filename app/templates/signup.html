@@ -2,65 +2,33 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Mini Exchange</title>
+  <title>Sign up · Mini Exchange</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    body { margin: 24px; background: #0b0e11; color: #e6e6e6; }
-    h1 { margin: 0 0 10px 0; }
-    .topbar { display:flex; gap:16px; align-items:baseline; justify-content:space-between; }
-    .muted { color: #8c95a3; font-size: 13px; margin-bottom: 16px; }
-    .grid { display: grid; gap: 14px; grid-template-columns: 1fr 1fr; }
-    .gridCards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); }
-    .card { background: #11161d; border: 1px solid #232933; border-radius: 12px; overflow: hidden; }
-    .card-head { padding: 12px 14px; display: flex; justify-content: space-between; align-items: baseline; }
-    .sym { font-weight: 700; font-size: 18px; letter-spacing: 0.3px; }
-    .ref { font-variant-numeric: tabular-nums; color: #cbd5e1; }
-    table { width: 100%; border-collapse: collapse; }
-    thead th { background: #0d131a; color: #9aa6b2; font-weight: 600; padding: 8px 10px; font-size: 13px; }
-    tbody td { padding: 6px 10px; border-top: 1px solid #1c2330; height: 28px; }
-    th.right, td.right { text-align: right; }
-    th.center, td.center { text-align: center; }
-    th.left, td.left { text-align: left; }
-    .price { font-variant-numeric: tabular-nums; letter-spacing: 0.2px; }
-    .qty { position: relative; display: inline-block; min-width: 64px; padding: 2px 8px; border-radius: 8px;
-           font-variant-numeric: tabular-nums; }
-    .qty.bid::before { content: ""; position: absolute; inset: 0; right: 0; width: calc(var(--pct, 0) * 1%); background: #6fe6a8; opacity: 0.25; border-radius: 8px; }
-    .qty.ask::before { content: ""; position: absolute; inset: 0; left: 0; width: calc(var(--pct, 0) * 1%); background: #ff8a8a; opacity: 0.25; border-radius: 8px; }
-    .qty.empty { opacity: 0.35; }
-    .pbox { background:#11161d; border:1px solid #232933; border-radius:12px; padding:14px; }
-    .btn { color:#0cf; text-decoration:none; }
-    .logout { background:#232933; color:#e6e6e6; border:0; padding:6px 10px; border-radius:8px; cursor:pointer; }
-    .ok { color:#6fe6a8; } .bad { color:#ff8a8a; }
+    body { background:#0b0e11; color:#e6e6e6; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
+    .card { background:#11161d; border:1px solid #232933; border-radius:12px; padding:22px; width:320px; }
+    h2 { margin: 0 0 10px 0; }
+    label { display:block; margin:10px 0 6px; color:#9aa6b2; }
+    input { width:100%; padding:10px; border-radius:8px; border:1px solid #232933; background:#0d131a; color:#e6e6e6; }
+    button { margin-top:14px; width:100%; padding:10px; border-radius:8px; border:0; background:#6fe6a8; color:#001018; font-weight:700; cursor:pointer; }
+    .muted { color:#8c95a3; font-size:13px; margin-top:8px; }
+    .err { color:#ff8a8a; margin-top:8px; }
+    a { color:#0cf; }
   </style>
 </head>
 <body>
-  <div class="topbar">
-    <h1>Mini Exchange</h1>
-    <div id="authbox">
-      <!-- filled by JS: login/signup links or username + logout -->
-    </div>
+  <div class="card">
+    <h2>Create account</h2>
+    {% if error %}<div class="err">{{error}}</div>{% endif %}
+    <form method="post" action="/signup">
+      <label>Username</label>
+      <input name="username" required />
+      <label>Password</label>
+      <input name="password" type="password" required />
+      <button type="submit">Sign up</button>
+    </form>
+    <div class="muted">Already have an account? <a href="/login">Sign in</a></div>
   </div>
-  <div class="muted">
-    Top-10 ladder per symbol + your live PnL/position when logged in. — <a class="btn" href="/docs">API docs</a>
-  </div>
-
-  <div class="grid">
-    <div class="pbox">
-      <h3>Your Positions</h3>
-      <div id="mebox">
-        <div class="muted">Sign in to see your PnL and place orders.</div>
-      </div>
-    </div>
-    <div></div>
-  </div>
-
-  <div id="root"
-       data-symbols='{{ symbols_json | safe }}'
-       data-depth='{{ depth }}'>
-    <div id="gridCards" class="gridCards"></div>
-  </div>
-
-  <script src="/static/dashboard.js"></script>
 </body>
 </html>
