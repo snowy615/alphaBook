@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.order_book import OrderBook, Order
 from app.schemas import OrderIn, Ack, PriceOut
-from app.market_data import poll_prices, get_last
+from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
 from app.db import init_db
 from app.auth import router as auth_router, current_user
 from app.models import User
@@ -41,7 +41,10 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
 @app.on_event("startup")
 async def _startup():
     init_db()
-    asyncio.create_task(poll_prices(DEFAULT_SYMBOLS, interval_sec=60))
+    # Start the reference price engine:
+    # - fast synthetic ticks every 1.5s
+    # - rotate official fetches one symbol every 180s (3m)
+    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
 
 # ---------------------- PnL helpers ----------------------
 def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
@@ -73,7 +76,7 @@ def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
 def _metrics_for(user_id: int):
     out = {}
     for sym, p in positions[user_id].items():
-        ref = get_last(sym)
+        ref = get_ref_price(sym)
         qty, avg, realized = p["qty"], p["avg"], p["realized"]
         unreal = Decimal("0") if ref is None or qty == 0 else (Decimal(str(ref)) - avg) * qty
         total = realized + unreal
@@ -95,8 +98,8 @@ def home(request: Request):
         "index.html",
         {
             "request": request,
-            "symbols": DEFAULT_SYMBOLS,              # pass list for server-render
-            "symbols_json": json.dumps(DEFAULT_SYMBOLS),  # also pass JSON for JS
+            "symbols": DEFAULT_SYMBOLS,                   # server-render skeleton
+            "symbols_json": json.dumps(DEFAULT_SYMBOLS), # data for inline JS
             "depth": TOP_DEPTH,
         },
     )
@@ -112,7 +115,7 @@ def health():
 
 @app.get("/reference/{symbol}", response_model=PriceOut)
 def get_reference(symbol: str):
-    return PriceOut(symbol=symbol, price=get_last(symbol))
+    return PriceOut(symbol=symbol, price=get_ref_price(symbol))
 
 @app.get("/book/{symbol}")
 def get_book(symbol: str):
@@ -125,7 +128,7 @@ def me_metrics(user: User = Depends(current_user)):
 
 @app.post("/orders", response_model=Ack)
 async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
-    symbol = order_in.symbol
+    symbol = order_in.symbol.upper()
     book = books[symbol]
     lock = locks[symbol]
     order = Order(
@@ -139,13 +142,35 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
         fills = book.add(order)
         snap = book.snapshot(depth=TOP_DEPTH)
 
+    # Update per-user positions based on fills
     for tr in fills:
         px, q = tr["price"], tr["qty"]
         buyer_id, seller_id = int(tr["buyer_id"]), int(tr["seller_id"])
         _apply_buy(positions[buyer_id][symbol], px, q)
         _apply_sell(positions[seller_id][symbol], px, q)
 
-    await _broadcast(symbol, {"type": "snapshot", "symbol": symbol, "book": snap, "ref_price": get_last(symbol)})
+    # Feed mid-price hint to the synthetic engine (helps smooth ref price)
+    try:
+        bids = snap.get("bids", [])
+        asks = snap.get("asks", [])
+        if bids and asks:
+            bb = float(bids[0]["px"])
+            aa = float(asks[0]["px"])
+            mid = (bb + aa) / 2.0
+            set_hint_mid(symbol, mid)
+    except Exception:
+        pass
+
+    # Broadcast book + current synthetic ref price
+    await _broadcast(
+        symbol,
+        {
+            "type": "snapshot",
+            "symbol": symbol,
+            "book": snap,
+            "ref_price": get_ref_price(symbol),
+        },
+    )
 
     return Ack(
         order_id=order.id,
@@ -156,13 +181,14 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
 # -------------------- WebSocket & broadcast -----------------------
 @app.websocket("/ws/book/{symbol}")
 async def ws_book(ws: WebSocket, symbol: str):
+    symbol = symbol.upper()
     await ws.accept()
     subscribers[symbol].add(ws)
     await ws.send_json({
         "type": "snapshot",
         "symbol": symbol,
         "book": books[symbol].snapshot(depth=TOP_DEPTH),
-        "ref_price": get_last(symbol),
+        "ref_price": get_ref_price(symbol),
     })
     try:
         while True:

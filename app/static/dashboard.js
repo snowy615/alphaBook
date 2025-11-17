@@ -93,7 +93,7 @@
     symbols.forEach((sym) => {
       connectWS(sym);
       pollRef(sym);
-      setInterval(() => pollRef(sym), 60000);
+      setInterval(() => pollRef(sym), 1500);
     });
   }
 

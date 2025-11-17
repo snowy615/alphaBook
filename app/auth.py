@@ -1,4 +1,3 @@
-# app/auth.py
 from __future__ import annotations
 import os, datetime as dt, logging
 from typing import Optional
@@ -6,16 +5,16 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
 from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from passlib.context import CryptContext
 from sqlmodel import select, Session
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.db import get_session
 from app.models import User
 
+# ----- config -----
 log = logging.getLogger("auth")
-
 SECRET_KEY = os.getenv("SECRET_KEY", "devsecret_change_me")
 ALGORITHM = "HS256"
 COOKIE_NAME = "session"
@@ -24,12 +23,14 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 # Use PBKDF2-SHA256 to avoid bcrypt platform issues & 72-byte limit
 pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
-# Bearer auth support for Swagger (/docs)
+# Cookie + Bearer support
 http_bearer = HTTPBearer(auto_error=False)
 
+# ----- exports for main.py -----
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
+# ----- helpers -----
 def hash_pw(p: str) -> str:
     return pwd.hash(p)
 
@@ -54,9 +55,9 @@ async def current_user(
     creds: HTTPAuthorizationCredentials = Depends(http_bearer),
     session: Session = Depends(get_session),
 ) -> User:
-    # 1) Try cookie
+    # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
-    # 2) Fallback to Authorization: Bearer <token>
+    # 2) Bearer
     if not token and creds and creds.scheme.lower() == "bearer":
         token = creds.credentials
     if not token:
@@ -66,8 +67,7 @@ async def current_user(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
     return user
 
-# ---------------------- HTML forms ----------------------
-
+# ----- HTML forms -----
 @router.get("/signup", include_in_schema=False)
 def signup_form(request: Request):
     return templates.TemplateResponse("signup.html", {"request": request, "error": None})
@@ -85,7 +85,6 @@ def signup_submit(
             return templates.TemplateResponse("signup.html", {"request": request, "error": "Username already exists"})
         user = User(username=username, password_hash=hash_pw(password))
         session.add(user); session.commit(); session.refresh(user)
-
         token = create_token(user.id)
         resp = RedirectResponse(url="/", status_code=302)
         resp.set_cookie(COOKIE_NAME, token, httponly=True, samesite="lax", max_age=COOKIE_MAX_AGE, path="/")
@@ -123,25 +122,21 @@ def logout():
     resp.delete_cookie(COOKIE_NAME, path="/")
     return resp
 
-# ---------------------- JSON helpers for Swagger ----------------------
-
+# ----- JSON helpers (great for /docs) -----
 @router.post("/login/json")
 def login_json(
     username: str = Form(...),
     password: str = Form(...),
     session: Session = Depends(get_session),
 ):
-    """Login via form fields and get a bearer token (for /docs Authorize)."""
     user = session.exec(select(User).where(User.username == username)).first()
     if not user or not verify_pw(password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid credentials")
     token = create_token(user.id)
     return {"access_token": token, "token_type": "bearer"}
 
-
 @router.get("/session/token")
 def session_token(user: User = Depends(current_user)):
-    """Get a fresh token using your current cookie session."""
     return {"access_token": create_token(user.id), "token_type": "bearer"}
 
 @router.get("/whoami", include_in_schema=False)
