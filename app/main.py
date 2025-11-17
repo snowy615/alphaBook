@@ -1,10 +1,8 @@
-import asyncio
-import uuid
-import json
+from pathlib import Path
+import asyncio, uuid, json
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
-from pathlib import Path
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
 from fastapi.templating import Jinja2Templates
@@ -17,23 +15,19 @@ from app.db import init_db
 from app.auth import router as auth_router, current_user
 from app.models import User
 
-app = FastAPI(title="Mini Exchange (Python)")
+app = FastAPI(title="AlphaBook")  # ✅ rename
 
-# --- Robust paths so templates/static are always found ---
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 
-# Symbols and ladder depth
 DEFAULT_SYMBOLS: List[str] = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 TOP_DEPTH: int = 10
 
-# In-memory order books & subscribers
 books: Dict[str, OrderBook] = defaultdict(OrderBook)
 locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 subscribers: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-# Per-user positions {user_id: {symbol: {"qty","avg","realized"}}}
 positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
     lambda: defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
 )
@@ -41,12 +35,9 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
 @app.on_event("startup")
 async def _startup():
     init_db()
-    # Start the reference price engine:
-    # - fast synthetic ticks every 1.5s
-    # - rotate official fetches one symbol every 180s (3m)
     asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
 
-# ---------------------- PnL helpers ----------------------
+# ---- PnL helpers (unchanged) ----
 def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
     q, avg, realized = pos["qty"], pos["avg"], pos["realized"]
     if q >= 0:
@@ -55,7 +46,7 @@ def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["qty"] = new_q
     else:
         close = min(qty, -q)
-        pos["realized"] = realized + (avg - price) * close  # closing short
+        pos["realized"] = realized + (avg - price) * close
         q += qty
         pos["qty"] = q
         pos["avg"] = Decimal("0") if q == 0 else price
@@ -68,15 +59,16 @@ def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["qty"] = new_q
     else:
         close = min(qty, q)
-        pos["realized"] = realized + (price - avg) * close  # closing long
+        pos["realized"] = realized + (price - avg) * close
         q -= qty
         pos["qty"] = q
         pos["avg"] = Decimal("0") if q == 0 else price
 
 def _metrics_for(user_id: int):
+    from app.market_data import get_last
     out = {}
     for sym, p in positions[user_id].items():
-        ref = get_ref_price(sym)
+        ref = get_last(sym)
         qty, avg, realized = p["qty"], p["avg"], p["realized"]
         unreal = Decimal("0") if ref is None or qty == 0 else (Decimal(str(ref)) - avg) * qty
         total = realized + unreal
@@ -91,20 +83,21 @@ def _metrics_for(user_id: int):
         }
     return out
 
-# ---------------------- Home (server renders placeholders) ----------------------
+# ---- Pages ----
 @app.get("/", include_in_schema=False)
 def home(request: Request):
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
-            "symbols": DEFAULT_SYMBOLS,                   # server-render skeleton
-            "symbols_json": json.dumps(DEFAULT_SYMBOLS), # data for inline JS
+            "app_name": "AlphaBook",  # ✅ for header/SEO
+            "symbols": DEFAULT_SYMBOLS,
+            "symbols_json": json.dumps(DEFAULT_SYMBOLS),
             "depth": TOP_DEPTH,
         },
     )
 
-# ----------------------- Utility Endpoints ------------------------
+# ---- Utils ----
 @app.get("/symbols")
 def get_symbols():
     return {"symbols": DEFAULT_SYMBOLS}
@@ -121,14 +114,14 @@ def get_reference(symbol: str):
 def get_book(symbol: str):
     return books[symbol].snapshot(depth=TOP_DEPTH)
 
-# ------- Auth-protected: current user metrics & place order -------
+# ---- Auth protected ----
 @app.get("/me/metrics")
 def me_metrics(user: User = Depends(current_user)):
     return {"user": user.username, "metrics": _metrics_for(user.id)}
 
 @app.post("/orders", response_model=Ack)
 async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
-    symbol = order_in.symbol.upper()
+    symbol = order_in.symbol
     book = books[symbol]
     lock = locks[symbol]
     order = Order(
@@ -142,35 +135,28 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
         fills = book.add(order)
         snap = book.snapshot(depth=TOP_DEPTH)
 
-    # Update per-user positions based on fills
     for tr in fills:
         px, q = tr["price"], tr["qty"]
         buyer_id, seller_id = int(tr["buyer_id"]), int(tr["seller_id"])
         _apply_buy(positions[buyer_id][symbol], px, q)
         _apply_sell(positions[seller_id][symbol], px, q)
 
-    # Feed mid-price hint to the synthetic engine (helps smooth ref price)
     try:
         bids = snap.get("bids", [])
         asks = snap.get("asks", [])
         if bids and asks:
             bb = float(bids[0]["px"])
             aa = float(asks[0]["px"])
-            mid = (bb + aa) / 2.0
-            set_hint_mid(symbol, mid)
+            set_hint_mid(symbol, (bb + aa) / 2.0)
     except Exception:
         pass
 
-    # Broadcast book + current synthetic ref price
-    await _broadcast(
-        symbol,
-        {
-            "type": "snapshot",
-            "symbol": symbol,
-            "book": snap,
-            "ref_price": get_ref_price(symbol),
-        },
-    )
+    await _broadcast(symbol, {
+        "type": "snapshot",
+        "symbol": symbol,
+        "book": snap,
+        "ref_price": get_ref_price(symbol),
+    })
 
     return Ack(
         order_id=order.id,
@@ -178,10 +164,9 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
         snapshot=snap,
     )
 
-# -------------------- WebSocket & broadcast -----------------------
+# ---- WebSocket ----
 @app.websocket("/ws/book/{symbol}")
 async def ws_book(ws: WebSocket, symbol: str):
-    symbol = symbol.upper()
     await ws.accept()
     subscribers[symbol].add(ws)
     await ws.send_json({
@@ -208,5 +193,5 @@ async def _broadcast(symbol: str, payload: dict):
     for ws in dead:
         subscribers[symbol].discard(ws)
 
-# -------------------- Auth routes (signup/login/logout) -----------
+# ---- Auth routes ----
 app.include_router(auth_router)
