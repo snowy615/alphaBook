@@ -1,12 +1,27 @@
 (function () {
-  const grid = document.getElementById("grid");
+  "use strict";
+
+  // ---------- tiny helpers ----------
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+  const fmt = (n) => {
+    if (n === null || n === undefined) return "--";
+    const v = +n;
+    if (!isFinite(v)) return "--";
+    if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  };
+
+  // ---------- globals from template ----------
+  const grid = $("#grid");
   const DEPTH = window.TOP_DEPTH || 10;
-  const SYMS = (window.SYMBOLS || []).map(s => s.toUpperCase());
+  const SYMS = (window.SYMBOLS || []).map((s) => String(s || "").toUpperCase());
 
-  // --- State for refs so we can prefill order price
-  const lastRef = Object.create(null);
+  // ---------- app state ----------
+  const lastRef = Object.create(null);     // latest ref price per symbol
+  let isAuthed = false;                    // login state (set by initAuthUI)
 
-  // Build a card with a single aligned ladder (asks block, mid row, bids block)
+  // ---------- build cards & connect streams ----------
   for (const sym of SYMS) {
     const el = document.createElement("article");
     el.className = "card";
@@ -36,12 +51,9 @@
     connect(sym);
   }
 
-  function fmt(n) {
-    if (n === null || n === undefined) return "--";
-    const v = +n;
-    if (!isFinite(v)) return "--";
-    if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
+  function setMeta(sym, text) {
+    const el = document.getElementById(`meta-${sym}`);
+    if (el) el.textContent = text;
   }
 
   function setRef(sym, price) {
@@ -59,11 +71,6 @@
     }
   }
 
-  function setMeta(sym, text) {
-    const el = document.getElementById(`meta-${sym}`);
-    if (el) el.textContent = text;
-  }
-
   // Render aligned ladder: asks (worst->best), mid row, bids (best->worst)
   function renderLadder(sym, book) {
     const body = document.getElementById(`ladder-body-${sym}`);
@@ -78,6 +85,10 @@
       const a = asks[i];
       const tr = document.createElement("tr");
       tr.className = "row-ask";
+      tr.dataset.sym = sym;
+      tr.dataset.px = a.px;
+      tr.dataset.qty = a.qty;
+      tr.dataset.side = "BUY"; // clicking an ask defaults to BUY at ask px
       tr.innerHTML = `
         <td>${fmt(a.qty)}</td>
         <td>${fmt(a.px)}</td>
@@ -108,6 +119,10 @@
       const b = bids[i];
       const tr = document.createElement("tr");
       tr.className = "row-bid";
+      tr.dataset.sym = sym;
+      tr.dataset.px = b.px;
+      tr.dataset.qty = b.qty;
+      tr.dataset.side = "SELL"; // clicking a bid defaults to SELL at bid px
       tr.innerHTML = `
         <td></td>
         <td></td>
@@ -120,7 +135,8 @@
   }
 
   function connect(sym) {
-    const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/book/${sym}`);
+    const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws/book/${sym}`;
+    const ws = new WebSocket(url);
     ws.onopen = () => setMeta(sym, "connected • live");
     ws.onmessage = (msg) => {
       try {
@@ -128,104 +144,204 @@
         if (data.type === "snapshot") {
           renderLadder(sym, data.book);
           setRef(sym, data.ref_price);
-          const ts = new Date().toLocaleTimeString();
-          setMeta(sym, `updated ${ts}`);
+          setMeta(sym, `updated ${new Date().toLocaleTimeString()}`);
         }
       } catch (e) {
         console.error(e);
       }
     };
-    ws.onclose = () => setMeta(sym, "disconnected — retrying…") || setTimeout(() => connect(sym), 1500);
+    ws.onclose = () => {
+      setMeta(sym, "disconnected — retrying…");
+      setTimeout(() => connect(sym), 1500);
+    };
     ws.onerror = () => ws.close();
   }
 
-  // ----- Order modal & submission -----
-  const dlg = document.getElementById("order-modal");
-  const openBtn = document.getElementById("open-order");
-  const closeBtn = document.getElementById("close-order");
-  const cancelBtn = document.getElementById("cancel-order");
-  const form = document.getElementById("order-form");
-  const selSym = document.getElementById("ord-symbol");
-  const inpPx = document.getElementById("ord-price");
-  const inpQty = document.getElementById("ord-qty");
-  const hint = document.getElementById("ord-hint");
+  // ---------- Order modal & submission ----------
+  const dlg = $("#order-modal");
+  const openBtn = $("#open-order");
+  const closeBtn = $("#close-order");
+  const cancelBtn = $("#cancel-order");
+  const form = $("#order-form");
+  const selSym = $("#ord-symbol");
+  const inpPx = $("#ord-price");
+  const inpQty = $("#ord-qty");
+  const hint = $("#ord-hint");
 
   // populate symbol list
-  (window.SYMBOLS || []).forEach(s => {
+  (window.SYMBOLS || []).forEach((s) => {
     const opt = document.createElement("option");
-    opt.value = opt.textContent = s.toUpperCase();
+    opt.value = opt.textContent = String(s || "").toUpperCase();
     selSym.appendChild(opt);
   });
 
-  function prefill() {
-    const sym = selSym.value;
+  function prefill(sideFromClick) {
+    const sym = selSym.value || SYMS[0] || "";
     const ref = lastRef[sym];
-    if (ref != null && isFinite(ref)) {
-      inpPx.value = Number(ref).toFixed(4);
-    }
+    if (ref != null && isFinite(ref)) inpPx.value = Number(ref).toFixed(4);
     if (!inpQty.value) inpQty.value = "1";
+    if (sideFromClick) {
+      const radio = form.querySelector(`input[name="side"][value="${sideFromClick}"]`);
+      if (radio) radio.checked = true;
+    }
     hint.textContent = `Tip: price defaults to current ref for ${sym}.`;
   }
 
-  openBtn?.addEventListener("click", () => { if (!dlg.open) { prefill(); dlg.showModal(); } });
+  // open modal: guard if not authed (optional UX)
+  openBtn?.addEventListener("click", () => {
+    if (!isAuthed) {
+      // You can remove this guard if you prefer relying on the server 401 only.
+      location.href = "/login";
+      return;
+    }
+    if (!dlg.open) { prefill(); dlg.showModal(); }
+  });
   closeBtn?.addEventListener("click", () => dlg.close());
   cancelBtn?.addEventListener("click", () => dlg.close());
   selSym?.addEventListener("change", prefill);
 
+  // click any row to prefill (and open modal)
+  grid.addEventListener("click", (e) => {
+    const tr = e.target && (e.target.closest("tr.row-ask") || e.target.closest("tr.row-bid"));
+    if (!tr) return;
+    const sym = tr.dataset.sym;
+    const px = parseFloat(tr.dataset.px || "NaN");
+    const side = tr.dataset.side || "BUY";
+    if (!sym || !isFinite(px)) return;
+
+    selSym.value = sym;
+    inpPx.value = px.toFixed(4);
+    inpQty.value ||= "1";
+    const radio = form.querySelector(`input[name="side"][value="${side}"]`);
+    if (radio) radio.checked = true;
+
+    if (!isAuthed) { location.href = "/login"; return; }
+    if (!dlg.open) dlg.showModal();
+  });
+
   form?.addEventListener("submit", async (e) => {
-  e.preventDefault();
+    e.preventDefault();
 
-  const formData = new FormData(form);
-  const side = String(formData.get("side") || "BUY").toUpperCase();
+    const fd = new FormData(form);
+    const side = String(fd.get("side") || "BUY").toUpperCase();
+    const priceNum = parseFloat(inpPx.value);
+    const qtyNum = parseFloat(inpQty.value);
 
-  // Pydantic wants strings for price/qty; also include a dummy user_id.
-  const priceNum = parseFloat(inpPx.value);
-  const qtyNum = parseFloat(inpQty.value);
+    if (!isFinite(priceNum) || !isFinite(qtyNum) || qtyNum <= 0) {
+      hint.textContent = "Please enter a valid price and quantity.";
+      return;
+    }
 
-  if (!isFinite(priceNum) || !isFinite(qtyNum) || qtyNum <= 0) {
-    hint.textContent = "Please enter a valid price and quantity.";
-    return;
-  }
+    const payload = {
+      user_id: "browser",                 // your server ignores/overwrites this
+      symbol: selSym.value,
+      side,                               // "BUY" | "SELL"
+      price: String(priceNum.toFixed(4)), // strings for Pydantic
+      qty: String(qtyNum)
+    };
 
-  const payload = {
-    user_id: "browser",                 // required by OrderIn (ignored by server logic)
-    symbol: selSym.value,
-    side,                               // "BUY" | "SELL"
-    price: String(priceNum.toFixed(4)), // strings, not numbers
-    qty: String(qtyNum)                 // string
-  };
+    hint.textContent = "Submitting…";
+    try {
+      const res = await fetch("/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin"
+      });
 
-  hint.textContent = "Submitting…";
-  try {
-    const res = await fetch("/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      credentials: "same-origin"
+      if (res.status === 401) {
+        hint.textContent = "You need to log in to place orders.";
+        setTimeout(() => (location.href = "/login"), 800);
+        return;
+      }
+
+      const text = await res.text();
+      if (!res.ok) {
+        hint.textContent = "Error: " + (text || res.status);
+        return;
+      }
+
+      const ack = JSON.parse(text);
+      hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
+      inpQty.value = "";
+      setTimeout(() => dlg.close(), 700);
+    } catch (err) {
+      console.error(err);
+      hint.textContent = "Network error submitting order.";
+    }
+  });
+
+  // ---------- Auth header UI ----------
+  async function initAuthUI() {
+    const actions = $("header .actions");
+    if (!actions) return;
+
+    // Existing links/buttons
+    const loginLink = actions.querySelector('a[href="/login"]');
+    const signupLink = actions.querySelector('a[href="/signup"]');
+    const submitBtn = actions.querySelector("#open-order");
+
+    // Create a user block (inserted dynamically so you don't have to edit the template)
+    let userBlock = $("#auth-user-block");
+    if (!userBlock) {
+      userBlock = document.createElement("span");
+      userBlock.id = "auth-user-block";
+      userBlock.className = "hidden";
+      userBlock.style.display = "inline-flex";
+      userBlock.style.alignItems = "center";
+      userBlock.style.gap = "8px";
+      userBlock.innerHTML = `
+        <span id="auth-welcome" class="subtitle"></span>
+        <a class="btn ghost" id="logout-link" href="/logout">Log out</a>
+      `;
+      // Insert before "Submit Order" for a nice layout
+      if (submitBtn) actions.insertBefore(userBlock, submitBtn);
+      else actions.appendChild(userBlock);
+    }
+
+    function showGuest() {
+      isAuthed = false;
+      userBlock.classList.add("hidden");
+      loginLink && loginLink.classList.remove("hidden");
+      signupLink && signupLink.classList.remove("hidden");
+    }
+
+    function showUser(nameLike) {
+      isAuthed = true;
+      const welcome = $("#auth-welcome");
+      if (welcome) welcome.textContent = `Hi, ${nameLike}`;
+      userBlock.classList.remove("hidden");
+      loginLink && loginLink.classList.add("hidden");
+      signupLink && signupLink.classList.add("hidden");
+    }
+
+    // Check session — prefer /me; fall back to showing guest if it errors
+    try {
+      const res = await fetch("/me", { credentials: "include" });
+      if (!res.ok) return showGuest();
+      let data = null, txt = await res.text();
+      try { data = JSON.parse(txt); } catch { /* maybe HTML */ }
+      const nameLike = (data && (data.name || data.username || data.email || data.user || data.id)) || "user";
+      showUser(String(nameLike));
+    } catch {
+      showGuest();
+    }
+
+    // Optional: make logout a POST if your server expects it
+    const logoutLink = $("#logout-link");
+    logoutLink?.addEventListener("click", async (e) => {
+      // If your server supports GET /logout, remove this block.
+      e.preventDefault();
+      try {
+        const res = await fetch("/logout", { method: "POST", credentials: "include" });
+        if (res.ok) location.href = "/";
+        else location.href = "/logout"; // fallback to GET
+      } catch {
+        location.href = "/logout";
+      }
     });
-
-    if (res.status === 401) {
-      hint.textContent = "You need to log in to place orders.";
-      setTimeout(() => (location.href = "/login"), 800);
-      return;
-    }
-
-    const text = await res.text();
-    if (!res.ok) {
-      // show server validation details if any
-      hint.textContent = "Error: " + (text || res.status);
-      return;
-    }
-
-    const ack = JSON.parse(text);
-    hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
-    // Optional: clear qty; keep price near ref for convenience
-    inpQty.value = "";
-    setTimeout(() => dlg.close(), 700);
-  } catch (err) {
-    console.error(err);
-    hint.textContent = "Network error submitting order.";
   }
-});
 
+  // Kick things off
+  initAuthUI();
 })();

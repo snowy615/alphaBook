@@ -1,3 +1,6 @@
+/* Utility helpers */
+.hidden { display: none !important; }
+
 :root{
   --bg:#0b0e14;
   --panel:#111522;

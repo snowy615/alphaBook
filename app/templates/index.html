@@ -13,14 +13,25 @@
       <div class="logo">A</div>
       <div class="titles">
         <h1>AlphaBook</h1>
-        <span class="subtitle">live reference, books & trades</span>
+        <span class="subtitle">Alpha Fund Quant Bootcamp</span>
       </div>
     </div>
     <nav class="actions">
-      <a class="btn ghost" href="/signup">Sign up</a>
-      <a class="btn ghost" href="/login">Log in</a>
-      <button id="open-order" class="btn primary">Submit Order</button>
-    </nav>
+  <!-- Show when logged OUT -->
+  <div id="loginBox">
+    <a class="btn ghost" href="/signup">Sign up</a>
+    <a class="btn ghost" href="/login">Log in</a>
+  </div>
+
+  <!-- Show when logged IN (toggled by app.js) -->
+  <div id="userBox" class="hidden">
+    <span>Signed in as <strong id="userName"></strong></span>
+    <button id="btnLogout" class="btn ghost">Logout</button>
+  </div>
+
+  <button id="open-order" class="btn primary">Submit Order</button>
+</nav>
+
   </header>
 
   <main class="container">
