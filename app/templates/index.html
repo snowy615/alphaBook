@@ -89,6 +89,37 @@
       </div>
     </section>
 
+        <!-- Open Orders panel -->
+    <section class="container" style="margin-top:8px;">
+      <article class="card" id="orders-card">
+        <div class="head">
+          <div class="sym">My Open Orders</div>
+          <div class="meta"><span id="orders-meta">loading…</span></div>
+        </div>
+
+        <div style="padding: 8px 12px 12px 12px;">
+          <table class="ladder" id="orders-table">
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>Symbol</th>
+                <th>Side</th>
+                <th>Qty</th>
+                <th>Price</th>
+                <th>Status</th>
+                <th>Created</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="orders-body">
+              <tr><td colspan="8" style="text-align:center;color:var(--muted);">No open orders</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+
     <!-- Books grid -->
     <section id="grid" class="grid"></section>
   </main>

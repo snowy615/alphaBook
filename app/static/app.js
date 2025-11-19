@@ -408,6 +408,99 @@
     setInterval(refreshAccount, 5000);
   }
 
+  // ---------------- Open Orders: list + cancel ----------------
+const ordersBody = document.getElementById("orders-body");
+const ordersMeta = document.getElementById("orders-meta");
+
+function renderOrders(rows) {
+  if (!ordersBody) return;
+  ordersBody.innerHTML = "";
+
+  if (!rows || rows.length === 0) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="8" style="text-align:center;color:var(--muted);">No open orders</td>`;
+    ordersBody.appendChild(tr);
+    return;
+  }
+
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const sideCls = (String(r.side).toUpperCase() === "BUY") ? "row-bid" : "row-ask";
+    tr.className = sideCls;
+    tr.innerHTML = `
+      <td>${r.id ?? "--"}</td>
+      <td>${r.symbol ?? "--"}</td>
+      <td>${r.side ?? "--"}</td>
+      <td>${fmt(r.qty)}</td>
+      <td>${fmt(r.price)}</td>
+      <td>${r.status ?? "--"}</td>
+      <td>${r.created_at ? String(r.created_at).replace("T"," ").slice(0,19) : "--"}</td>
+      <td style="text-align:center">
+        <button class="btn ghost" data-oid="${r.id}">Cancel</button>
+      </td>
+    `;
+    ordersBody.appendChild(tr);
+  }
+
+  // wire cancel buttons
+  ordersBody.querySelectorAll("button[data-oid]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const oid = btn.getAttribute("data-oid");
+      if (!oid) return;
+      btn.disabled = true;
+      btn.textContent = "Canceling…";
+      try {
+        const res = await fetch(`/orders/${encodeURIComponent(oid)}`, {
+          method: "DELETE",
+          credentials: "include"
+        });
+        if (!res.ok) {
+          btn.disabled = false;
+          btn.textContent = "Cancel";
+          alert("Cancel failed");
+          return;
+        }
+        // refresh the table
+        loadOrders();
+      } catch {
+        btn.disabled = false;
+        btn.textContent = "Cancel";
+      }
+    });
+  });
+}
+
+async function loadOrders() {
+  if (!ordersMeta) return;
+  try {
+    const t0 = Date.now();
+    const res = await fetch("/me/orders", { credentials: "include" });
+    if (!res.ok) {
+      ordersMeta.textContent = "not signed in";
+      renderOrders([]);
+      return;
+    }
+    const rows = await res.json();
+    renderOrders(rows);
+    ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+  } catch {
+    ordersMeta.textContent = "error loading";
+  }
+}
+
+// poll every few seconds
+loadOrders();
+setInterval(loadOrders, 4000);
+
+// When an order is placed successfully, refresh this panel too.
+// In your existing submit handler, after a successful placement:
+ // ...
+ // const ack = JSON.parse(text);
+ // hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
+ loadOrders();  // <--- add this line
+ // setTimeout(() => dlg.close(), 700);
+
+
   // Kick things off
   initAuthUI();
 })();

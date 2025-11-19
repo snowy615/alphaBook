@@ -2,7 +2,7 @@ from __future__ import annotations
 import time, datetime as dt
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.db import get_session
@@ -156,3 +156,94 @@ def me_pnl(
         pts.append({"t": tms, "y": pnl})
 
     return {"points": pts}
+
+
+# ----------------------- OPEN ORDERS + CANCEL -----------------------
+
+@router.get("/me/orders", include_in_schema=False)
+def my_open_orders(
+    user=Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    List this user's OPEN orders. Works against different schemas by probing
+    common field names and filtering out filled/canceled states.
+    """
+    if _OrderModel is None:
+        return []
+
+    q = select(_OrderModel).where(getattr(_OrderModel, "user_id") == user.id)
+    rows = session.exec(q).all()
+
+    def status_of(o) -> str:
+        s = getattr(o, "status", None) or getattr(o, "state", None) or "NEW"
+        return str(s).upper()
+
+    open_rows = []
+    for o in rows:
+        st = status_of(o)
+        if st in {"CANCELED", "CANCELLED", "FILLED", "DONE", "REJECTED"}:
+            continue
+        open_rows.append({
+            "id": getattr(o, "id", None),
+            "symbol": getattr(o, "symbol", "") or getattr(o, "sym", ""),
+            "side": getattr(o, "side", ""),
+            "qty": float(getattr(o, "qty", 0) or getattr(o, "quantity", 0) or 0),
+            "price": float(getattr(o, "price", 0) or getattr(o, "px", 0) or 0),
+            "status": st,
+            "created_at": str(
+                getattr(o, "created_at", "")
+                or getattr(o, "ts", "")
+                or getattr(o, "created", "")
+                or ""
+            ),
+        })
+
+    return open_rows
+
+
+@router.delete("/orders/{order_id}", include_in_schema=False)
+def cancel_my_order(
+    order_id: int,
+    user=Depends(current_user),
+    session: Session = Depends(get_session),
+):
+    """
+    Cancel a single order owned by the current user. If the order is already
+    terminal (FILLED/CANCELED/etc), returns OK with that status.
+    """
+    if _OrderModel is None:
+        raise HTTPException(status_code=404, detail="Orders not supported")
+
+    o = session.get(_OrderModel, order_id)
+    if not o or getattr(o, "user_id", None) != user.id:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    st = str(getattr(o, "status", "") or getattr(o, "state", "") or "").upper()
+    if st in {"CANCELED", "CANCELLED", "FILLED", "DONE", "REJECTED"}:
+        return {"ok": True, "status": st}
+
+    # Flip common fields to CANCELED
+    if hasattr(o, "status"):
+        setattr(o, "status", "CANCELED")
+    if hasattr(o, "state"):
+        setattr(o, "state", "CANCELED")
+    if hasattr(o, "is_active"):
+        try:
+            setattr(o, "is_active", False)
+        except Exception:
+            pass
+
+    # (optional) try to notify a matching engine if you have one
+    try:
+        from app.matching import cancel_order as engine_cancel  # adjust if present
+        try:
+            engine_cancel(order_id)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+    session.add(o)
+    session.commit()
+    return {"ok": True, "status": "CANCELED"}
