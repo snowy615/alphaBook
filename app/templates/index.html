@@ -16,25 +16,28 @@
         <span class="subtitle">Alpha Fund Quant Bootcamp</span>
       </div>
     </div>
+
     <nav class="actions">
-  <!-- Show when logged OUT -->
-  <div id="loginBox">
-    <a class="btn ghost" href="/signup">Sign up</a>
-    <a class="btn ghost" href="/login">Log in</a>
-  </div>
+      <!-- Show when logged OUT -->
+      <div id="loginBox">
+        <a class="btn ghost" href="/signup">Sign up</a>
+        <a class="btn ghost" href="/login">Log in</a>
+      </div>
 
-  <!-- Show when logged IN (toggled by app.js) -->
-  <div id="userBox" class="hidden">
-    <span>Signed in as <strong id="userName"></strong></span>
-    <button id="btnLogout" class="btn ghost">Logout</button>
-  </div>
+      <!-- Show when logged IN (toggled by JS, or use your existing app.js logic) -->
+      <div id="userBox" class="hidden">
+        <span>Signed in as <strong id="userName"></strong></span>
+        <form action="/logout" method="post" style="display:inline;">
+          <button id="btnLogout" class="btn ghost" type="submit">Logout</button>
+        </form>
+      </div>
 
-  <button id="open-order" class="btn primary">Submit Order</button>
-</nav>
-
+      <button id="open-order" class="btn primary">Submit Order</button>
+    </nav>
   </header>
 
   <main class="container">
+    <!-- Live status -->
     <section class="toolbar">
       <div class="status">
         <span class="dot pulse"></span>
@@ -45,6 +48,48 @@
       </div>
     </section>
 
+    <!-- NEW: P&L / Positions summary strip -->
+    <section id="account" class="account">
+      <div class="metrics">
+        <div class="metric">
+          <div class="label">Position</div>
+          <div class="value">
+            <span id="pos-qty">0</span>
+            @ <span id="pos-avg">--</span>
+          </div>
+        </div>
+        <div class="metric">
+          <div class="label">Notional</div>
+          <div class="value" id="pos-notional">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Delta</div>
+          <div class="value" id="pos-delta">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Day P&L</div>
+          <div class="value" id="pnl-day">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Open P&L</div>
+          <div class="value" id="pnl-open">--</div>
+        </div>
+        <div class="metric">
+          <div class="label">Equity</div>
+          <div class="value">
+            <span id="equity">--</span>
+            <small class="muted"> (cash <span id="cash">--</span>)</small>
+          </div>
+        </div>
+      </div>
+
+      <!-- NEW: Large P&L chart -->
+      <div class="chart-wrap">
+        <canvas id="pnlChart" height="160"></canvas>
+      </div>
+    </section>
+
+    <!-- Books grid -->
     <section id="grid" class="grid"></section>
   </main>
 
@@ -99,6 +144,8 @@
     window.SYMBOLS = {{ symbols_json | safe }};
     window.TOP_DEPTH = {{ depth }};
   </script>
+  <!-- Chart.js for the P&L graph (vendor locally if you prefer) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

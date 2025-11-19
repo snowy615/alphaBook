@@ -14,7 +14,7 @@ from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
 from app.db import init_db
 from app.auth import router as auth_router, current_user
 from app.models import User
-
+from app.me import router as me_router
 
 app = FastAPI(title="AlphaBook")  # ✅ rename
 
@@ -196,3 +196,4 @@ async def _broadcast(symbol: str, payload: dict):
 
 # ---- Auth routes ----
 app.include_router(auth_router)
+app.include_router(me_router)

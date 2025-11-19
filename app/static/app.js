@@ -11,6 +11,12 @@
     if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
     return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
   };
+  const fetchJSON = async (url, init) => {
+    const r = await fetch(url, { credentials: "include", ...init });
+    if (!r.ok) throw new Error(String(r.status));
+    const txt = await r.text();
+    try { return JSON.parse(txt); } catch { return {}; }
+  };
 
   // ---------- globals from template ----------
   const grid = $("#grid");
@@ -19,7 +25,8 @@
 
   // ---------- app state ----------
   const lastRef = Object.create(null);     // latest ref price per symbol
-  let isAuthed = false;                    // login state (set by initAuthUI)
+  let isAuthed = false;                    // login state
+  let pnlChart = null;
 
   // ---------- build cards & connect streams ----------
   for (const sym of SYMS) {
@@ -187,13 +194,8 @@
     hint.textContent = `Tip: price defaults to current ref for ${sym}.`;
   }
 
-  // open modal: guard if not authed (optional UX)
   openBtn?.addEventListener("click", () => {
-    if (!isAuthed) {
-      // You can remove this guard if you prefer relying on the server 401 only.
-      location.href = "/login";
-      return;
-    }
+    if (!isAuthed) { location.href = "/login"; return; }
     if (!dlg.open) { prefill(); dlg.showModal(); }
   });
   closeBtn?.addEventListener("click", () => dlg.close());
@@ -233,10 +235,10 @@
     }
 
     const payload = {
-      user_id: "browser",                 // your server ignores/overwrites this
+      user_id: "browser",
       symbol: selSym.value,
-      side,                               // "BUY" | "SELL"
-      price: String(priceNum.toFixed(4)), // strings for Pydantic
+      side,
+      price: String(priceNum.toFixed(4)),
       qty: String(qtyNum)
     };
 
@@ -256,10 +258,7 @@
       }
 
       const text = await res.text();
-      if (!res.ok) {
-        hint.textContent = "Error: " + (text || res.status);
-        return;
-      }
+      if (!res.ok) { hint.textContent = "Error: " + (text || res.status); return; }
 
       const ack = JSON.parse(text);
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
@@ -271,75 +270,142 @@
     }
   });
 
+  // ---------- Account (positions + P&L) ----------
+  function initPnlChart() {
+    if (pnlChart) return pnlChart;
+    const canvas = $("#pnlChart");
+    if (!canvas || !window.Chart) return null;
+
+    pnlChart = new Chart(canvas.getContext("2d"), {
+      type: "line",
+      data: {
+        datasets: [{
+          label: "P&L",
+          data: [],
+          borderWidth: 2,
+          fill: false,
+          pointRadius: 0,
+          tension: 0.25
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            type: "linear",
+            ticks: {
+              callback: (v) => new Date(+v).toLocaleTimeString()
+            },
+            grid: { display: false }
+          },
+          y: {
+            ticks: { callback: (v) => fmt(v) }
+          }
+        }
+      }
+    });
+    return pnlChart;
+  }
+
+  function normalizePnlSeries(raw) {
+    // Accepts {points:[{t, y}...]} OR array like [[ts,pnl], ...] OR {series:[...]}
+    const pts = raw?.points || raw?.series || raw || [];
+    const out = [];
+    for (const p of pts) {
+      if (!p) continue;
+      if (Array.isArray(p) && p.length >= 2) {
+        const ts = +p[0], y = +p[1];
+        if (isFinite(ts) && isFinite(y)) out.push({ x: ts, y });
+      } else if (typeof p === "object") {
+        const ts = +(p.t ?? p.ts ?? p.time ?? p.x ?? Date.now());
+        const y  = +(p.pnl ?? p.y ?? p.value ?? p.open ?? p.closed ?? p[1] ?? NaN);
+        if (isFinite(ts) && isFinite(y)) out.push({ x: ts, y });
+      }
+    }
+    return out.sort((a,b)=>a.x-b.x);
+  }
+
+  function renderSummary(sum) {
+    // Robustly read totals
+    const totals = sum?.totals || sum || {};
+    const qty = +(totals.qty ?? totals.position_qty ?? 0);
+    const notional = +(totals.notional ?? totals.gross ?? 0);
+    const delta = +(totals.delta ?? 0);
+    const pnlOpen = +(totals.pnl_open ?? totals.unrealized ?? 0);
+    const pnlDay = +(totals.pnl_day ?? totals.daily ?? 0);
+    const avg = +(totals.avg_cost ?? totals.avg ?? NaN);
+    const cash = +(totals.cash ?? NaN);
+    const equity = +(totals.equity ?? (isFinite(cash) ? cash + pnlOpen : NaN));
+
+    $("#pos-qty") && ($("#pos-qty").textContent = fmt(qty));
+    $("#pos-avg") && ($("#pos-avg").textContent = isFinite(avg) ? fmt(avg) : "--");
+    $("#pos-notional") && ($("#pos-notional").textContent = fmt(notional));
+    $("#pos-delta") && ($("#pos-delta").textContent = fmt(delta));
+    $("#pnl-open") && ($("#pnl-open").textContent = fmt(pnlOpen));
+    $("#pnl-day") && ($("#pnl-day").textContent = fmt(pnlDay));
+    $("#cash") && ($("#cash").textContent = isFinite(cash) ? fmt(cash) : "--");
+    $("#equity") && ($("#equity").textContent = isFinite(equity) ? fmt(equity) : "--");
+  }
+
+  async function refreshAccount() {
+    if (!isAuthed) return;
+    try {
+      // Summary
+      const summary = await fetchJSON("/me/summary");
+      renderSummary(summary);
+    } catch (e) {
+      // ignore
+    }
+
+    try {
+      // P&L series
+      const seriesRaw = await fetchJSON("/me/pnl");
+      const series = normalizePnlSeries(seriesRaw);
+      const chart = initPnlChart();
+      if (chart && series.length) {
+        chart.data.datasets[0].data = series;
+        chart.update("none");
+      }
+    } catch (e) {
+      // ignore
+    }
+  }
+
   // ---------- Auth header UI ----------
   async function initAuthUI() {
-    const actions = $("header .actions");
-    if (!actions) return;
-
-    // Existing links/buttons
-    const loginLink = actions.querySelector('a[href="/login"]');
-    const signupLink = actions.querySelector('a[href="/signup"]');
-    const submitBtn = actions.querySelector("#open-order");
-
-    // Create a user block (inserted dynamically so you don't have to edit the template)
-    let userBlock = $("#auth-user-block");
-    if (!userBlock) {
-      userBlock = document.createElement("span");
-      userBlock.id = "auth-user-block";
-      userBlock.className = "hidden";
-      userBlock.style.display = "inline-flex";
-      userBlock.style.alignItems = "center";
-      userBlock.style.gap = "8px";
-      userBlock.innerHTML = `
-        <span id="auth-welcome" class="subtitle"></span>
-        <a class="btn ghost" id="logout-link" href="/logout">Log out</a>
-      `;
-      // Insert before "Submit Order" for a nice layout
-      if (submitBtn) actions.insertBefore(userBlock, submitBtn);
-      else actions.appendChild(userBlock);
-    }
+    const loginBox = $("#loginBox");
+    const userBox = $("#userBox");
+    const userNameEl = $("#userName");
 
     function showGuest() {
       isAuthed = false;
-      userBlock.classList.add("hidden");
-      loginLink && loginLink.classList.remove("hidden");
-      signupLink && signupLink.classList.remove("hidden");
+      if (loginBox) loginBox.classList.remove("hidden");
+      if (userBox) userBox.classList.add("hidden");
+      // hide account strip when logged out
+      const acct = $("#account"); acct && acct.classList.add("hidden");
     }
 
     function showUser(nameLike) {
       isAuthed = true;
-      const welcome = $("#auth-welcome");
-      if (welcome) welcome.textContent = `Hi, ${nameLike}`;
-      userBlock.classList.remove("hidden");
-      loginLink && loginLink.classList.add("hidden");
-      signupLink && signupLink.classList.add("hidden");
+      if (userNameEl) userNameEl.textContent = String(nameLike || "user");
+      if (loginBox) loginBox.classList.add("hidden");
+      if (userBox) userBox.classList.remove("hidden");
+      const acct = $("#account"); acct && acct.classList.remove("hidden");
+      refreshAccount(); // initial fill
     }
 
-    // Check session — prefer /me; fall back to showing guest if it errors
     try {
-      const res = await fetch("/me", { credentials: "include" });
-      if (!res.ok) return showGuest();
-      let data = null, txt = await res.text();
-      try { data = JSON.parse(txt); } catch { /* maybe HTML */ }
-      const nameLike = (data && (data.name || data.username || data.email || data.user || data.id)) || "user";
-      showUser(String(nameLike));
+      const me = await fetchJSON("/me");
+      const nameLike = me?.username || me?.name || me?.email || me?.id || "user";
+      showUser(nameLike);
     } catch {
       showGuest();
     }
 
-    // Optional: make logout a POST if your server expects it
-    const logoutLink = $("#logout-link");
-    logoutLink?.addEventListener("click", async (e) => {
-      // If your server supports GET /logout, remove this block.
-      e.preventDefault();
-      try {
-        const res = await fetch("/logout", { method: "POST", credentials: "include" });
-        if (res.ok) location.href = "/";
-        else location.href = "/logout"; // fallback to GET
-      } catch {
-        location.href = "/logout";
-      }
-    });
+    // Periodic refresh of account when authed
+    setInterval(refreshAccount, 5000);
   }
 
   // Kick things off
