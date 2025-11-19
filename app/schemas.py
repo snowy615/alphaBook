@@ -1,9 +1,10 @@
-
+# app/schemas.py
 from pydantic import BaseModel, Field
 from typing import Literal
 
 class OrderIn(BaseModel):
-    user_id: str
+    # NOTE: user_id is no longer required/accepted from client;
+    # we take the logged-in user from the session.
     symbol: str
     side: Literal["BUY", "SELL"]
     price: str = Field(description="Decimal as string")

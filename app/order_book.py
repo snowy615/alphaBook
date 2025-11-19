@@ -1,8 +1,9 @@
-# app/order_book.py  (REPLACE the file)
-from dataclasses import dataclass
+# app/order_book.py
+from dataclasses import dataclass, field
+from time import time as _now
 from collections import deque
 from decimal import Decimal, getcontext
-from typing import Deque, Dict, List
+from typing import Deque, Dict, List, Optional
 
 getcontext().prec = 28
 
@@ -13,6 +14,15 @@ class Order:
     side: str     # "BUY" or "SELL"
     price: Decimal
     qty: Decimal
+    # NEW: keep the original requested qty so you can show filled/remaining
+    orig_qty: Optional[Decimal] = None
+    # NEW: millisecond timestamp for UI sorting
+    ts: int = field(default_factory=lambda: int(_now() * 1000))
+
+    def __post_init__(self):
+        if self.orig_qty is None:
+            # default to initial qty
+            self.orig_qty = Decimal(self.qty)
 
 class OrderBook:
     def __init__(self):
@@ -68,5 +78,7 @@ class OrderBook:
         def level(px, q: Deque[Order]):
             total = sum(o.qty for o in q)
             return {"px": str(px), "qty": str(total)}
-        return {"bids": [level(px, q) for px, q in bids],
-                "asks": [level(px, q) for px, q in asks]}
+        return {
+            "bids": [level(px, q) for px, q in bids],
+            "asks": [level(px, q) for px, q in asks],
+        }

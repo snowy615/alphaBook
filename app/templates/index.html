@@ -48,7 +48,7 @@
       </div>
     </section>
 
-    <!-- NEW: P&L / Positions summary strip -->
+    <!-- P&L / Positions summary strip -->
     <section id="account" class="account">
       <div class="metrics">
         <div class="metric">
@@ -83,42 +83,36 @@
         </div>
       </div>
 
-      <!-- NEW: Large P&L chart -->
+      <!-- Large P&L chart -->
       <div class="chart-wrap">
         <canvas id="pnlChart" height="160"></canvas>
       </div>
     </section>
 
-        <!-- Open Orders panel -->
-    <section class="container" style="margin-top:8px;">
-      <article class="card" id="orders-card">
-        <div class="head">
-          <div class="sym">My Open Orders</div>
-          <div class="meta"><span id="orders-meta">loading…</span></div>
-        </div>
-
-        <div style="padding: 8px 12px 12px 12px;">
-          <table class="ladder" id="orders-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>Symbol</th>
-                <th>Side</th>
-                <th>Qty</th>
-                <th>Price</th>
-                <th>Status</th>
-                <th>Created</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="orders-body">
-              <tr><td colspan="8" style="text-align:center;color:var(--muted);">No open orders</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </article>
+    <!-- My Open Offers (hidden until logged in) -->
+    <section id="orders-card" class="card hidden">
+      <div class="head">
+        <div class="sym">My Open Offers</div>
+        <div class="ref" id="orders-count">0</div>
+      </div>
+      <div class="meta"><span id="orders-meta">—</span></div>
+      <table class="ladder">
+        <thead>
+          <tr>
+            <th>Side</th>
+            <th>Symbol</th>
+            <th>Price</th>
+            <th>Qty</th>
+            <th>Filled</th>
+            <th>Remain</th>
+            <th>Status</th>
+            <th>Placed</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orders-body"></tbody>
+      </table>
     </section>
-
 
     <!-- Books grid -->
     <section id="grid" class="grid"></section>

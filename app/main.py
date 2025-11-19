@@ -1,10 +1,10 @@
 from pathlib import Path
-import asyncio, uuid, json
+import asyncio, uuid, json, time            # <-- added time
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException  # +HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
@@ -15,8 +15,9 @@ from app.db import init_db
 from app.auth import router as auth_router, current_user
 from app.models import User
 from app.me import router as me_router
+from app.state import books, locks
 
-app = FastAPI(title="AlphaBook")  # ✅ rename
+app = FastAPI(title="AlphaBook")
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -25,10 +26,10 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 DEFAULT_SYMBOLS: List[str] = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 TOP_DEPTH: int = 10
 
-books: Dict[str, OrderBook] = defaultdict(OrderBook)
-locks: Dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+
 subscribers: Dict[str, Set[WebSocket]] = defaultdict(set)
 
+from decimal import Decimal
 positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
     lambda: defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
 )
@@ -91,7 +92,7 @@ def home(request: Request):
         "index.html",
         {
             "request": request,
-            "app_name": "AlphaBook",  # ✅ for header/SEO
+            "app_name": "AlphaBook",
             "symbols": DEFAULT_SYMBOLS,
             "symbols_json": json.dumps(DEFAULT_SYMBOLS),
             "depth": TOP_DEPTH,
@@ -120,6 +121,29 @@ def get_book(symbol: str):
 def me_metrics(user: User = Depends(current_user)):
     return {"user": user.username, "metrics": _metrics_for(user.id)}
 
+# ---------- OPEN ORDERS (in-memory) ----------
+@app.get("/me/orders", include_in_schema=False)
+def me_orders(user: User = Depends(current_user)):
+    """Return OPEN orders for this user from the in-memory books."""
+    rows = []
+    uid = str(user.id)
+    for sym, book in books.items():
+        for r in book.list_open_for_user(uid):
+            r = dict(r)               # copy so we can add symbol
+            r["symbol"] = sym
+            rows.append(r)
+    rows.sort(key=lambda r: r.get("ts", 0), reverse=True)
+    return rows
+
+@app.delete("/orders/{order_id}", include_in_schema=False)
+def cancel_order(order_id: str, user: User = Depends(current_user)):
+    """Cancel one of the user's orders from the in-memory books."""
+    uid = str(user.id)
+    for book in books.values():
+        if book.cancel(order_id, user_id=uid):
+            return {"ok": True, "status": "CANCELED"}
+    raise HTTPException(status_code=404, detail="Order not found")
+
 @app.post("/orders", response_model=Ack)
 async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
     symbol = order_in.symbol
@@ -131,6 +155,8 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
         side=order_in.side,
         price=Decimal(order_in.price),
         qty=Decimal(order_in.qty),
+        orig_qty=Decimal(order_in.qty),   # NEW: keep original
+        ts=time.time(),                   # NEW: timestamp
     )
     async with lock:
         fills = book.add(order)

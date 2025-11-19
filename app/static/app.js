@@ -17,6 +17,7 @@
     const txt = await r.text();
     try { return JSON.parse(txt); } catch { return {}; }
   };
+  const setHidden = (el, hidden) => { if (!el) return; el.classList[hidden ? "add" : "remove"]("hidden"); };
 
   // ---------- globals from template ----------
   const grid = $("#grid");
@@ -95,7 +96,7 @@
       tr.dataset.sym = sym;
       tr.dataset.px = a.px;
       tr.dataset.qty = a.qty;
-      tr.dataset.side = "BUY"; // clicking an ask defaults to BUY at ask px
+      tr.dataset.side = "BUY";
       tr.innerHTML = `
         <td>${fmt(a.qty)}</td>
         <td>${fmt(a.px)}</td>
@@ -106,7 +107,6 @@
       body.appendChild(tr);
     }
 
-    // mid row with spread
     const bestAsk = asks[0]?.px ?? null;
     const bestBid = bids[0]?.px ?? null;
     const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
@@ -129,7 +129,7 @@
       tr.dataset.sym = sym;
       tr.dataset.px = b.px;
       tr.dataset.qty = b.qty;
-      tr.dataset.side = "SELL"; // clicking a bid defaults to SELL at bid px
+      tr.dataset.side = "SELL";
       tr.innerHTML = `
         <td></td>
         <td></td>
@@ -175,7 +175,6 @@
   const inpQty = $("#ord-qty");
   const hint = $("#ord-hint");
 
-  // populate symbol list
   (window.SYMBOLS || []).forEach((s) => {
     const opt = document.createElement("option");
     opt.value = opt.textContent = String(s || "").toUpperCase();
@@ -202,7 +201,6 @@
   cancelBtn?.addEventListener("click", () => dlg.close());
   selSym?.addEventListener("change", prefill);
 
-  // click any row to prefill (and open modal)
   grid.addEventListener("click", (e) => {
     const tr = e.target && (e.target.closest("tr.row-ask") || e.target.closest("tr.row-bid"));
     if (!tr) return;
@@ -215,7 +213,9 @@
     inpPx.value = px.toFixed(4);
     inpQty.value ||= "1";
     const radio = form.querySelector(`input[name="side"][value="${side}"]`);
-    if (radio) radio.checked = true;
+    if (radio) {
+      radio.checked = true;
+    }
 
     if (!isAuthed) { location.href = "/login"; return; }
     if (!dlg.open) dlg.showModal();
@@ -260,9 +260,15 @@
       const text = await res.text();
       if (!res.ok) { hint.textContent = "Error: " + (text || res.status); return; }
 
+      // ---- SUCCESS BRANCH (updated) ----
       const ack = JSON.parse(text);
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
       inpQty.value = "";
+
+      // NEW: refresh My Open Offers and update this symbol’s ladder immediately
+      if (typeof loadOrders === "function") loadOrders();
+      if (ack?.snapshot) renderLadder(selSym.value, ack.snapshot);
+
       setTimeout(() => dlg.close(), 700);
     } catch (err) {
       console.error(err);
@@ -293,16 +299,8 @@
         maintainAspectRatio: false,
         plugins: { legend: { display: false } },
         scales: {
-          x: {
-            type: "linear",
-            ticks: {
-              callback: (v) => new Date(+v).toLocaleTimeString()
-            },
-            grid: { display: false }
-          },
-          y: {
-            ticks: { callback: (v) => fmt(v) }
-          }
+          x: { type: "linear", ticks: { callback: (v) => new Date(+v).toLocaleTimeString() }, grid: { display: false } },
+          y: { ticks: { callback: (v) => fmt(v) } }
         }
       }
     });
@@ -310,7 +308,6 @@
   }
 
   function normalizePnlSeries(raw) {
-    // Accepts {points:[{t, y}...]} OR array like [[ts,pnl], ...] OR {series:[...]}
     const pts = raw?.points || raw?.series || raw || [];
     const out = [];
     for (const p of pts) {
@@ -328,7 +325,6 @@
   }
 
   function renderSummary(sum) {
-    // Robustly read totals
     const totals = sum?.totals || sum || {};
     const qty = +(totals.qty ?? totals.position_qty ?? 0);
     const notional = +(totals.notional ?? totals.gross ?? 0);
@@ -352,24 +348,106 @@
   async function refreshAccount() {
     if (!isAuthed) return;
     try {
-      // Summary
       const summary = await fetchJSON("/me/summary");
       renderSummary(summary);
-    } catch (e) {
-      // ignore
-    }
-
+    } catch {}
     try {
-      // P&L series
       const seriesRaw = await fetchJSON("/me/pnl");
       const series = normalizePnlSeries(seriesRaw);
       const chart = initPnlChart();
-      if (chart && series.length) {
+      if (chart) {
         chart.data.datasets[0].data = series;
         chart.update("none");
       }
-    } catch (e) {
-      // ignore
+    } catch {}
+  }
+
+  // ---------------- My Open Offers: list + cancel ----------------
+  const ordersCard = $("#orders-card");
+  const ordersBody = $("#orders-body");
+  const ordersMeta = $("#orders-meta");
+  const ordersCount = $("#orders-count");
+
+  function renderOrders(rows) {
+    if (!ordersBody) return;
+    ordersBody.innerHTML = "";
+
+    const arr = Array.isArray(rows) ? rows : [];
+    ordersCount && (ordersCount.textContent = String(arr.length));
+
+    if (arr.length === 0) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="9" style="text-align:center;color:var(--muted);">No open orders</td>`;
+      ordersBody.appendChild(tr);
+      return;
+    }
+
+    for (const r of arr) {
+      const qty = +(r.qty ?? r.quantity ?? 0);
+      const filled = +(r.filled_qty ?? r.filled ?? r.executed_qty ?? 0);
+      const remain = Math.max(qty - filled, 0);
+      const side = String(r.side || "").toUpperCase();
+
+      const tr = document.createElement("tr");
+      tr.className = side === "BUY" ? "row-bid" : "row-ask";
+      tr.innerHTML = `
+        <td>${side || "--"}</td>
+        <td>${r.symbol ?? r.sym ?? "--"}</td>
+        <td>${fmt(r.price)}</td>
+        <td>${fmt(qty)}</td>
+        <td>${fmt(filled)}</td>
+        <td>${fmt(remain)}</td>
+        <td>${r.status ?? "--"}</td>
+        <td>${r.created_at ? String(r.created_at).replace("T"," ").slice(0,19) : "--"}</td>
+        <td style="text-align:center">
+          <button class="btn ghost" data-oid="${r.id}">Cancel</button>
+        </td>
+      `;
+      ordersBody.appendChild(tr);
+    }
+
+    ordersBody.querySelectorAll("button[data-oid]").forEach(btn => {
+      btn.addEventListener("click", async () => {
+        const oid = btn.getAttribute("data-oid");
+        if (!oid) return;
+        btn.disabled = true;
+        btn.textContent = "Canceling…";
+        try {
+          const res = await fetch(`/orders/${encodeURIComponent(oid)}`, {
+            method: "DELETE",
+            credentials: "include"
+          });
+          if (!res.ok) {
+            btn.disabled = false;
+            btn.textContent = "Cancel";
+            alert("Cancel failed");
+            return;
+          }
+          await loadOrders();
+        } catch {
+          btn.disabled = false;
+          btn.textContent = "Cancel";
+        }
+      });
+    });
+  }
+
+  async function loadOrders() {
+    if (!ordersMeta) return;
+    try {
+      const res = await fetch("/me/orders", { credentials: "include" });
+      if (!res.ok) {
+        ordersMeta.textContent = "not signed in";
+        setHidden(ordersCard, true);
+        renderOrders([]);
+        return;
+      }
+      const rows = await res.json();
+      renderOrders(rows);
+      ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+      setHidden(ordersCard, !isAuthed);
+    } catch {
+      ordersMeta.textContent = "error loading";
     }
   }
 
@@ -378,22 +456,25 @@
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
     const userNameEl = $("#userName");
+    const acct = $("#account");
 
     function showGuest() {
       isAuthed = false;
-      if (loginBox) loginBox.classList.remove("hidden");
-      if (userBox) userBox.classList.add("hidden");
-      // hide account strip when logged out
-      const acct = $("#account"); acct && acct.classList.add("hidden");
+      setHidden(loginBox, false);
+      setHidden(userBox, true);
+      setHidden(acct, true);
+      setHidden(ordersCard, true);  // ensure offers are hidden when logged out
     }
 
     function showUser(nameLike) {
       isAuthed = true;
       if (userNameEl) userNameEl.textContent = String(nameLike || "user");
-      if (loginBox) loginBox.classList.add("hidden");
-      if (userBox) userBox.classList.remove("hidden");
-      const acct = $("#account"); acct && acct.classList.remove("hidden");
-      refreshAccount(); // initial fill
+      setHidden(loginBox, true);
+      setHidden(userBox, false);
+      setHidden(acct, false);
+      setHidden(ordersCard, false); // show offers when logged in
+      refreshAccount();
+      loadOrders();
     }
 
     try {
@@ -404,102 +485,9 @@
       showGuest();
     }
 
-    // Periodic refresh of account when authed
-    setInterval(refreshAccount, 5000);
+    setInterval(() => { if (isAuthed) refreshAccount(); }, 5000);
+    setInterval(() => { if (isAuthed) loadOrders(); }, 4000);
   }
-
-  // ---------------- Open Orders: list + cancel ----------------
-const ordersBody = document.getElementById("orders-body");
-const ordersMeta = document.getElementById("orders-meta");
-
-function renderOrders(rows) {
-  if (!ordersBody) return;
-  ordersBody.innerHTML = "";
-
-  if (!rows || rows.length === 0) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="8" style="text-align:center;color:var(--muted);">No open orders</td>`;
-    ordersBody.appendChild(tr);
-    return;
-  }
-
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    const sideCls = (String(r.side).toUpperCase() === "BUY") ? "row-bid" : "row-ask";
-    tr.className = sideCls;
-    tr.innerHTML = `
-      <td>${r.id ?? "--"}</td>
-      <td>${r.symbol ?? "--"}</td>
-      <td>${r.side ?? "--"}</td>
-      <td>${fmt(r.qty)}</td>
-      <td>${fmt(r.price)}</td>
-      <td>${r.status ?? "--"}</td>
-      <td>${r.created_at ? String(r.created_at).replace("T"," ").slice(0,19) : "--"}</td>
-      <td style="text-align:center">
-        <button class="btn ghost" data-oid="${r.id}">Cancel</button>
-      </td>
-    `;
-    ordersBody.appendChild(tr);
-  }
-
-  // wire cancel buttons
-  ordersBody.querySelectorAll("button[data-oid]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      const oid = btn.getAttribute("data-oid");
-      if (!oid) return;
-      btn.disabled = true;
-      btn.textContent = "Canceling…";
-      try {
-        const res = await fetch(`/orders/${encodeURIComponent(oid)}`, {
-          method: "DELETE",
-          credentials: "include"
-        });
-        if (!res.ok) {
-          btn.disabled = false;
-          btn.textContent = "Cancel";
-          alert("Cancel failed");
-          return;
-        }
-        // refresh the table
-        loadOrders();
-      } catch {
-        btn.disabled = false;
-        btn.textContent = "Cancel";
-      }
-    });
-  });
-}
-
-async function loadOrders() {
-  if (!ordersMeta) return;
-  try {
-    const t0 = Date.now();
-    const res = await fetch("/me/orders", { credentials: "include" });
-    if (!res.ok) {
-      ordersMeta.textContent = "not signed in";
-      renderOrders([]);
-      return;
-    }
-    const rows = await res.json();
-    renderOrders(rows);
-    ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
-  } catch {
-    ordersMeta.textContent = "error loading";
-  }
-}
-
-// poll every few seconds
-loadOrders();
-setInterval(loadOrders, 4000);
-
-// When an order is placed successfully, refresh this panel too.
-// In your existing submit handler, after a successful placement:
- // ...
- // const ack = JSON.parse(text);
- // hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
- loadOrders();  // <--- add this line
- // setTimeout(() => dlg.close(), 700);
-
 
   // Kick things off
   initAuthUI();
