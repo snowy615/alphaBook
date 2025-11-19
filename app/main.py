@@ -15,6 +15,7 @@ from app.db import init_db
 from app.auth import router as auth_router, current_user
 from app.models import User
 
+
 app = FastAPI(title="AlphaBook")  # ✅ rename
 
 BASE_DIR = Path(__file__).parent
