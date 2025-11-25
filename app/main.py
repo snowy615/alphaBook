@@ -1,19 +1,21 @@
 from pathlib import Path
-import asyncio, uuid, json, time            # <-- added time
+import asyncio, uuid, json, time
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
+import datetime as dt
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException  # +HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
+from sqlmodel import Session, select
 
-from app.order_book import OrderBook, Order
+from app.order_book import OrderBook, Order as BookOrder
 from app.schemas import OrderIn, Ack, PriceOut
 from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
-from app.db import init_db
+from app.db import init_db, get_session
 from app.auth import router as auth_router, current_user
-from app.models import User
+from app.models import User, Order as DBOrder, Trade as DBTrade
 from app.me import router as me_router
 from app.state import books, locks
 
@@ -26,20 +28,20 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 DEFAULT_SYMBOLS: List[str] = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 TOP_DEPTH: int = 10
 
-
 subscribers: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-from decimal import Decimal
 positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
     lambda: defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
 )
+
 
 @app.on_event("startup")
 async def _startup():
     init_db()
     asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
 
-# ---- PnL helpers (unchanged) ----
+
+# ---- PnL helpers ----
 def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
     q, avg, realized = pos["qty"], pos["avg"], pos["realized"]
     if q >= 0:
@@ -53,6 +55,7 @@ def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["qty"] = q
         pos["avg"] = Decimal("0") if q == 0 else price
 
+
 def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
     q, avg, realized = pos["qty"], pos["avg"], pos["realized"]
     if q <= 0:
@@ -65,6 +68,7 @@ def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         q -= qty
         pos["qty"] = q
         pos["avg"] = Decimal("0") if q == 0 else price
+
 
 def _metrics_for(user_id: int):
     from app.market_data import get_last
@@ -85,6 +89,7 @@ def _metrics_for(user_id: int):
         }
     return out
 
+
 # ---- Pages ----
 @app.get("/", include_in_schema=False)
 def home(request: Request):
@@ -99,75 +104,173 @@ def home(request: Request):
         },
     )
 
+
 # ---- Utils ----
 @app.get("/symbols")
 def get_symbols():
     return {"symbols": DEFAULT_SYMBOLS}
 
+
 @app.get("/health")
 def health():
     return {"ok": True}
+
 
 @app.get("/reference/{symbol}", response_model=PriceOut)
 def get_reference(symbol: str):
     return PriceOut(symbol=symbol, price=get_ref_price(symbol))
 
+
 @app.get("/book/{symbol}")
 def get_book(symbol: str):
     return books[symbol].snapshot(depth=TOP_DEPTH)
+
 
 # ---- Auth protected ----
 @app.get("/me/metrics")
 def me_metrics(user: User = Depends(current_user)):
     return {"user": user.username, "metrics": _metrics_for(user.id)}
 
-# ---------- OPEN ORDERS (in-memory) ----------
+
+# ---------- OPEN ORDERS ----------
 @app.get("/me/orders", include_in_schema=False)
-def me_orders(user: User = Depends(current_user)):
-    """Return OPEN orders for this user from the in-memory books."""
+def me_orders(user: User = Depends(current_user), session: Session = Depends(get_session)):
+    """Return OPEN orders for this user from the database."""
+    stmt = select(DBOrder).where(
+        DBOrder.user_id == user.id,
+        DBOrder.status == "OPEN"
+    ).order_by(DBOrder.created_at.desc())
+
+    orders = session.exec(stmt).all()
+
     rows = []
-    uid = str(user.id)
-    for sym, book in books.items():
-        for r in book.list_open_for_user(uid):
-            r = dict(r)               # copy so we can add symbol
-            r["symbol"] = sym
-            rows.append(r)
-    rows.sort(key=lambda r: r.get("ts", 0), reverse=True)
+    for o in orders:
+        qty = Decimal(o.qty)
+        filled = Decimal(o.filled_qty)
+        rows.append({
+            "id": o.order_id,
+            "symbol": o.symbol,
+            "side": o.side,
+            "price": float(o.price),
+            "qty": float(qty),
+            "filled_qty": float(filled),
+            "status": o.status,
+            "created_at": o.created_at.isoformat(),
+        })
+
     return rows
 
+
 @app.delete("/orders/{order_id}", include_in_schema=False)
-def cancel_order(order_id: str, user: User = Depends(current_user)):
-    """Cancel one of the user's orders from the in-memory books."""
-    uid = str(user.id)
-    for book in books.values():
-        if book.cancel(order_id, user_id=uid):
-            return {"ok": True, "status": "CANCELED"}
-    raise HTTPException(status_code=404, detail="Order not found")
+def cancel_order(
+        order_id: str,
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session)
+):
+    """Cancel one of the user's orders from both memory and database."""
+    # Find in database
+    stmt = select(DBOrder).where(
+        DBOrder.order_id == order_id,
+        DBOrder.user_id == user.id,
+        DBOrder.status == "OPEN"
+    )
+    db_order = session.exec(stmt).first()
+
+    if not db_order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    # Cancel in memory book
+    symbol = db_order.symbol
+    book = books[symbol]
+    canceled = book.cancel(order_id, user_id=str(user.id))
+
+    # Update database
+    db_order.status = "CANCELED"
+    db_order.updated_at = dt.datetime.utcnow()
+    session.add(db_order)
+    session.commit()
+
+    return {"ok": True, "status": "CANCELED"}
+
 
 @app.post("/orders", response_model=Ack)
-async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
+async def submit_order(
+        order_in: OrderIn,
+        user: User = Depends(current_user),
+        session: Session = Depends(get_session)
+):
     symbol = order_in.symbol
     book = books[symbol]
     lock = locks[symbol]
-    order = Order(
-        id=str(uuid.uuid4()),
+
+    order_id = str(uuid.uuid4())
+
+    # Create database record FIRST
+    db_order = DBOrder(
+        order_id=order_id,
+        user_id=user.id,
+        symbol=symbol,
+        side=order_in.side,
+        price=order_in.price,
+        qty=order_in.qty,
+        filled_qty="0",
+        status="OPEN",
+        created_at=dt.datetime.utcnow()
+    )
+    session.add(db_order)
+    session.commit()
+    session.refresh(db_order)
+
+    # Create in-memory order
+    order = BookOrder(
+        id=order_id,
         user_id=str(user.id),
         side=order_in.side,
         price=Decimal(order_in.price),
         qty=Decimal(order_in.qty),
-        orig_qty=Decimal(order_in.qty),   # NEW: keep original
-        ts=time.time(),                   # NEW: timestamp
+        orig_qty=Decimal(order_in.qty),
+        ts=int(time.time() * 1000),
     )
+
+    # Match in order book
     async with lock:
         fills = book.add(order)
         snap = book.snapshot(depth=TOP_DEPTH)
 
+    # Record trades in database
+    total_filled = Decimal("0")
     for tr in fills:
         px, q = tr["price"], tr["qty"]
         buyer_id, seller_id = int(tr["buyer_id"]), int(tr["seller_id"])
+
+        # Save trade to database
+        trade = DBTrade(
+            symbol=symbol,
+            buyer_id=buyer_id,
+            seller_id=seller_id,
+            price=str(px),
+            qty=str(q),
+            buy_order_id=order_id if order_in.side == "BUY" else "",
+            sell_order_id=order_id if order_in.side == "SELL" else "",
+            created_at=dt.datetime.utcnow()
+        )
+        session.add(trade)
+
+        # Update positions
         _apply_buy(positions[buyer_id][symbol], px, q)
         _apply_sell(positions[seller_id][symbol], px, q)
 
+        total_filled += q
+
+    # Update order status in database
+    db_order.filled_qty = str(total_filled)
+    if total_filled >= Decimal(order_in.qty):
+        db_order.status = "FILLED"
+    db_order.updated_at = dt.datetime.utcnow()
+    session.add(db_order)
+    session.commit()
+
+    # Update mid hint for ref price
     try:
         bids = snap.get("bids", [])
         asks = snap.get("asks", [])
@@ -178,6 +281,7 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
     except Exception:
         pass
 
+    # Broadcast update
     await _broadcast(symbol, {
         "type": "snapshot",
         "symbol": symbol,
@@ -187,9 +291,15 @@ async def submit_order(order_in: OrderIn, user: User = Depends(current_user)):
 
     return Ack(
         order_id=order.id,
-        trades=[{"px": str(t["price"]), "qty": str(t["qty"]), "buyer": t["buyer_id"], "seller": t["seller_id"]} for t in fills],
+        trades=[{
+            "px": str(t["price"]),
+            "qty": str(t["qty"]),
+            "buyer": t["buyer_id"],
+            "seller": t["seller_id"]
+        } for t in fills],
         snapshot=snap,
     )
+
 
 # ---- WebSocket ----
 @app.websocket("/ws/book/{symbol}")
@@ -210,6 +320,7 @@ async def ws_book(ws: WebSocket, symbol: str):
     finally:
         subscribers[symbol].discard(ws)
 
+
 async def _broadcast(symbol: str, payload: dict):
     dead = []
     for ws in list(subscribers[symbol]):
@@ -219,6 +330,7 @@ async def _broadcast(symbol: str, payload: dict):
             dead.append(ws)
     for ws in dead:
         subscribers[symbol].discard(ws)
+
 
 # ---- Auth routes ----
 app.include_router(auth_router)

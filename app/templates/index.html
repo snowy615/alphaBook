@@ -24,7 +24,7 @@
         <a class="btn ghost" href="/login">Log in</a>
       </div>
 
-      <!-- Show when logged IN (toggled by JS, or use your existing app.js logic) -->
+      <!-- Show when logged IN -->
       <div id="userBox" class="hidden">
         <span>Signed in as <strong id="userName"></strong></span>
         <form action="/logout" method="post" style="display:inline;">
@@ -89,29 +89,40 @@
       </div>
     </section>
 
-    <!-- My Open Offers (hidden until logged in) -->
-    <section id="orders-card" class="card hidden">
+    <!-- My Orders (hidden until logged in) -->
+    <section id="orders-panel" class="card hidden" style="margin-top:12px;">
       <div class="head">
-        <div class="sym">My Open Offers</div>
-        <div class="ref" id="orders-count">0</div>
+        <div class="sym">My Orders</div>
+        <div class="meta">
+          <span id="orders-meta">—</span>
+        </div>
       </div>
-      <div class="meta"><span id="orders-meta">—</span></div>
-      <table class="ladder">
-        <thead>
-          <tr>
-            <th>Side</th>
-            <th>Symbol</th>
-            <th>Price</th>
-            <th>Qty</th>
-            <th>Filled</th>
-            <th>Remain</th>
-            <th>Status</th>
-            <th>Placed</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody id="orders-body"></tbody>
-      </table>
+
+      <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border);">
+        <span class="badge" id="orders-count" style="background:#23304a; padding:4px 8px; border-radius:999px;">0</span>
+        <span class="muted">open</span>
+      </div>
+
+      <div style="padding:8px 12px 12px 12px;">
+        <table class="ladder tight" id="orders-table" style="width:100%;">
+          <thead>
+            <tr>
+              <th>Side</th>
+              <th>Symbol</th>
+              <th>Price</th>
+              <th>Qty</th>
+              <th>Filled</th>
+              <th>Remain</th>
+              <th>Status</th>
+              <th>Placed</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="orders-body">
+            <tr><td colspan="9" style="text-align:center;color:var(--muted);">No open orders</td></tr>
+          </tbody>
+        </table>
+      </div>
     </section>
 
     <!-- Books grid -->
@@ -119,7 +130,7 @@
   </main>
 
   <footer class="footer">
-    <span>© AlphaBook | demo only — not investment advice</span>
+    <span>© AlphaBook</span>
   </footer>
 
   <!-- Order modal -->
@@ -169,7 +180,6 @@
     window.SYMBOLS = {{ symbols_json | safe }};
     window.TOP_DEPTH = {{ depth }};
   </script>
-  <!-- Chart.js for the P&L graph (vendor locally if you prefer) -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/static/app.js"></script>
 </body>

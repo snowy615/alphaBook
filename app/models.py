@@ -7,3 +7,29 @@ class User(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     password_hash: str
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+class Order(SQLModel, table=True):
+    """Database model for orders - tracks who submitted what and when."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    order_id: str = Field(index=True, unique=True)  # UUID from order book
+    user_id: int = Field(foreign_key="user.id", index=True)
+    symbol: str = Field(index=True)
+    side: str  # "BUY" or "SELL"
+    price: str  # Store as string to preserve precision
+    qty: str  # Original quantity as string
+    filled_qty: str = Field(default="0")  # How much has been filled
+    status: str = Field(default="OPEN")  # OPEN, FILLED, CANCELED
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow, index=True)
+    updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+class Trade(SQLModel, table=True):
+    """Database model for executed trades."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True)
+    buyer_id: int = Field(foreign_key="user.id", index=True)
+    seller_id: int = Field(foreign_key="user.id", index=True)
+    price: str  # Execution price as string
+    qty: str  # Filled quantity as string
+    buy_order_id: str = Field(index=True)  # Reference to buyer's order
+    sell_order_id: str = Field(index=True)  # Reference to seller's order
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow, index=True)

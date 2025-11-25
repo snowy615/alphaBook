@@ -265,7 +265,7 @@
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
       inpQty.value = "";
 
-      // NEW: refresh My Open Offers and update this symbol’s ladder immediately
+      // refresh My Orders and update this symbol’s ladder immediately
       if (typeof loadOrders === "function") loadOrders();
       if (ack?.snapshot) renderLadder(selSym.value, ack.snapshot);
 
@@ -362,93 +362,107 @@
     } catch {}
   }
 
-  // ---------------- My Open Offers: list + cancel ----------------
-  const ordersCard = $("#orders-card");
-  const ordersBody = $("#orders-body");
-  const ordersMeta = $("#orders-meta");
-  const ordersCount = $("#orders-count");
+  // ---------------- My Orders (user-scoped): list + cancel ----------------
+  const ordersPanel = document.getElementById("orders-panel");
+  const ordersBody  = document.getElementById("orders-body");
+  const ordersMeta  = document.getElementById("orders-meta");
+  const ordersCount = document.getElementById("orders-count");
+
+  async function fetchOrders() {
+    const r = await fetch("/me/orders", { credentials: "include" });
+    if (!r.ok) throw new Error(String(r.status));
+    const data = await r.json();
+    return Array.isArray(data) ? data : (Array.isArray(data.orders) ? data.orders : []);
+  }
 
   function renderOrders(rows) {
     if (!ordersBody) return;
     ordersBody.innerHTML = "";
 
-    const arr = Array.isArray(rows) ? rows : [];
-    ordersCount && (ordersCount.textContent = String(arr.length));
+    const list = Array.isArray(rows) ? rows : [];
+    if (ordersCount) ordersCount.textContent = String(list.length);
 
-    if (arr.length === 0) {
+    if (list.length === 0) {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td colspan="9" style="text-align:center;color:var(--muted);">No open orders</td>`;
       ordersBody.appendChild(tr);
       return;
     }
 
-    for (const r of arr) {
-      const qty = +(r.qty ?? r.quantity ?? 0);
-      const filled = +(r.filled_qty ?? r.filled ?? r.executed_qty ?? 0);
+    for (const o of list) {
+      const side   = String(o.side || "").toUpperCase();
+      const qty    = +((o.qty ?? o.quantity) || 0);
+      const filled = +((o.filled_qty ?? o.filled ?? 0) || 0);
       const remain = Math.max(qty - filled, 0);
-      const side = String(r.side || "").toUpperCase();
+      const cls    = side === "BUY" ? "row-bid" : "row-ask";
 
       const tr = document.createElement("tr");
-      tr.className = side === "BUY" ? "row-bid" : "row-ask";
+      tr.className = cls;
       tr.innerHTML = `
         <td>${side || "--"}</td>
-        <td>${r.symbol ?? r.sym ?? "--"}</td>
-        <td>${fmt(r.price)}</td>
+        <td>${o.symbol ?? o.sym ?? "--"}</td>
+        <td>${fmt(o.price)}</td>
         <td>${fmt(qty)}</td>
         <td>${fmt(filled)}</td>
         <td>${fmt(remain)}</td>
-        <td>${r.status ?? "--"}</td>
-        <td>${r.created_at ? String(r.created_at).replace("T"," ").slice(0,19) : "--"}</td>
+        <td>${o.status ?? "--"}</td>
+        <td>${o.created_at ? String(o.created_at).replace("T"," ").slice(0,19) : "--"}</td>
         <td style="text-align:center">
-          <button class="btn ghost" data-oid="${r.id}">Cancel</button>
+          <button class="btn ghost cancel" data-oid="${o.id}">Cancel</button>
         </td>
       `;
       ordersBody.appendChild(tr);
     }
+  }
 
-    ordersBody.querySelectorAll("button[data-oid]").forEach(btn => {
-      btn.addEventListener("click", async () => {
-        const oid = btn.getAttribute("data-oid");
-        if (!oid) return;
-        btn.disabled = true;
-        btn.textContent = "Canceling…";
-        try {
-          const res = await fetch(`/orders/${encodeURIComponent(oid)}`, {
-            method: "DELETE",
-            credentials: "include"
-          });
-          if (!res.ok) {
-            btn.disabled = false;
-            btn.textContent = "Cancel";
-            alert("Cancel failed");
-            return;
-          }
-          await loadOrders();
-        } catch {
-          btn.disabled = false;
-          btn.textContent = "Cancel";
-        }
-      });
+  // Event delegation for Cancel buttons (guarded)
+  if (ordersBody) {
+    ordersBody.addEventListener("click", async (e) => {
+      const btn = e.target.closest && e.target.closest("button.cancel");
+      if (!btn) return;
+      const oid = btn.getAttribute("data-oid");
+      if (!oid) return;
+
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = "Canceling…";
+      try {
+        const r = await fetch(`/me/orders/${encodeURIComponent(oid)}/cancel`, {
+          method: "POST",
+          credentials: "include",
+        });
+        if (!r.ok) throw new Error(String(r.status));
+        await loadOrders(); // refresh after cancel
+      } catch {
+        btn.disabled = false;
+        btn.textContent = original;
+        alert("Cancel failed");
+      }
     });
   }
 
   async function loadOrders() {
-    if (!ordersMeta) return;
+    if (!ordersPanel) return;
     try {
-      const res = await fetch("/me/orders", { credentials: "include" });
-      if (!res.ok) {
-        ordersMeta.textContent = "not signed in";
-        setHidden(ordersCard, true);
-        renderOrders([]);
-        return;
-      }
-      const rows = await res.json();
+      const rows = await fetchOrders();
       renderOrders(rows);
-      ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
-      setHidden(ordersCard, !isAuthed);
+      if (ordersMeta) ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
     } catch {
-      ordersMeta.textContent = "error loading";
+      if (ordersMeta) ordersMeta.textContent = "not signed in";
+      renderOrders([]);
     }
+  }
+
+  let _ordersTimer = null;
+  function startOrdersRefresh() {
+    clearInterval(_ordersTimer);
+    setHidden(ordersPanel, false);
+    loadOrders();
+    _ordersTimer = setInterval(loadOrders, 4000);
+  }
+  function stopOrdersRefresh() {
+    clearInterval(_ordersTimer);
+    setHidden(ordersPanel, true);
   }
 
   // ---------- Auth header UI ----------
@@ -463,7 +477,8 @@
       setHidden(loginBox, false);
       setHidden(userBox, true);
       setHidden(acct, true);
-      setHidden(ordersCard, true);  // ensure offers are hidden when logged out
+      setHidden(ordersPanel, true);   // ✅ use the correct ID
+      stopOrdersRefresh();
     }
 
     function showUser(nameLike) {
@@ -472,9 +487,9 @@
       setHidden(loginBox, true);
       setHidden(userBox, false);
       setHidden(acct, false);
-      setHidden(ordersCard, false); // show offers when logged in
+      setHidden(ordersPanel, false);  // ✅ use the correct ID
       refreshAccount();
-      loadOrders();
+      startOrdersRefresh();           // poll orders from here
     }
 
     try {
@@ -485,8 +500,8 @@
       showGuest();
     }
 
-    setInterval(() => { if (isAuthed) refreshAccount(); }, 5000);
-    setInterval(() => { if (isAuthed) loadOrders(); }, 4000);
+    // keep only the account refresher; orders are handled by start/stop above
+    setInterval(() => { if (isAuthed) refreshAccount(); }, 8000);
   }
 
   // Kick things off

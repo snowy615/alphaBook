@@ -7,22 +7,21 @@ from typing import Deque, Dict, List, Optional
 
 getcontext().prec = 28
 
+
 @dataclass
 class Order:
     id: str
     user_id: str
-    side: str     # "BUY" or "SELL"
+    side: str  # "BUY" or "SELL"
     price: Decimal
     qty: Decimal
-    # NEW: keep the original requested qty so you can show filled/remaining
     orig_qty: Optional[Decimal] = None
-    # NEW: millisecond timestamp for UI sorting
     ts: int = field(default_factory=lambda: int(_now() * 1000))
 
     def __post_init__(self):
         if self.orig_qty is None:
-            # default to initial qty
             self.orig_qty = Decimal(self.qty)
+
 
 class OrderBook:
     def __init__(self):
@@ -72,12 +71,79 @@ class OrderBook:
                 self.asks.setdefault(order.price, deque()).append(order)
         return trades
 
+    def cancel(self, order_id: str, user_id: str) -> bool:
+        """
+        Cancel an order by ID. Returns True if found and canceled.
+        Verifies the user_id matches for security.
+        """
+        # Search bids
+        for px, dq in list(self.bids.items()):
+            for order in list(dq):
+                if order.id == order_id and order.user_id == user_id:
+                    dq.remove(order)
+                    if not dq:
+                        del self.bids[px]
+                    return True
+
+        # Search asks
+        for px, dq in list(self.asks.items()):
+            for order in list(dq):
+                if order.id == order_id and order.user_id == user_id:
+                    dq.remove(order)
+                    if not dq:
+                        del self.asks[px]
+                    return True
+
+        return False
+
+    def list_open_for_user(self, user_id: str) -> List[dict]:
+        """
+        Return all open orders for a specific user.
+        """
+        orders = []
+
+        # Check bids
+        for px, dq in self.bids.items():
+            for order in dq:
+                if order.user_id == user_id:
+                    filled = (order.orig_qty - order.qty) if order.orig_qty else Decimal("0")
+                    orders.append({
+                        "id": order.id,
+                        "side": "BUY",
+                        "price": order.price,
+                        "qty": order.orig_qty or order.qty,
+                        "filled_qty": filled,
+                        "status": "OPEN",
+                        "ts": order.ts,
+                    })
+
+        # Check asks
+        for px, dq in self.asks.items():
+            for order in dq:
+                if order.user_id == user_id:
+                    filled = (order.orig_qty - order.qty) if order.orig_qty else Decimal("0")
+                    orders.append({
+                        "id": order.id,
+                        "side": "SELL",
+                        "price": order.price,
+                        "qty": order.orig_qty or order.qty,
+                        "filled_qty": filled,
+                        "status": "OPEN",
+                        "ts": order.ts,
+                    })
+
+        # Sort by timestamp (newest first)
+        orders.sort(key=lambda x: x["ts"], reverse=True)
+        return orders
+
     def snapshot(self, depth: int = 10):
         bids = sorted(self.bids.items(), key=lambda kv: kv[0], reverse=True)[:depth]
         asks = sorted(self.asks.items(), key=lambda kv: kv[0])[:depth]
+
         def level(px, q: Deque[Order]):
             total = sum(o.qty for o in q)
             return {"px": str(px), "qty": str(total)}
+
         return {
             "bids": [level(px, q) for px, q in bids],
             "asks": [level(px, q) for px, q in asks],
