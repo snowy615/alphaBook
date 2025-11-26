@@ -268,6 +268,7 @@
     qtNotional.textContent = `$${fmt(notional)}`;
   }
 
+
   qtSlider?.addEventListener('input', (e) => {
     qtState.qty = parseInt(e.target.value);
     updateQuickTradeDisplay();
