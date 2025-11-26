@@ -324,27 +324,43 @@ def my_open_orders(
 
 def _cancel_any(order_id: str, user, session: Session) -> Dict[str, Any]:
     """Cancel order from both memory and database."""
-    # Try in-memory first
+
+    # First, check if order exists in database and belongs to user
+    if _OrderModel:
+        stmt = select(_OrderModel).where(
+            _OrderModel.order_id == order_id,
+            _OrderModel.user_id == user.id,
+            _OrderModel.status == "OPEN"
+        )
+        db_order = session.exec(stmt).first()
+
+        if not db_order:
+            raise HTTPException(status_code=404, detail="Order not found or already closed")
+
+        # Try to cancel from in-memory book (may not exist if partially filled)
+        try:
+            cancel_order_by_id(order_id, str(user.id))
+        except Exception:
+            # Order might not be in memory anymore, that's ok
+            pass
+
+        # Always update database status
+        db_order.status = "CANCELED"
+        db_order.updated_at = dt.datetime.utcnow()
+        session.add(db_order)
+        session.commit()
+
+        return {"ok": True, "status": "CANCELED"}
+
+    # Fallback: try memory only
     try:
         ok = cancel_order_by_id(order_id, str(user.id))
-        if ok and _OrderModel:
-            # Update database
-            stmt = select(_OrderModel).where(
-                _OrderModel.order_id == order_id,
-                _OrderModel.user_id == user.id
-            )
-            db_order = session.exec(stmt).first()
-            if db_order:
-                db_order.status = "CANCELED"
-                db_order.updated_at = dt.datetime.utcnow()
-                session.add(db_order)
-                session.commit()
+        if ok:
             return {"ok": True, "status": "CANCELED"}
     except Exception:
         pass
 
     raise HTTPException(status_code=404, detail="Order not found")
-
 
 @router.post("/me/orders/{order_id}/cancel", include_in_schema=False)
 def cancel_my_order_post(

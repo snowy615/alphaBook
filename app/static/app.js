@@ -25,8 +25,8 @@
   const SYMS = (window.SYMBOLS || []).map((s) => String(s || "").toUpperCase());
 
   // ---------- app state ----------
-  const lastRef = Object.create(null);     // latest ref price per symbol
-  let isAuthed = false;                    // login state
+  const lastRef = Object.create(null);
+  let isAuthed = false;
   let pnlChart = null;
 
   // ---------- build cards & connect streams ----------
@@ -79,16 +79,14 @@
     }
   }
 
-  // Render aligned ladder: asks (worst->best), mid row, bids (best->worst)
   function renderLadder(sym, book) {
     const body = document.getElementById(`ladder-body-${sym}`);
     if (!body) return;
     body.innerHTML = "";
 
-    const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>a.px-b.px); // low->high
-    const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>b.px-a.px); // high->low
+    const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>a.px-b.px);
+    const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>b.px-a.px);
 
-    // asks block (worst -> best so best is closest to mid row)
     for (let i = asks.length - 1; i >= 0; i--) {
       const a = asks[i];
       const tr = document.createElement("tr");
@@ -121,7 +119,6 @@
       </td>`;
     body.appendChild(midtr);
 
-    // bids block (best -> worst so best is closest to mid row)
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
       const tr = document.createElement("tr");
@@ -213,9 +210,7 @@
     inpPx.value = px.toFixed(4);
     inpQty.value ||= "1";
     const radio = form.querySelector(`input[name="side"][value="${side}"]`);
-    if (radio) {
-      radio.checked = true;
-    }
+    if (radio) radio.checked = true;
 
     if (!isAuthed) { location.href = "/login"; return; }
     if (!dlg.open) dlg.showModal();
@@ -260,13 +255,12 @@
       const text = await res.text();
       if (!res.ok) { hint.textContent = "Error: " + (text || res.status); return; }
 
-      // ---- SUCCESS BRANCH (updated) ----
       const ack = JSON.parse(text);
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
       inpQty.value = "";
 
-      // refresh My Orders and update this symbol’s ladder immediately
-      if (typeof loadOrders === "function") loadOrders();
+      loadOrders();
+      refreshAccount();
       if (ack?.snapshot) renderLadder(selSym.value, ack.snapshot);
 
       setTimeout(() => dlg.close(), 700);
@@ -350,41 +344,40 @@
   }
 
   function renderSummary(sum) {
-  const totals = sum?.totals || sum || {};
-  const qty = +(totals.qty ?? totals.position_qty ?? 0);
-  const notional = +(totals.notional ?? totals.gross ?? 0);
-  const delta = +(totals.delta ?? 0);
-  const pnlOpen = +(totals.pnl_open ?? totals.unrealized ?? 0);
-  const pnlDay = +(totals.pnl_day ?? totals.daily ?? 0);
-  const avg = +(totals.avg_cost ?? totals.avg ?? NaN);
-  const cash = +(totals.cash ?? NaN);
-  const equity = +(totals.equity ?? (isFinite(cash) ? cash + pnlOpen : NaN));
+    const totals = sum?.totals || sum || {};
+    const qty = +(totals.qty ?? totals.position_qty ?? 0);
+    const notional = +(totals.notional ?? totals.gross ?? 0);
+    const delta = +(totals.delta ?? 0);
+    const pnlOpen = +(totals.pnl_open ?? totals.unrealized ?? 0);
+    const pnlDay = +(totals.pnl_day ?? totals.daily ?? 0);
+    const avg = +(totals.avg_cost ?? totals.avg ?? NaN);
+    const cash = +(totals.cash ?? NaN);
+    const equity = +(totals.equity ?? (isFinite(cash) ? cash + pnlOpen : NaN));
 
-  // Helper to set value with color coding
-  function setStatValue(id, value, colorize = false) {
-    const el = document.getElementById(id);
-    if (!el) return;
-    el.textContent = fmt(value);
+    function setStatValue(id, value, colorize = false) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = fmt(value);
 
-    if (colorize && isFinite(value)) {
-      el.classList.remove("positive", "negative");
-      if (value > 0) {
-        el.classList.add("positive");
-      } else if (value < 0) {
-        el.classList.add("negative");
+      if (colorize && isFinite(value)) {
+        el.classList.remove("positive", "negative");
+        if (value > 0) {
+          el.classList.add("positive");
+        } else if (value < 0) {
+          el.classList.add("negative");
+        }
       }
     }
-  }
 
-  setStatValue("pos-qty", qty);
-  setStatValue("pos-avg", isFinite(avg) ? avg : null);
-  setStatValue("pos-notional", notional);
-  setStatValue("pos-delta", delta);
-  setStatValue("pnl-open", pnlOpen, true);
-  setStatValue("pnl-day", pnlDay, true);
-  setStatValue("cash", isFinite(cash) ? cash : null);
-  setStatValue("equity", isFinite(equity) ? equity : null);
-}
+    setStatValue("pos-qty", qty);
+    setStatValue("pos-avg", isFinite(avg) ? avg : null);
+    setStatValue("pos-notional", notional);
+    setStatValue("pos-delta", delta);
+    setStatValue("pnl-open", pnlOpen, true);
+    setStatValue("pnl-day", pnlDay, true);
+    setStatValue("cash", isFinite(cash) ? cash : null);
+    setStatValue("equity", isFinite(equity) ? equity : null);
+  }
 
   async function refreshAccount() {
     if (!isAuthed) return;
@@ -403,107 +396,102 @@
     } catch {}
   }
 
-  // ---------------- My Orders (user-scoped): list + cancel ----------------
-  const ordersPanel = document.getElementById("orders-panel");
-  const ordersBody  = document.getElementById("orders-body");
-  const ordersMeta  = document.getElementById("orders-meta");
-  const ordersCount = document.getElementById("orders-count");
-
-  async function fetchOrders() {
-    const r = await fetch("/me/orders", { credentials: "include" });
-    if (!r.ok) throw new Error(String(r.status));
-    const data = await r.json();
-    return Array.isArray(data) ? data : (Array.isArray(data.orders) ? data.orders : []);
-  }
+  // ---------------- My Open Orders ----------------
+  const ordersPanel = $("#orders-panel");
+  const ordersBody = $("#orders-body");
+  const ordersMeta = $("#orders-meta");
+  const ordersCount = $("#orders-count");
 
   function renderOrders(rows) {
     if (!ordersBody) return;
     ordersBody.innerHTML = "";
 
-    const list = Array.isArray(rows) ? rows : [];
-    if (ordersCount) ordersCount.textContent = String(list.length);
+    const arr = Array.isArray(rows) ? rows : [];
+    ordersCount && (ordersCount.textContent = String(arr.length));
 
-    if (list.length === 0) {
+    if (arr.length === 0) {
       const tr = document.createElement("tr");
       tr.innerHTML = `<td colspan="9" style="text-align:center;color:var(--muted);">No open orders</td>`;
       ordersBody.appendChild(tr);
       return;
     }
 
-    for (const o of list) {
-      const side   = String(o.side || "").toUpperCase();
-      const qty    = +((o.qty ?? o.quantity) || 0);
-      const filled = +((o.filled_qty ?? o.filled ?? 0) || 0);
+    for (const r of arr) {
+      const qty = +(r.qty ?? r.quantity ?? 0);
+      const filled = +(r.filled_qty ?? r.filled ?? r.executed_qty ?? 0);
       const remain = Math.max(qty - filled, 0);
-      const cls    = side === "BUY" ? "row-bid" : "row-ask";
+      const side = String(r.side || "").toUpperCase();
 
       const tr = document.createElement("tr");
-      tr.className = cls;
+      tr.className = side === "BUY" ? "row-bid" : "row-ask";
       tr.innerHTML = `
         <td>${side || "--"}</td>
-        <td>${o.symbol ?? o.sym ?? "--"}</td>
-        <td>${fmt(o.price)}</td>
+        <td>${r.symbol ?? r.sym ?? "--"}</td>
+        <td>${fmt(r.price)}</td>
         <td>${fmt(qty)}</td>
         <td>${fmt(filled)}</td>
         <td>${fmt(remain)}</td>
-        <td>${o.status ?? "--"}</td>
-        <td>${o.created_at ? String(o.created_at).replace("T"," ").slice(0,19) : "--"}</td>
+        <td>${r.status ?? "--"}</td>
+        <td>${r.created_at ? String(r.created_at).replace("T"," ").slice(0,19) : "--"}</td>
         <td style="text-align:center">
-          <button class="btn ghost cancel" data-oid="${o.id}">Cancel</button>
+          <button class="btn ghost cancel-btn" data-oid="${r.id}">Cancel</button>
         </td>
       `;
       ordersBody.appendChild(tr);
     }
-  }
 
-  // Event delegation for Cancel buttons (guarded)
-  if (ordersBody) {
-    ordersBody.addEventListener("click", async (e) => {
-      const btn = e.target.closest && e.target.closest("button.cancel");
-      if (!btn) return;
-      const oid = btn.getAttribute("data-oid");
-      if (!oid) return;
+    // Add event listeners to cancel buttons
+    ordersBody.querySelectorAll(".cancel-btn").forEach(btn => {
+      btn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
 
-      btn.disabled = true;
-      const original = btn.textContent;
-      btn.textContent = "Canceling…";
-      try {
-        const r = await fetch(`/me/orders/${encodeURIComponent(oid)}/cancel`, {
-          method: "POST",
-          credentials: "include",
-        });
-        if (!r.ok) throw new Error(String(r.status));
-        await loadOrders(); // refresh after cancel
-      } catch {
-        btn.disabled = false;
-        btn.textContent = original;
-        alert("Cancel failed");
-      }
+        const oid = btn.getAttribute("data-oid");
+        if (!oid) return;
+
+        btn.disabled = true;
+        btn.textContent = "Canceling…";
+
+        try {
+          const res = await fetch(`/me/orders/${encodeURIComponent(oid)}/cancel`, {
+            method: "POST",
+            credentials: "include"
+          });
+
+          if (!res.ok) {
+            throw new Error("Cancel failed");
+          }
+
+          // Refresh orders and account after successful cancel
+          await loadOrders();
+          await refreshAccount();
+        } catch (err) {
+          console.error("Cancel error:", err);
+          btn.disabled = false;
+          btn.textContent = "Cancel";
+          alert("Failed to cancel order");
+        }
+      });
     });
   }
 
   async function loadOrders() {
-    if (!ordersPanel) return;
+    if (!ordersMeta) return;
     try {
-      const rows = await fetchOrders();
+      const res = await fetch("/me/orders", { credentials: "include" });
+      if (!res.ok) {
+        ordersMeta.textContent = "not signed in";
+        setHidden(ordersPanel, true);
+        renderOrders([]);
+        return;
+      }
+      const rows = await res.json();
       renderOrders(rows);
-      if (ordersMeta) ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+      ordersMeta.textContent = `updated ${new Date().toLocaleTimeString()}`;
+      setHidden(ordersPanel, !isAuthed);
     } catch {
-      if (ordersMeta) ordersMeta.textContent = "not signed in";
-      renderOrders([]);
+      ordersMeta.textContent = "error loading";
     }
-  }
-
-  let _ordersTimer = null;
-  function startOrdersRefresh() {
-    clearInterval(_ordersTimer);
-    setHidden(ordersPanel, false);
-    loadOrders();
-    _ordersTimer = setInterval(loadOrders, 4000);
-  }
-  function stopOrdersRefresh() {
-    clearInterval(_ordersTimer);
-    setHidden(ordersPanel, true);
   }
 
   // ---------- Auth header UI ----------
@@ -518,8 +506,7 @@
       setHidden(loginBox, false);
       setHidden(userBox, true);
       setHidden(acct, true);
-      setHidden(ordersPanel, true);   // ✅ use the correct ID
-      stopOrdersRefresh();
+      setHidden(ordersPanel, true);
     }
 
     function showUser(nameLike) {
@@ -528,9 +515,9 @@
       setHidden(loginBox, true);
       setHidden(userBox, false);
       setHidden(acct, false);
-      setHidden(ordersPanel, false);  // ✅ use the correct ID
+      setHidden(ordersPanel, false);
       refreshAccount();
-      startOrdersRefresh();           // poll orders from here
+      loadOrders();
     }
 
     try {
@@ -541,10 +528,9 @@
       showGuest();
     }
 
-    // keep only the account refresher; orders are handled by start/stop above
-    setInterval(() => { if (isAuthed) refreshAccount(); }, 8000);
+    setInterval(() => { if (isAuthed) refreshAccount(); }, 5000);
+    setInterval(() => { if (isAuthed) loadOrders(); }, 4000);
   }
 
-  // Kick things off
   initAuthUI();
 })();
