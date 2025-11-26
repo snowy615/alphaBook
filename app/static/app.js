@@ -44,12 +44,14 @@
 
       <table class="ladder" id="ladder-${sym}">
         <thead>
-          <tr>
+          <tr>    
+            <th></th>
             <th>Ask&nbsp;Qty</th>
             <th>Ask&nbsp;Px</th>
             <th class="div">—</th>
             <th>Bid&nbsp;Px</th>
             <th>Bid&nbsp;Qty</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="ladder-body-${sym}"></tbody>
@@ -87,20 +89,21 @@
     const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>a.px-b.px);
     const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>b.px-a.px);
 
+    // asks block
     for (let i = asks.length - 1; i >= 0; i--) {
       const a = asks[i];
       const tr = document.createElement("tr");
       tr.className = "row-ask";
-      tr.dataset.sym = sym;
-      tr.dataset.px = a.px;
-      tr.dataset.qty = a.qty;
-      tr.dataset.side = "BUY";
       tr.innerHTML = `
+        <td class="action-cell">
+          <button class="trade-btn buy-btn" data-sym="${sym}" data-side="BUY" data-px="${a.px}">Buy</button>
+        </td>
         <td>${fmt(a.qty)}</td>
         <td>${fmt(a.px)}</td>
         <td class="div"></td>
         <td></td>
         <td></td>
+        <td class="action-cell"></td>
       `;
       body.appendChild(tr);
     }
@@ -112,30 +115,31 @@
     const midtr = document.createElement("tr");
     midtr.className = "midrow";
     midtr.innerHTML = `
-      <td colspan="5">
+      <td colspan="7">
         ${bestBid!=null && bestAsk!=null
           ? `Spread: ${fmt(sp)} • Mid: ${fmt(mid)} • Best Bid: ${fmt(bestBid)} • Best Ask: ${fmt(bestAsk)}`
           : `Waiting for depth…`}
       </td>`;
     body.appendChild(midtr);
 
+    // bids block
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
       const tr = document.createElement("tr");
       tr.className = "row-bid";
-      tr.dataset.sym = sym;
-      tr.dataset.px = b.px;
-      tr.dataset.qty = b.qty;
-      tr.dataset.side = "SELL";
       tr.innerHTML = `
+        <td class="action-cell"></td>
         <td></td>
         <td></td>
         <td class="div"></td>
         <td>${fmt(b.px)}</td>
         <td>${fmt(b.qty)}</td>
+        <td class="action-cell">
+          <button class="trade-btn sell-btn" data-sym="${sym}" data-side="SELL" data-px="${b.px}">Sell</button>
+        </td>
       `;
       body.appendChild(tr);
-    }
+      }
   }
 
   function connect(sym) {
@@ -198,22 +202,175 @@
   cancelBtn?.addEventListener("click", () => dlg.close());
   selSym?.addEventListener("change", prefill);
 
-  grid.addEventListener("click", (e) => {
-    const tr = e.target && (e.target.closest("tr.row-ask") || e.target.closest("tr.row-bid"));
-    if (!tr) return;
-    const sym = tr.dataset.sym;
-    const px = parseFloat(tr.dataset.px || "NaN");
-    const side = tr.dataset.side || "BUY";
-    if (!sym || !isFinite(px)) return;
+    // ---- Quick Trade Slider Modal ----
+  const quickTradeDlg = document.createElement('dialog');
+  quickTradeDlg.className = 'modal';
+  quickTradeDlg.id = 'quick-trade-modal';
+  quickTradeDlg.innerHTML = `
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="qt-title">Quick Trade</h3>
+        <button class="icon-close" id="qt-close">✕</button>
+      </div>
+      <div class="panel-body">
+        <div class="qt-info">
+          <div class="qt-side" id="qt-side-label">BUY</div>
+          <div class="qt-symbol" id="qt-symbol">AAPL</div>
+          <div class="qt-price-label">at</div>
+          <div class="qt-price" id="qt-price">150.00</div>
+        </div>
+        
+        <div class="field">
+          <label>Quantity: <span id="qt-qty-display">1</span></label>
+          <input type="range" id="qt-qty-slider" min="1" max="100" value="1" step="1">
+          <div class="slider-labels">
+            <span>1</span>
+            <span>50</span>
+            <span>100</span>
+          </div>
+        </div>
+        
+        <div class="qt-summary">
+          <div class="qt-summary-row">
+            <span>Notional:</span>
+            <span id="qt-notional">$150.00</span>
+          </div>
+        </div>
+        
+        <div class="small" id="qt-hint"></div>
+      </div>
+      <div class="panel-foot">
+        <button type="button" class="btn ghost" id="qt-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="qt-submit">Submit Order</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(quickTradeDlg);
 
-    selSym.value = sym;
-    inpPx.value = px.toFixed(4);
-    inpQty.value ||= "1";
-    const radio = form.querySelector(`input[name="side"][value="${side}"]`);
-    if (radio) radio.checked = true;
+  let qtState = {
+    symbol: '',
+    side: '',
+    price: 0,
+    qty: 1
+  };
 
-    if (!isAuthed) { location.href = "/login"; return; }
-    if (!dlg.open) dlg.showModal();
+  const qtSlider = document.getElementById('qt-qty-slider');
+  const qtQtyDisplay = document.getElementById('qt-qty-display');
+  const qtNotional = document.getElementById('qt-notional');
+  const qtHint = document.getElementById('qt-hint');
+
+  function updateQuickTradeDisplay() {
+    qtQtyDisplay.textContent = qtState.qty;
+    const notional = qtState.price * qtState.qty;
+    qtNotional.textContent = `$${fmt(notional)}`;
+  }
+
+  qtSlider?.addEventListener('input', (e) => {
+    qtState.qty = parseInt(e.target.value);
+    updateQuickTradeDisplay();
+  });
+
+  document.getElementById('qt-close')?.addEventListener('click', () => {
+    quickTradeDlg.close();
+  });
+
+  document.getElementById('qt-cancel')?.addEventListener('click', () => {
+    quickTradeDlg.close();
+  });
+
+  document.getElementById('qt-submit')?.addEventListener('click', async () => {
+    if (!isAuthed) {
+      qtHint.textContent = "Please log in to place orders.";
+      setTimeout(() => (location.href = "/login"), 800);
+      return;
+    }
+
+    const payload = {
+      symbol: qtState.symbol,
+      side: qtState.side,
+      price: String(qtState.price.toFixed(4)),
+      qty: String(qtState.qty)
+    };
+
+    qtHint.textContent = "Submitting...";
+    document.getElementById('qt-submit').disabled = true;
+
+    try {
+      const res = await fetch("/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+        credentials: "same-origin"
+      });
+
+      if (res.status === 401) {
+        qtHint.textContent = "You need to log in to place orders.";
+        setTimeout(() => (location.href = "/login"), 800);
+        return;
+      }
+
+      const text = await res.text();
+      if (!res.ok) {
+        qtHint.textContent = "Error: " + (text || res.status);
+        document.getElementById('qt-submit').disabled = false;
+        return;
+      }
+
+      const ack = JSON.parse(text);
+      qtHint.textContent = `Success! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
+
+      if (typeof loadOrders === "function") loadOrders();
+      if (ack?.snapshot) renderLadder(qtState.symbol, ack.snapshot);
+
+      setTimeout(() => {
+        quickTradeDlg.close();
+        qtHint.textContent = "";
+        document.getElementById('qt-submit').disabled = false;
+      }, 700);
+    } catch (err) {
+      console.error(err);
+      qtHint.textContent = "Network error submitting order.";
+      document.getElementById('qt-submit').disabled = false;
+    }
+  });
+
+  function openQuickTrade(symbol, side, price) {
+    if (!isAuthed) {
+      location.href = "/login";
+      return;
+    }
+
+    qtState = {
+      symbol: symbol,
+      side: side,
+      price: price,
+      qty: 1
+    };
+
+    document.getElementById('qt-title').textContent = `Quick ${side}`;
+    document.getElementById('qt-side-label').textContent = side;
+    document.getElementById('qt-side-label').className = `qt-side ${side.toLowerCase()}`;
+    document.getElementById('qt-symbol').textContent = symbol;
+    document.getElementById('qt-price').textContent = fmt(price);
+    qtSlider.value = 1;
+    qtHint.textContent = "";
+
+    updateQuickTradeDisplay();
+    quickTradeDlg.showModal();
+  }
+
+  // Event delegation for trade buttons
+  grid.addEventListener('click', (e) => {
+    const btn = e.target.closest('.trade-btn');
+    if (!btn) return;
+
+    const sym = btn.dataset.sym;
+    const side = btn.dataset.side;
+    const px = parseFloat(btn.dataset.px);
+
+    if (sym && side && isFinite(px)) {
+      openQuickTrade(sym, side, px);
+    }
   });
 
   form?.addEventListener("submit", async (e) => {
