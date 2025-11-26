@@ -1,6 +1,7 @@
 from __future__ import annotations
 import time, datetime as dt
 from typing import Any, Dict, List, Optional
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
@@ -8,25 +9,25 @@ from sqlmodel import Session, select
 from app.db import get_session
 from app.auth import current_user
 
-# In-memory state helpers (your central source of truth for the live book)
+# In-memory state helpers
 from app.state import list_user_orders, cancel_order_by_id
 
-# --- Optional DB fallbacks (kept for compatibility if you also persist orders/fills)
+# DB models
 try:
-    from app.models import Trade as _FillModel  # type: ignore
+    from app.models import Trade as _FillModel
 except Exception:
     try:
-        from app.models import Fill as _FillModel  # type: ignore
+        from app.models import Fill as _FillModel
     except Exception:
         try:
-            from app.models import Execution as _FillModel  # type: ignore
+            from app.models import Execution as _FillModel
         except Exception:
-            _FillModel = None  # type: ignore
+            _FillModel = None
 
 try:
-    from app.models import Order as _OrderModel  # type: ignore
+    from app.models import Order as _OrderModel
 except Exception:
-    _OrderModel = None  # type: ignore
+    _OrderModel = None
 
 router = APIRouter(prefix="", tags=["me"])
 
@@ -44,69 +45,133 @@ def me(user=Depends(current_user)):
 
 @router.get("/me/summary")
 def me_summary(
-    user=Depends(current_user),
-    session: Session = Depends(get_session),
+        user=Depends(current_user),
+        session: Session = Depends(get_session),
 ):
-    """
-    Aggregate light-weight position + P&L summary.
+    """Calculate positions and P&L from Trade table."""
+    from app.market_data import get_ref_price
 
-    - If a fills/trades table exists: builds positions from those.
-    - Else if only 'Order' exists and has status/filled fields, uses filled qty.
-    - Else returns zeros so the UI still renders.
-    """
-    positions: Dict[str, Dict[str, float]] = {}
-    cash = 0.0  # keep zero unless you track deposits/withdrawals separately
+    if _FillModel is None:
+        return {
+            "positions": [],
+            "totals": {
+                "qty": 0.0, "notional": 0.0, "avg_cost": None, "delta": 0.0,
+                "pnl_open": 0.0, "pnl_day": 0.0, "cash": 10000.0, "equity": 10000.0,
+            },
+        }
 
-    def add_fill(sym: str, side: str, qty: float, px: float):
-        if not sym or qty <= 0 or not (px == px):  # NaN guard
-            return
-        side_u = str(side).upper()
-        sign = 1.0 if side_u == "BUY" else -1.0
-        p = positions.setdefault(sym, {"qty": 0.0, "notional": 0.0})
-        p["qty"] += sign * qty
-        p["notional"] += sign * qty * px
+    # Fetch all trades for this user
+    stmt = select(_FillModel).where(
+        (_FillModel.buyer_id == user.id) | (_FillModel.seller_id == user.id)
+    ).order_by(_FillModel.created_at)
 
-    # Path A: use fills/trades if present
-    if _FillModel is not None:
-        q = select(_FillModel).where(getattr(_FillModel, "user_id") == user.id)
-        rows = session.exec(q).all()
-        for f in rows:
-            sym = getattr(f, "symbol", None) or getattr(f, "sym", None) or ""
-            side = getattr(f, "side", "BUY")
-            qty = float(getattr(f, "qty", 0) or getattr(f, "quantity", 0) or 0)
-            px = float(getattr(f, "price", 0) or getattr(f, "px", 0) or 0)
-            add_fill(sym, side, qty, px)
+    trades = session.exec(stmt).all()
 
-    # Path B: fall back to 'filled' portion of Orders if available
-    elif _OrderModel is not None:
-        q = select(_OrderModel).where(getattr(_OrderModel, "user_id") == user.id)
-        rows = session.exec(q).all()
-        for o in rows:
-            sym = getattr(o, "symbol", None) or getattr(o, "sym", None) or ""
-            side = getattr(o, "side", "BUY")
-            qty = float(getattr(o, "filled_qty", None) or getattr(o, "qty", 0) or 0)
-            px = float(getattr(o, "avg_price", None) or getattr(o, "price", 0) or getattr(o, "px", 0) or 0)
-            if qty > 0 and px > 0:
-                add_fill(sym, side, qty, px)
+    # Build positions from trades
+    positions = {}
 
-    total_qty = sum(p["qty"] for p in positions.values()) if positions else 0.0
-    total_notional = sum(p["notional"] for p in positions.values()) if positions else 0.0
-    avg_cost = (abs(total_notional) / abs(total_qty)) if (total_qty and abs(total_qty) > 1e-12) else None
+    for trade in trades:
+        symbol = trade.symbol
+        price = Decimal(trade.price)
+        qty = Decimal(trade.qty)
 
-    pnl_open = 0.0
-    pnl_day = 0.0
-    delta = total_qty  # 1 share ≈ 1 delta in stock-only demo
-    equity = (cash + pnl_open)
+        if symbol not in positions:
+            positions[symbol] = {
+                "qty": Decimal("0"),
+                "total_cost": Decimal("0"),
+                "realized_pnl": Decimal("0"),
+            }
+
+        pos = positions[symbol]
+
+        # User is the buyer - going long
+        if trade.buyer_id == user.id:
+            if pos["qty"] >= 0:
+                # Opening or adding to long
+                pos["total_cost"] += price * qty
+                pos["qty"] += qty
+            else:
+                # Covering short
+                close_qty = min(qty, abs(pos["qty"]))
+                if pos["qty"] != 0:
+                    avg_short = abs(pos["total_cost"] / pos["qty"])
+                    pos["realized_pnl"] += (avg_short - price) * close_qty
+
+                pos["qty"] += qty
+                remaining = qty - close_qty
+
+                if pos["qty"] > 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+
+        # User is the seller - going short
+        if trade.seller_id == user.id:
+            if pos["qty"] <= 0:
+                # Opening or adding to short
+                pos["total_cost"] += price * qty
+                pos["qty"] -= qty
+            else:
+                # Closing long
+                close_qty = min(qty, pos["qty"])
+                if pos["qty"] != 0:
+                    avg_long = pos["total_cost"] / pos["qty"]
+                    pos["realized_pnl"] += (price - avg_long) * close_qty
+
+                pos["qty"] -= qty
+                remaining = qty - close_qty
+
+                if pos["qty"] < 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+
+    # Calculate totals
+    total_qty = Decimal("0")
+    total_notional = Decimal("0")
+    total_unrealized = Decimal("0")
+    total_realized = Decimal("0")
+
+    for symbol, pos in positions.items():
+        qty = pos["qty"]
+        total_cost = pos["total_cost"]
+        realized = pos["realized_pnl"]
+
+        ref_price = get_ref_price(symbol) or 0.0
+        ref_decimal = Decimal(str(ref_price))
+
+        # Calculate average cost
+        avg_cost = total_cost / abs(qty) if qty != 0 else Decimal("0")
+
+        # Calculate unrealized P&L
+        if qty > 0:
+            unrealized = (ref_decimal - avg_cost) * qty
+        elif qty < 0:
+            unrealized = (avg_cost - ref_decimal) * abs(qty)
+        else:
+            unrealized = Decimal("0")
+
+        notional = ref_decimal * abs(qty)
+
+        total_qty += qty
+        total_notional += notional
+        total_unrealized += unrealized
+        total_realized += realized
+
+    avg_cost = (total_notional / abs(total_qty)) if total_qty != 0 else None
+    starting_cash = 10000.0
+    cash = starting_cash + float(total_realized) - float(total_notional)
+    equity = cash + float(total_unrealized)
 
     return {
-        "positions": [{"symbol": s, **v} for s, v in positions.items()],
+        "positions": [],
         "totals": {
-            "qty": total_qty,
-            "notional": total_notional,
-            "avg_cost": avg_cost,
-            "delta": delta,
-            "pnl_open": pnl_open,
-            "pnl_day": pnl_day,
+            "qty": float(total_qty),
+            "notional": float(total_notional),
+            "avg_cost": float(avg_cost) if avg_cost else None,
+            "delta": float(total_qty),
+            "pnl_open": float(total_unrealized),
+            "pnl_day": float(total_unrealized),
             "cash": cash,
             "equity": equity,
         },
@@ -115,48 +180,95 @@ def me_summary(
 
 @router.get("/me/pnl")
 def me_pnl(
-    user=Depends(current_user),
-    session: Session = Depends(get_session),
+        user=Depends(current_user),
+        session: Session = Depends(get_session),
 ):
-    """
-    Return a time series for the P&L chart.
-
-    If a fills/trades table exists, we return cumulative cashflow as a proxy P&L:
-      PnL_t = -sum(BUY qty*px) + sum(SELL qty*px)
-    Otherwise, return an empty series (UI still renders).
-    """
+    """Return a time series for the P&L chart."""
     pts: List[Dict[str, float]] = []
 
     if _FillModel is None:
         return {"points": pts}
 
-    q = select(_FillModel).where(getattr(_FillModel, "user_id") == user.id)
-    try:
-        q = q.order_by(getattr(_FillModel, "created_at"))
-    except Exception:
-        pass
+    stmt = select(_FillModel).where(
+        (_FillModel.buyer_id == user.id) | (_FillModel.seller_id == user.id)
+    ).order_by(_FillModel.created_at)
 
-    pnl = 0.0
-    for f in session.exec(q).all():
-        side = str(getattr(f, "side", "BUY")).upper()
-        qty = float(getattr(f, "qty", 0) or getattr(f, "quantity", 0) or 0)
-        px = float(getattr(f, "price", 0) or getattr(f, "px", 0) or 0)
-        pnl += (-qty * px) if side == "BUY" else (qty * px)
+    trades = session.exec(stmt).all()
 
-        ts = getattr(f, "created_at", None)
+    # Track positions to calculate realized P&L over time
+    positions: Dict[str, Dict[str, Decimal]] = {}
+    cumulative_pnl = Decimal("0")
+
+    for trade in trades:
+        symbol = trade.symbol
+        price = Decimal(trade.price)
+        qty = Decimal(trade.qty)
+
+        if symbol not in positions:
+            positions[symbol] = {"qty": Decimal("0"), "total_cost": Decimal("0")}
+
+        pos = positions[symbol]
+        realized_this_trade = Decimal("0")
+
+        if trade.buyer_id == user.id:
+            # User is buying
+            if pos["qty"] < 0:
+                # Covering short
+                close_qty = min(qty, abs(pos["qty"]))
+                if pos["qty"] != 0:
+                    avg_short = abs(pos["total_cost"] / pos["qty"])
+                    realized_this_trade = (avg_short - price) * close_qty
+
+                remaining = qty - close_qty
+                pos["qty"] += qty
+
+                if pos["qty"] > 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+            else:
+                # Adding to long
+                pos["total_cost"] += price * qty
+                pos["qty"] += qty
+
+        if trade.seller_id == user.id:
+            # User is selling
+            if pos["qty"] > 0:
+                # Closing long
+                close_qty = min(qty, pos["qty"])
+                if pos["qty"] != 0:
+                    avg_long = pos["total_cost"] / pos["qty"]
+                    realized_this_trade = (price - avg_long) * close_qty
+
+                remaining = qty - close_qty
+                pos["qty"] -= qty
+
+                if pos["qty"] < 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+            else:
+                # Adding to short
+                pos["total_cost"] += price * qty
+                pos["qty"] -= qty
+
+        cumulative_pnl += realized_this_trade
+
+        ts = trade.created_at
         if ts and hasattr(ts, "timestamp"):
             tms = int(ts.timestamp() * 1000)
         else:
             tms = _now_ms()
-        pts.append({"t": tms, "y": pnl})
+
+        pts.append({"t": tms, "y": float(cumulative_pnl)})
 
     return {"points": pts}
 
 
-# ----------------------- OPEN ORDERS (OFFERS) + CANCEL -----------------------
+# ----------------------- OPEN ORDERS + CANCEL -----------------------
 
 def _normalize_open_orders(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Make sure the shape is friendly to the frontend (ids, numbers, created_at)."""
+    """Make sure the shape is friendly to the frontend."""
     out: List[Dict[str, Any]] = []
     for r in rows or []:
         qty = float(r.get("qty") or r.get("quantity") or 0.0)
@@ -172,95 +284,83 @@ def _normalize_open_orders(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             "status": r.get("status") or "OPEN",
             "created_at": r.get("created_at") or r.get("ts") or "",
         })
-    # newest first if time present
     out.sort(key=lambda v: v.get("created_at") or "", reverse=True)
     return out
 
 
 @router.get("/me/orders", include_in_schema=False)
-def my_open_orders(user=Depends(current_user)) -> List[Dict[str, Any]]:
-    """
-    List this user's OPEN/WORKING offers from the in-memory books.
-    Returns a PLAIN ARRAY (what app.js expects).
-    """
-    # Prefer the live in-memory book
-    try:
-        raw = list_user_orders(str(user.id))  # -> list[dict]
-        return _normalize_open_orders(raw)
-    except Exception:
-        pass
-
-    # Fallback to DB if available (kept for compatibility)
+def my_open_orders(
+        user=Depends(current_user),
+        session: Session = Depends(get_session)
+) -> List[Dict[str, Any]]:
+    """List open orders from database."""
     if _OrderModel is None:
         return []
-    # Note: we don't need a DB session for list_user_orders path; only for fallback.
-    # Use a short-lived session for safety.
-    return []  # if you want, you can paste your previous DB fallback here
 
+    stmt = select(_OrderModel).where(
+        _OrderModel.user_id == user.id,
+        _OrderModel.status == "OPEN"
+    ).order_by(_OrderModel.created_at.desc())
 
-def _cancel_db_order(order_id: str, user, session: Session) -> Dict[str, Any]:
-    """DB fallback cancel (optional)."""
-    if _OrderModel is None:
-        raise HTTPException(status_code=404, detail="Orders not supported")
+    orders = session.exec(stmt).all()
 
-    # Many DB schemas use int ids, but our API path accepts str (UUID for memory book).
-    # Best effort: try int conversion; if it fails, 404 for DB path.
-    try:
-        db_id = int(order_id)
-    except Exception:
-        raise HTTPException(status_code=404, detail="Order not found")
+    rows = []
+    for o in orders:
+        qty = Decimal(o.qty)
+        filled = Decimal(o.filled_qty)
+        rows.append({
+            "id": o.order_id,
+            "symbol": o.symbol,
+            "side": o.side,
+            "price": float(o.price),
+            "qty": float(qty),
+            "filled_qty": float(filled),
+            "status": o.status,
+            "created_at": o.created_at.isoformat(),
+        })
 
-    o = session.get(_OrderModel, db_id)
-    if not o or getattr(o, "user_id", None) != user.id:
-        raise HTTPException(status_code=404, detail="Order not found")
-
-    st = str(getattr(o, "status", "") or getattr(o, "state", "") or "").upper()
-    if st in {"CANCELED", "CANCELLED", "FILLED", "DONE", "REJECTED"}:
-        return {"ok": True, "status": st}
-
-    if hasattr(o, "status"):
-        setattr(o, "status", "CANCELLED")
-    if hasattr(o, "state"):
-        setattr(o, "state", "CANCELLED")
-    if hasattr(o, "is_active"):
-        try:
-            setattr(o, "is_active", False)
-        except Exception:
-            pass
-    session.add(o)
-    session.commit()
-    return {"ok": True, "status": "CANCELLED"}
+    return _normalize_open_orders(rows)
 
 
 def _cancel_any(order_id: str, user, session: Session) -> Dict[str, Any]:
-    # 1) Try live in-memory cancel
+    """Cancel order from both memory and database."""
+    # Try in-memory first
     try:
         ok = cancel_order_by_id(order_id, str(user.id))
-        if ok:
-            return {"ok": True, "status": "CANCELLED"}
+        if ok and _OrderModel:
+            # Update database
+            stmt = select(_OrderModel).where(
+                _OrderModel.order_id == order_id,
+                _OrderModel.user_id == user.id
+            )
+            db_order = session.exec(stmt).first()
+            if db_order:
+                db_order.status = "CANCELED"
+                db_order.updated_at = dt.datetime.utcnow()
+                session.add(db_order)
+                session.commit()
+            return {"ok": True, "status": "CANCELED"}
     except Exception:
         pass
-    # 2) Optional DB fallback
-    if _OrderModel is not None:
-        return _cancel_db_order(order_id, user, session)
+
     raise HTTPException(status_code=404, detail="Order not found")
 
 
 @router.post("/me/orders/{order_id}/cancel", include_in_schema=False)
 def cancel_my_order_post(
-    order_id: str,
-    user=Depends(current_user),
-    session: Session = Depends(get_session),
+        order_id: str,
+        user=Depends(current_user),
+        session: Session = Depends(get_session),
 ):
-    """Primary route used by the frontend (POST)."""
+    """Cancel order (POST)."""
     return _cancel_any(order_id, user, session)
 
 
 @router.delete("/orders/{order_id}", include_in_schema=False)
 def cancel_my_order_delete(
-    order_id: str,
-    user=Depends(current_user),
-    session: Session = Depends(get_session),
+        order_id: str,
+        user=Depends(current_user),
+        session: Session = Depends(get_session),
 ):
-    """Alias route (DELETE) used by your app.js."""
+    """Cancel order (DELETE)."""
     return _cancel_any(order_id, user, session)

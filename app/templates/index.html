@@ -1,110 +1,95 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>AlphaBook — Real-time Order Books</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#6c5ce7" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
 </head>
 <body>
-  <header class="topbar">
+  <div class="topbar">
     <div class="brand">
-      <div class="logo">A</div>
+      <div class="logo">α</div>
       <div class="titles">
-        <h1>AlphaBook</h1>
-        <span class="subtitle">Alpha Fund Quant Bootcamp</span>
+        <h1>{{ app_name }}</h1>
+        <div class="subtitle">Real-time Order Book</div>
       </div>
     </div>
-
-    <nav class="actions">
-      <!-- Show when logged OUT -->
-      <div id="loginBox">
-        <a class="btn ghost" href="/signup">Sign up</a>
-        <a class="btn ghost" href="/login">Log in</a>
+    <div class="actions">
+      <div id="loginBox" class="hidden">
+        <a href="/login" class="btn">Login</a>
+        <a href="/signup" class="btn">Sign up</a>
       </div>
-
-      <!-- Show when logged IN -->
       <div id="userBox" class="hidden">
-        <span>Signed in as <strong id="userName"></strong></span>
-        <form action="/logout" method="post" style="display:inline;">
-          <button id="btnLogout" class="btn ghost" type="submit">Logout</button>
+        <span id="userName">user</span>
+        <button id="open-order" class="btn primary">Place Order</button>
+        <form method="post" action="/logout" style="display:inline">
+          <button type="submit" class="btn ghost">Logout</button>
         </form>
       </div>
+    </div>
+  </div>
 
-      <button id="open-order" class="btn primary">Submit Order</button>
-    </nav>
-  </header>
-
-  <main class="container">
-    <!-- Live status -->
-    <section class="toolbar">
-      <div class="status">
-        <span class="dot pulse"></span>
-        <span>Live updates</span>
+  <div class="container">
+    <!-- Enhanced Account Section -->
+    <section id="account" class="hidden">
+      <div class="account-header">
+        <h2>Account Overview</h2>
+        <div class="account-meta" id="account-meta">Live</div>
       </div>
-      <div class="filters">
-        <label class="chip active">Top {{ depth }}</label>
-      </div>
-    </section>
 
-    <!-- P&L / Positions summary strip -->
-    <section id="account" class="account">
-      <div class="metrics">
-        <div class="metric">
-          <div class="label">Position</div>
-          <div class="value">
-            <span id="pos-qty">0</span>
-            @ <span id="pos-avg">--</span>
-          </div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Position Qty</div>
+          <div class="stat-value" id="pos-qty">--</div>
         </div>
-        <div class="metric">
-          <div class="label">Notional</div>
-          <div class="value" id="pos-notional">--</div>
+        <div class="stat-card">
+          <div class="stat-label">Avg Cost</div>
+          <div class="stat-value" id="pos-avg">--</div>
         </div>
-        <div class="metric">
-          <div class="label">Delta</div>
-          <div class="value" id="pos-delta">--</div>
+        <div class="stat-card">
+          <div class="stat-label">Notional</div>
+          <div class="stat-value" id="pos-notional">--</div>
         </div>
-        <div class="metric">
-          <div class="label">Day P&L</div>
-          <div class="value" id="pnl-day">--</div>
+        <div class="stat-card">
+          <div class="stat-label">Delta</div>
+          <div class="stat-value" id="pos-delta">--</div>
         </div>
-        <div class="metric">
-          <div class="label">Open P&L</div>
-          <div class="value" id="pnl-open">--</div>
+        <div class="stat-card highlight">
+          <div class="stat-label">Open P&L</div>
+          <div class="stat-value" id="pnl-open">--</div>
         </div>
-        <div class="metric">
-          <div class="label">Equity</div>
-          <div class="value">
-            <span id="equity">--</span>
-            <small class="muted"> (cash <span id="cash">--</span>)</small>
-          </div>
+        <div class="stat-card">
+          <div class="stat-label">Day P&L</div>
+          <div class="stat-value" id="pnl-day">--</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Cash</div>
+          <div class="stat-value" id="cash">--</div>
+        </div>
+        <div class="stat-card highlight">
+          <div class="stat-label">Equity</div>
+          <div class="stat-value" id="equity">--</div>
         </div>
       </div>
 
-      <!-- Large P&L chart -->
-      <div class="chart-wrap">
-        <canvas id="pnlChart" height="160"></canvas>
+      <div class="chart-container">
+        <h3>P&L Chart</h3>
+        <canvas id="pnlChart"></canvas>
       </div>
     </section>
 
-    <!-- My Orders (hidden until logged in) -->
-    <section id="orders-panel" class="card hidden" style="margin-top:12px;">
+    <!-- My Open Orders Section -->
+    <section id="orders-panel" class="card hidden" style="margin-top: 24px;">
       <div class="head">
-        <div class="sym">My Orders</div>
+        <div class="sym">My Open Orders (<span id="orders-count">0</span>)</div>
         <div class="meta">
-          <span id="orders-meta">—</span>
+          <span id="orders-meta">loading...</span>
         </div>
       </div>
-
-      <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-bottom:1px solid var(--border);">
-        <span class="badge" id="orders-count" style="background:#23304a; padding:4px 8px; border-radius:999px;">0</span>
-        <span class="muted">open</span>
-      </div>
-
-      <div style="padding:8px 12px 12px 12px;">
-        <table class="ladder tight" id="orders-table" style="width:100%;">
+      <div class="table-container">
+        <table class="orders-table">
           <thead>
             <tr>
               <th>Side</th>
@@ -112,75 +97,75 @@
               <th>Price</th>
               <th>Qty</th>
               <th>Filled</th>
-              <th>Remain</th>
+              <th>Remaining</th>
               <th>Status</th>
-              <th>Placed</th>
-              <th></th>
+              <th>Created</th>
+              <th>Action</th>
             </tr>
           </thead>
-          <tbody id="orders-body">
-            <tr><td colspan="9" style="text-align:center;color:var(--muted);">No open orders</td></tr>
-          </tbody>
+          <tbody id="orders-body"></tbody>
         </table>
       </div>
     </section>
 
-    <!-- Books grid -->
-    <section id="grid" class="grid"></section>
-  </main>
+    <!-- Order Book Grid -->
+    <div class="toolbar">
+      <div class="status">
+        <div class="dot pulse"></div>
+        <span>Live Market Data</span>
+      </div>
+    </div>
 
-  <footer class="footer">
-    <span>© AlphaBook</span>
-  </footer>
+    <div class="grid" id="grid"></div>
+  </div>
 
-  <!-- Order modal -->
-  <dialog id="order-modal" class="modal">
-    <form id="order-form" method="dialog" class="panel">
-      <header class="panel-head">
-        <h3>Submit Order</h3>
-        <button type="button" class="icon-close" id="close-order" aria-label="Close">✕</button>
-      </header>
-
-      <div class="panel-body">
-        <div class="field">
-          <label>Symbol</label>
-          <select id="ord-symbol"></select>
-        </div>
-
-        <div class="field">
-          <label>Side</label>
+  <!-- Order Modal -->
+  <dialog class="modal" id="order-modal">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Place Order</h3>
+        <button class="icon-close" id="close-order">✕</button>
+      </div>
+      <form id="order-form">
+        <div class="panel-body">
+          <div class="field">
+            <label>Symbol</label>
+            <select id="ord-symbol" required>
+              <option value="">Select symbol</option>
+            </select>
+          </div>
           <div class="seg">
             <label><input type="radio" name="side" value="BUY" checked> Buy</label>
             <label><input type="radio" name="side" value="SELL"> Sell</label>
           </div>
-        </div>
-
-        <div class="row-2">
-          <div class="field">
-            <label>Price</label>
-            <input id="ord-price" type="number" step="0.0001" required />
+          <div class="row-2">
+            <div class="field">
+              <label>Price</label>
+              <input type="number" id="ord-price" step="0.01" required>
+            </div>
+            <div class="field">
+              <label>Quantity</label>
+              <input type="number" id="ord-qty" step="0.01" required>
+            </div>
           </div>
-          <div class="field">
-            <label>Quantity</label>
-            <input id="ord-qty" type="number" step="0.0001" min="0" required />
-          </div>
+          <div class="small" id="ord-hint"></div>
         </div>
-
-        <div class="hint small" id="ord-hint"></div>
-      </div>
-
-      <footer class="panel-foot">
-        <button type="button" class="btn ghost" id="cancel-order">Cancel</button>
-        <button type="submit" class="btn primary">Place Order</button>
-      </footer>
-    </form>
+        <div class="panel-foot">
+          <button type="button" class="btn ghost" id="cancel-order">Cancel</button>
+          <button type="submit" class="btn primary">Submit Order</button>
+        </div>
+      </form>
+    </div>
   </dialog>
 
+  <div class="footer">
+    <p>{{ app_name }} • Demo Order Book Platform</p>
+  </div>
+
   <script>
-    window.SYMBOLS = {{ symbols_json | safe }};
+    window.SYMBOLS = {{ symbols_json|safe }};
     window.TOP_DEPTH = {{ depth }};
   </script>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

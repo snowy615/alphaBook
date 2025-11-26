@@ -288,19 +288,44 @@
         datasets: [{
           label: "P&L",
           data: [],
+          borderColor: "#6c5ce7",
+          backgroundColor: "rgba(108, 92, 231, 0.1)",
           borderWidth: 2,
-          fill: false,
+          fill: true,
           pointRadius: 0,
-          tension: 0.25
+          tension: 0.4
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            mode: 'index',
+            intersect: false,
+          }
+        },
         scales: {
-          x: { type: "linear", ticks: { callback: (v) => new Date(+v).toLocaleTimeString() }, grid: { display: false } },
-          y: { ticks: { callback: (v) => fmt(v) } }
+          x: {
+            type: "linear",
+            ticks: {
+              callback: (v) => new Date(+v).toLocaleTimeString(),
+              color: "#9aa3b2"
+            },
+            grid: {
+              color: "rgba(255, 255, 255, 0.05)"
+            }
+          },
+          y: {
+            ticks: {
+              callback: (v) => fmt(v),
+              color: "#9aa3b2"
+            },
+            grid: {
+              color: "rgba(255, 255, 255, 0.05)"
+            }
+          }
         }
       }
     });
@@ -325,25 +350,41 @@
   }
 
   function renderSummary(sum) {
-    const totals = sum?.totals || sum || {};
-    const qty = +(totals.qty ?? totals.position_qty ?? 0);
-    const notional = +(totals.notional ?? totals.gross ?? 0);
-    const delta = +(totals.delta ?? 0);
-    const pnlOpen = +(totals.pnl_open ?? totals.unrealized ?? 0);
-    const pnlDay = +(totals.pnl_day ?? totals.daily ?? 0);
-    const avg = +(totals.avg_cost ?? totals.avg ?? NaN);
-    const cash = +(totals.cash ?? NaN);
-    const equity = +(totals.equity ?? (isFinite(cash) ? cash + pnlOpen : NaN));
+  const totals = sum?.totals || sum || {};
+  const qty = +(totals.qty ?? totals.position_qty ?? 0);
+  const notional = +(totals.notional ?? totals.gross ?? 0);
+  const delta = +(totals.delta ?? 0);
+  const pnlOpen = +(totals.pnl_open ?? totals.unrealized ?? 0);
+  const pnlDay = +(totals.pnl_day ?? totals.daily ?? 0);
+  const avg = +(totals.avg_cost ?? totals.avg ?? NaN);
+  const cash = +(totals.cash ?? NaN);
+  const equity = +(totals.equity ?? (isFinite(cash) ? cash + pnlOpen : NaN));
 
-    $("#pos-qty") && ($("#pos-qty").textContent = fmt(qty));
-    $("#pos-avg") && ($("#pos-avg").textContent = isFinite(avg) ? fmt(avg) : "--");
-    $("#pos-notional") && ($("#pos-notional").textContent = fmt(notional));
-    $("#pos-delta") && ($("#pos-delta").textContent = fmt(delta));
-    $("#pnl-open") && ($("#pnl-open").textContent = fmt(pnlOpen));
-    $("#pnl-day") && ($("#pnl-day").textContent = fmt(pnlDay));
-    $("#cash") && ($("#cash").textContent = isFinite(cash) ? fmt(cash) : "--");
-    $("#equity") && ($("#equity").textContent = isFinite(equity) ? fmt(equity) : "--");
+  // Helper to set value with color coding
+  function setStatValue(id, value, colorize = false) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = fmt(value);
+
+    if (colorize && isFinite(value)) {
+      el.classList.remove("positive", "negative");
+      if (value > 0) {
+        el.classList.add("positive");
+      } else if (value < 0) {
+        el.classList.add("negative");
+      }
+    }
   }
+
+  setStatValue("pos-qty", qty);
+  setStatValue("pos-avg", isFinite(avg) ? avg : null);
+  setStatValue("pos-notional", notional);
+  setStatValue("pos-delta", delta);
+  setStatValue("pnl-open", pnlOpen, true);
+  setStatValue("pnl-day", pnlDay, true);
+  setStatValue("cash", isFinite(cash) ? cash : null);
+  setStatValue("equity", isFinite(equity) ? equity : null);
+}
 
   async function refreshAccount() {
     if (!isAuthed) return;
