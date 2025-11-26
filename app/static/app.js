@@ -185,7 +185,7 @@
   function prefill(sideFromClick) {
     const sym = selSym.value || SYMS[0] || "";
     const ref = lastRef[sym];
-    if (ref != null && isFinite(ref)) inpPx.value = Number(ref).toFixed(4);
+    if (ref != null && isFinite(ref)) inpPx.value = Number(ref).toFixed(2);
     if (!inpQty.value) inpQty.value = "1";
     if (sideFromClick) {
       const radio = form.querySelector(`input[name="side"][value="${sideFromClick}"]`);
