@@ -201,8 +201,10 @@
   closeBtn?.addEventListener("click", () => dlg.close());
   cancelBtn?.addEventListener("click", () => dlg.close());
   selSym?.addEventListener("change", prefill);
+/////////////////-- Quick Trade Slider Modal ----
+// Add this to app/static/app.js - replace the grid click handler
 
-    // ---- Quick Trade Slider Modal ----
+// ---- Quick Trade Slider Modal ----
   const quickTradeDlg = document.createElement('dialog');
   quickTradeDlg.className = 'modal';
   quickTradeDlg.id = 'quick-trade-modal';
@@ -251,7 +253,8 @@
     symbol: '',
     side: '',
     price: 0,
-    qty: 1
+    qty: 1,
+    maxQty: 100
   };
 
   const qtSlider = document.getElementById('qt-qty-slider');
@@ -334,17 +337,21 @@
     }
   });
 
-  function openQuickTrade(symbol, side, price) {
+  function openQuickTrade(symbol, side, price, maxQty) {
     if (!isAuthed) {
       location.href = "/login";
       return;
     }
 
+    // Convert maxQty to a reasonable integer, minimum 1
+    const max = Math.max(1, Math.floor(parseFloat(maxQty) || 100));
+
     qtState = {
       symbol: symbol,
       side: side,
       price: price,
-      qty: 1
+      qty: 1,
+      maxQty: max
     };
 
     document.getElementById('qt-title').textContent = `Quick ${side}`;
@@ -352,11 +359,89 @@
     document.getElementById('qt-side-label').className = `qt-side ${side.toLowerCase()}`;
     document.getElementById('qt-symbol').textContent = symbol;
     document.getElementById('qt-price').textContent = fmt(price);
+
+    // Update slider max and reset to 1
+    qtSlider.max = max;
     qtSlider.value = 1;
+    qtState.qty = 1;
+
+    // Update slider labels
+    const sliderLabels = document.querySelector('.slider-labels');
+    if (sliderLabels) {
+      const mid = Math.floor(max / 2);
+      sliderLabels.innerHTML = `
+        <span>1</span>
+        <span>${mid}</span>
+        <span>${max}</span>
+      `;
+    }
+
     qtHint.textContent = "";
 
     updateQuickTradeDisplay();
     quickTradeDlg.showModal();
+  }
+
+  // Update the renderLadder function to add Buy/Sell buttons
+  function renderLadder(sym, book) {
+    const body = document.getElementById(`ladder-body-${sym}`);
+    if (!body) return;
+    body.innerHTML = "";
+
+    const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>a.px-b.px);
+    const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>b.px-a.px);
+
+    // asks block
+    for (let i = asks.length - 1; i >= 0; i--) {
+      const a = asks[i];
+      const tr = document.createElement("tr");
+      tr.className = "row-ask";
+      tr.innerHTML = `
+        <td class="action-cell">
+          <button class="trade-btn buy-btn" data-sym="${sym}" data-side="BUY" data-px="${a.px}" data-qty="${a.qty}">Yours</button>
+        </td>
+        <td>${fmt(a.qty)}</td>
+        <td>${fmt(a.px)}</td>
+        <td class="div"></td>
+        <td></td>
+        <td></td>
+        <td class="action-cell"></td>
+      `;
+      body.appendChild(tr);
+    }
+
+    const bestAsk = asks[0]?.px ?? null;
+    const bestBid = bids[0]?.px ?? null;
+    const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
+    const mid = (bestAsk!=null && bestBid!=null) ? (bestAsk + bestBid)/2 : lastRef[sym] ?? null;
+    const midtr = document.createElement("tr");
+    midtr.className = "midrow";
+    midtr.innerHTML = `
+      <td colspan="7">
+        ${bestBid!=null && bestAsk!=null
+          ? `Spread: ${fmt(sp)} • Mid: ${fmt(mid)} • Best Bid: ${fmt(bestBid)} • Best Ask: ${fmt(bestAsk)}`
+          : `Waiting for depth…`}
+      </td>`;
+    body.appendChild(midtr);
+
+    // bids block
+    for (let i = 0; i < bids.length; i++) {
+      const b = bids[i];
+      const tr = document.createElement("tr");
+      tr.className = "row-bid";
+      tr.innerHTML = `
+        <td class="action-cell"></td>
+        <td></td>
+        <td></td>
+        <td class="div"></td>
+        <td>${fmt(b.px)}</td>
+        <td>${fmt(b.qty)}</td>
+        <td class="action-cell">
+          <button class="trade-btn sell-btn" data-sym="${sym}" data-side="SELL" data-px="${b.px}" data-qty="${b.qty}">Mine</button>
+        </td>
+      `;
+      body.appendChild(tr);
+    }
   }
 
   // Event delegation for trade buttons
@@ -367,11 +452,13 @@
     const sym = btn.dataset.sym;
     const side = btn.dataset.side;
     const px = parseFloat(btn.dataset.px);
+    const qty = btn.dataset.qty;
 
-    if (sym && side && isFinite(px)) {
-      openQuickTrade(sym, side, px);
+    if (sym && side && isFinite(px) && qty) {
+      openQuickTrade(sym, side, px, qty);
     }
   });
+  ///////////////
 
   form?.addEventListener("submit", async (e) => {
     e.preventDefault();
