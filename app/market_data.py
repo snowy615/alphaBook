@@ -27,7 +27,7 @@ STATIC_SEEDS = {
 
 # ---------- SSL toggle (TEMPORARY) ----------
 # Set SKIP_SSL_VERIFY=0 to re-enable verification.
-SKIP_SSL_VERIFY = str(os.getenv("SKIP_SSL_VERIFY", "1")).strip().lower() in ("1", "true", "yes", "y")
+SKIP_SSL_VERIFY = str(os.getenv("SKIP_SSL_VERIFY", "0")).strip().lower() in ("1", "true", "yes", "y")
 if SKIP_SSL_VERIFY:
     log.warning("[AV] SSL verification is DISABLED (temporary). Do not use in production.")
 
