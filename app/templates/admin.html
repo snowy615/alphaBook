@@ -198,9 +198,10 @@
       </div>
       <div class="nav-links">
         <a href="/">Trading</a>
-        <a href="/dashboard">Dashboard</a>
-        <a href="/admin" class="active">Admin</a>
         <span>{{ user.username }}</span>
+        <form method="post" action="/logout" style="display:inline; margin-left: 10px;">
+          <button type="submit" style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600;">Quit</button>
+        </form>
       </div>
     </div>
   </nav>
