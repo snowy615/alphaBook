@@ -82,6 +82,11 @@ async def current_user(
     user = get_user_from_token(token, session)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+
+    # Check if user is blacklisted
+    if user.is_blacklisted:
+        raise HTTPException(status_code=403, detail="Account has been suspended")
+
     return user
 
 # ----- HTML forms -----
@@ -102,7 +107,13 @@ def signup_submit(
             return templates.TemplateResponse(
                 "signup.html", {"request": request, "error": "Username already exists"}
             )
-        user = User(username=username, password_hash=hash_pw(password))
+        user = User(
+            username=username,
+            password_hash=hash_pw(password),
+            balance=10000.0,
+            is_admin=False,
+            is_blacklisted=False
+        )
         session.add(user); session.commit(); session.refresh(user)
         token = create_token(user.id)
         return _make_redirect_with_cookie(request, token, url="/")
@@ -116,12 +127,13 @@ def signup_submit(
 def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
+
 @router.post("/login", include_in_schema=False)
 def login_submit(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    session: Session = Depends(get_session),
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+        session: Session = Depends(get_session),
 ):
     try:
         user = session.exec(select(User).where(User.username == username)).first()
@@ -130,7 +142,10 @@ def login_submit(
                 "login.html", {"request": request, "error": "Invalid credentials"}
             )
         token = create_token(user.id)
-        return _make_redirect_with_cookie(request, token, url="/")
+
+        # Redirect admins to admin panel
+        redirect_url = "/admin" if user.is_admin else "/"
+        return _make_redirect_with_cookie(request, token, url=redirect_url)
     except Exception as e:
         log.exception("Login failed")
         return templates.TemplateResponse(

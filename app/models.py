@@ -6,6 +6,9 @@ class User(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     username: str = Field(index=True, unique=True)
     password_hash: str
+    balance: float = Field(default=10000.0)
+    is_admin: bool = Field(default=False)
+    is_blacklisted: bool = Field(default=False)
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
 class Order(SQLModel, table=True):

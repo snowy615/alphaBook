@@ -148,3 +148,10 @@ class OrderBook:
             "bids": [level(px, q) for px, q in bids],
             "asks": [level(px, q) for px, q in asks],
         }
+
+    def clear_all_orders(self):
+        """Clear all orders from in-memory book"""
+        from app.state import books
+        for sym in books:
+            books[sym].bids.clear()
+            books[sym].asks.clear()

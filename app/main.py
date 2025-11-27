@@ -18,6 +18,7 @@ from app.auth import router as auth_router, current_user
 from app.models import User, Order as DBOrder, Trade as DBTrade
 from app.me import router as me_router
 from app.state import books, locks
+from app import admin
 
 app = FastAPI(title="AlphaBook")
 
@@ -37,9 +38,33 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
 
 @app.on_event("startup")
 async def _startup():
-    init_db()
-    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
+    from app.auth import hash_pw
+    from sqlmodel import Session
 
+    init_db()
+
+    # Create admin user if doesn't exist
+    from app.db import engine
+    with Session(engine) as session:
+        admin = session.exec(select(User).where(User.username == "admin")).first()
+        if not admin:
+            admin = User(
+                username="admin",
+                password_hash=hash_pw("alphabook"),
+                balance=10000.0,
+                is_admin=True,
+                is_blacklisted=False
+            )
+            session.add(admin)
+            session.commit()
+            print("✅ Admin user created: username='admin', password='alphabook'")
+        else:
+            if not admin.is_admin:
+                admin.is_admin = True
+                session.add(admin)
+                session.commit()
+
+    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
 
 # ---- PnL helpers ----
 def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
@@ -335,3 +360,4 @@ async def _broadcast(symbol: str, payload: dict):
 # ---- Auth routes ----
 app.include_router(auth_router)
 app.include_router(me_router)
+app.include_router(admin.router)
