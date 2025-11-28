@@ -3,9 +3,10 @@ from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select, func
 from app.db import get_session
 from app.auth import current_user
-from app.models import User, Order, Trade
+from app.models import User, Order, Trade, CustomGame
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
+from pydantic import BaseModel
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -62,13 +63,112 @@ async def admin_dashboard(
     # Sort by P&L for leaderboard
     leaderboard = sorted(user_stats, key=lambda x: x["pnl"], reverse=True)
 
+    # Get custom games
+    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
+
     return templates.TemplateResponse("admin.html", {
         "request": request,
         "user": user,
         "users": user_stats,
         "leaderboard": leaderboard,
-        "total_users": len(users)
+        "total_users": len(users),
+        "games": games
     })
+
+
+# Custom Game Management
+class GameCreate(BaseModel):
+    symbol: str
+    name: str
+    instructions: str
+    expected_value: float
+
+
+@router.post("/admin/games")
+async def create_game(
+        game: GameCreate,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Create a new custom game"""
+    # Validate symbol format
+    symbol = game.symbol.upper().strip()
+    if not symbol.startswith("GAME"):
+        raise HTTPException(status_code=400, detail="Symbol must start with 'GAME'")
+
+    # Check if symbol already exists
+    existing = session.exec(select(CustomGame).where(CustomGame.symbol == symbol)).first()
+    if existing:
+        raise HTTPException(status_code=400, detail=f"Game with symbol {symbol} already exists")
+
+    new_game = CustomGame(
+        symbol=symbol,
+        name=game.name,
+        instructions=game.instructions,
+        expected_value=game.expected_value,
+        is_active=True,
+        created_by=admin.id
+    )
+
+    session.add(new_game)
+    session.commit()
+    session.refresh(new_game)
+
+    # Add to order books
+    from app.state import books
+    from app.order_book import OrderBook
+    books[symbol] = OrderBook()
+
+    return {"ok": True, "game": {
+        "id": new_game.id,
+        "symbol": new_game.symbol,
+        "name": new_game.name,
+        "instructions": new_game.instructions,
+        "expected_value": new_game.expected_value
+    }}
+
+
+@router.put("/admin/games/{game_id}")
+async def update_game(
+        game_id: int,
+        game: GameCreate,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Update a custom game"""
+    db_game = session.get(CustomGame, game_id)
+    if not db_game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    db_game.name = game.name
+    db_game.instructions = game.instructions
+    db_game.expected_value = game.expected_value
+    db_game.updated_at = dt.datetime.utcnow()
+
+    session.add(db_game)
+    session.commit()
+
+    return {"ok": True, "message": "Game updated"}
+
+
+@router.delete("/admin/games/{game_id}")
+async def delete_game(
+        game_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Deactivate a custom game"""
+    db_game = session.get(CustomGame, game_id)
+    if not db_game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    db_game.is_active = False
+    db_game.updated_at = dt.datetime.utcnow()
+
+    session.add(db_game)
+    session.commit()
+
+    return {"ok": True, "message": "Game deactivated"}
 
 
 @router.post("/admin/users/{user_id}/blacklist")

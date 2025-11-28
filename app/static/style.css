@@ -343,14 +343,30 @@ body{
 }
 
 /* News Card */
-.news-card {
+.news-card, .game-info-card {
   height: fit-content;
   max-height: 600px;
   overflow-y: auto;
 }
 
-.news-content {
+.news-content, .game-instructions {
   padding: 16px;
+}
+
+.game-instructions h4 {
+  margin: 0 0 12px 0;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+
+.game-instructions p {
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text);
+  margin: 0;
+  white-space: pre-wrap;
 }
 
 .news-item {

@@ -233,6 +233,7 @@
 
     <div class="admin-tabs">
       <button class="admin-tab active" onclick="switchTab('users')">All Users</button>
+      <button class="admin-tab" onclick="switchTab('games')">Custom Games</button>
       <button class="admin-tab" onclick="switchTab('leaderboard')">Leaderboard</button>
       <button class="admin-tab" onclick="switchTab('settings')">Settings</button>
     </div>
@@ -292,6 +293,196 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Custom Games Tab -->
+  <div id="games-tab" class="tab-content">
+    <div style="margin-bottom: 20px;">
+      <button class="btn primary" onclick="openGameModal()">Create New Game</button>
+    </div>
+
+    <table class="users-table">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Name</th>
+          <th>Instructions</th>
+          <th>Expected Value</th>
+          <th>Created</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for game in games %}
+        <tr>
+          <td><strong>{{ game.symbol }}</strong></td>
+          <td>{{ game.name }}</td>
+          <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+            {{ game.instructions }}
+          </td>
+          <td>${{ "%.2f" | format(game.expected_value) }}</td>
+          <td>{{ game.created_at.strftime('%Y-%m-%d') }}</td>
+          <td>
+            <button class="action-btn btn-blacklist" onclick="editGame({{ game.id }}, '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">Edit</button>
+            <button class="action-btn btn-delete" onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">Delete</button>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="6" style="text-align: center; color: var(--muted); padding: 40px;">
+            No custom games created yet. Click "Create New Game" to get started.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Game Modal -->
+  <dialog id="game-modal" class="modal">
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="game-modal-title">Create New Game</h3>
+        <button class="icon-close" onclick="closeGameModal()">✕</button>
+      </div>
+      <form id="game-form">
+        <div class="panel-body">
+          <div class="field">
+            <label>Symbol (must start with GAME)</label>
+            <input type="text" id="game-symbol" placeholder="GAME1" required pattern="GAME.*" />
+          </div>
+          <div class="field">
+            <label>Name (displayed to users)</label>
+            <input type="text" id="game-name" placeholder="Will it rain tomorrow?" required />
+          </div>
+          <div class="field">
+            <label>Instructions (displayed to users)</label>
+            <textarea id="game-instructions" rows="4"
+              placeholder="Trade YES if you think it will rain, NO if you think it won't. Market resolves at 8 PM tonight."
+              required style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; font-family: inherit;"></textarea>
+          </div>
+          <div class="field">
+            <label>Expected Value (hidden from users, used for P&L)</label>
+            <input type="number" id="game-expected" step="0.01" placeholder="100.00" required />
+          </div>
+          <div class="small" id="game-hint"></div>
+        </div>
+        <div class="panel-foot">
+          <button type="button" class="btn ghost" onclick="closeGameModal()">Cancel</button>
+          <button type="submit" class="btn primary" id="game-submit">Create Game</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <style>
+  .modal {
+    border: none;
+    padding: 0;
+    background: transparent;
+  }
+
+  .modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+  }
+  </style>
+
+  <script>
+  let editingGameId = null;
+
+  function openGameModal(editing = false) {
+    editingGameId = null;
+    document.getElementById('game-modal-title').textContent = 'Create New Game';
+    document.getElementById('game-submit').textContent = 'Create Game';
+    document.getElementById('game-form').reset();
+    document.getElementById('game-symbol').disabled = false;
+    document.getElementById('game-modal').showModal();
+  }
+
+  function editGame(id, symbol, name, instructions, expectedValue) {
+    editingGameId = id;
+    document.getElementById('game-modal-title').textContent = 'Edit Game';
+    document.getElementById('game-submit').textContent = 'Update Game';
+    document.getElementById('game-symbol').value = symbol;
+    document.getElementById('game-symbol').disabled = true;
+    document.getElementById('game-name').value = name;
+    document.getElementById('game-instructions').value = instructions;
+    document.getElementById('game-expected').value = expectedValue;
+    document.getElementById('game-modal').showModal();
+  }
+
+  function closeGameModal() {
+    document.getElementById('game-modal').close();
+    editingGameId = null;
+  }
+
+  document.getElementById('game-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const symbol = document.getElementById('game-symbol').value.toUpperCase().trim();
+    const name = document.getElementById('game-name').value.trim();
+    const instructions = document.getElementById('game-instructions').value.trim();
+    const expectedValue = parseFloat(document.getElementById('game-expected').value);
+
+    const hint = document.getElementById('game-hint');
+    const submitBtn = document.getElementById('game-submit');
+
+    hint.textContent = editingGameId ? 'Updating...' : 'Creating...';
+    submitBtn.disabled = true;
+
+    try {
+      const url = editingGameId ? `/admin/games/${editingGameId}` : '/admin/games';
+      const method = editingGameId ? 'PUT' : 'POST';
+
+      const res = await fetch(url, {
+        method: method,
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          symbol,
+          name,
+          instructions,
+          expected_value: expectedValue
+        })
+      });
+
+      if (res.ok) {
+        hint.textContent = editingGameId ? 'Game updated!' : 'Game created!';
+        setTimeout(() => {
+          closeGameModal();
+          location.reload();
+        }, 500);
+      } else {
+        const data = await res.json();
+        hint.textContent = 'Error: ' + (data.detail || 'Failed to save game');
+        submitBtn.disabled = false;
+      }
+    } catch (err) {
+      hint.textContent = 'Network error: ' + err.message;
+      submitBtn.disabled = false;
+    }
+  });
+
+  async function deleteGame(gameId, symbol) {
+    if (!confirm(`Are you sure you want to delete ${symbol}? This will deactivate the game but preserve trading history.`)) return;
+
+    try {
+      const res = await fetch(`/admin/games/${gameId}`, {
+        method: 'DELETE',
+        credentials: 'include'
+      });
+
+      if (res.ok) {
+        alert('Game deleted successfully');
+        location.reload();
+      } else {
+        const data = await res.json();
+        alert('Error: ' + (data.detail || 'Failed to delete game'));
+      }
+    } catch (err) {
+      alert('Network error: ' + err.message);
+    }
+  }
+  </script>
 
     <!-- Leaderboard Tab -->
     <div id="leaderboard-tab" class="tab-content">

@@ -36,3 +36,15 @@ class Trade(SQLModel, table=True):
     buy_order_id: str = Field(index=True)  # Reference to buyer's order
     sell_order_id: str = Field(index=True)  # Reference to seller's order
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow, index=True)
+
+class CustomGame(SQLModel, table=True):
+    """Custom trading games created by admins"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True, unique=True)  # e.g., "GAME1", "GAME2"
+    name: str  # Display name, e.g., "Will it rain tomorrow?"
+    instructions: str  # Instructions shown to users
+    expected_value: float  # True value used for P&L calculation (hidden from users)
+    is_active: bool = Field(default=True)
+    created_by: int = Field(foreign_key="user.id")
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)

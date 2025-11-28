@@ -154,10 +154,16 @@ def set_hint_mid(symbol: str, mid: Optional[float]) -> None:
         return
     _mid_hint[symbol.upper()] = float(mid)
 
+
 def get_ref_price(symbol: str) -> Optional[float]:
     sym = symbol.upper()
-    return _synth.get(sym) or _official.get(sym) or _mid_hint.get(sym)
 
+    # Check if it's a custom game
+    if sym.startswith("GAME"):
+        # For custom games, use mid hint from order book or default to 100
+        return _mid_hint.get(sym) or 100.0
+
+    return _synth.get(sym) or _official.get(sym) or _mid_hint.get(sym)
 def get_official_info() -> Dict[str, Dict[str, str]]:
     return _official_info
 

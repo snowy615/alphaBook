@@ -29,13 +29,17 @@
     grid.innerHTML = "";
 
     const SYMS = window.SYMBOLS || [];
+    const GAME_DATA = window.GAME_DATA || {};
 
     SYMS.forEach(sym => {
+      const isGame = sym.startsWith('GAME');
+      const displayName = isGame && GAME_DATA[sym] ? GAME_DATA[sym].name : sym;
+
       const card = document.createElement("div");
       card.className = "equity-card";
       card.innerHTML = `
         <div class="equity-icon">${sym.charAt(0)}</div>
-        <div class="equity-name">${sym}</div>
+        <div class="equity-name">${displayName}</div>
         <div class="equity-price" id="price-${sym}">Loading...</div>
         <div class="equity-change" id="change-${sym}">--</div>
       `;

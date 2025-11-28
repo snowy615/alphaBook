@@ -158,27 +158,65 @@ def _metrics_for(user_id: int):
 
 # ---- Pages ----
 @app.get("/", include_in_schema=False)
-def home(request: Request):
+def home(request: Request, session: Session = Depends(get_session)):
+    from app.models import CustomGame
+
+    # Get all symbols including custom games
+    all_symbols = list(DEFAULT_SYMBOLS)
+    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
+
+    game_data = {}
+    for game in games:
+        all_symbols.append(game.symbol)
+        game_data[game.symbol] = {
+            "name": game.name,
+            "instructions": game.instructions
+        }
+
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "app_name": "AlphaBook",
-            "symbols": DEFAULT_SYMBOLS,
-            "symbols_json": json.dumps(DEFAULT_SYMBOLS),
+            "symbols": all_symbols,
+            "symbols_json": json.dumps(all_symbols),
+            "game_data_json": json.dumps(game_data),
             "depth": TOP_DEPTH,
         },
     )
 
 
 @app.get("/trade/{symbol}", include_in_schema=False)
-def trade_page(symbol: str, request: Request):
+def trade_page(symbol: str, request: Request, session: Session = Depends(get_session)):
     """Individual trading page for a specific symbol"""
+    from app.models import CustomGame
+
     symbol = symbol.upper()
 
-    # Validate symbol
-    if symbol not in DEFAULT_SYMBOLS:
-        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+    # Check if it's a default symbol or custom game
+    is_custom_game = False
+    game_info = None
+
+    if symbol in DEFAULT_SYMBOLS:
+        # Regular equity
+        pass
+    else:
+        # Check if it's a custom game
+        game = session.exec(
+            select(CustomGame).where(
+                CustomGame.symbol == symbol,
+                CustomGame.is_active == True
+            )
+        ).first()
+
+        if not game:
+            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+
+        is_custom_game = True
+        game_info = {
+            "name": game.name,
+            "instructions": game.instructions
+        }
 
     return templates.TemplateResponse(
         "trading.html",
@@ -187,14 +225,26 @@ def trade_page(symbol: str, request: Request):
             "app_name": "AlphaBook",
             "symbol": symbol,
             "depth": TOP_DEPTH,
+            "is_custom_game": is_custom_game,
+            "game_info": game_info,
         },
     )
 
 
 # ---- Utils ----
 @app.get("/symbols")
-def get_symbols():
-    return {"symbols": DEFAULT_SYMBOLS}
+def get_symbols(session: Session = Depends(get_session)):
+    """Get all available symbols including custom games"""
+    from app.models import CustomGame
+
+    symbols = list(DEFAULT_SYMBOLS)
+
+    # Add active custom games
+    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
+    for game in games:
+        symbols.append(game.symbol)
+
+    return {"symbols": symbols}
 
 
 @app.get("/health")
