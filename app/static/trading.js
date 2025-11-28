@@ -21,8 +21,10 @@
 
   const SYMBOL = window.SYMBOL;
   const DEPTH = window.TOP_DEPTH || 10;
+  const IS_CUSTOM_GAME = window.SYMBOL.startsWith('GAME');
   let isAuthed = false;
   let lastRef = null;
+  let lastMid = null;
 
   // WebSocket connection
   function connectWS() {
@@ -60,10 +62,18 @@
 
   function setRef(price) {
     const el = $(`#ref-${SYMBOL}`);
-    if (!el) return;
-    const old = parseFloat(el.dataset.v || "NaN");
+    if (!el) return; // Element doesn't exist for custom games
+
+    // For custom games, compare against last mid price
+    const old = IS_CUSTOM_GAME ? lastMid : parseFloat(el.dataset.v || "NaN");
+
     el.dataset.v = price;
     lastRef = price;
+
+    if (IS_CUSTOM_GAME) {
+      lastMid = price;
+    }
+
     el.textContent = fmt(price);
 
     if (!isNaN(old) && !isNaN(price)) {
@@ -81,6 +91,16 @@
 
     const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>parseFloat(a.px)-parseFloat(b.px));
     const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>parseFloat(b.px)-parseFloat(a.px));
+
+    // Calculate mid price from order book
+    const bestAsk = asks[0] ? parseFloat(asks[0].px) : null;
+    const bestBid = bids[0] ? parseFloat(bids[0].px) : null;
+    const mid = (bestAsk !== null && bestBid !== null) ? (bestAsk + bestBid) / 2 : null;
+
+    // For custom games, update the price display with mid price
+    if (IS_CUSTOM_GAME && mid !== null) {
+      setRef(mid);
+    }
 
     // Asks block
     for (let i = asks.length - 1; i >= 0; i--) {
@@ -102,10 +122,7 @@
     }
 
     // Mid row
-    const bestAsk = asks[0] ? parseFloat(asks[0].px) : null;
-    const bestBid = bids[0] ? parseFloat(bids[0].px) : null;
     const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
-    const mid = (bestAsk!=null && bestBid!=null) ? (bestAsk + bestBid)/2 : lastRef ?? null;
 
     const midtr = document.createElement("tr");
     midtr.className = "midrow";
@@ -182,7 +199,7 @@
     try {
       const res = await fetch("/orders", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           "Accept": "application/json"
         },
@@ -340,7 +357,7 @@
     try {
       const res = await fetch("/orders", {
         method: "POST",
-        headers: { 
+        headers: {
           "Content-Type": "application/json",
           "Accept": "application/json"
         },

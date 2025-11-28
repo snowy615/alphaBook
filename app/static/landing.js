@@ -63,8 +63,28 @@
 
   async function fetchPrice(sym) {
     try {
-      const data = await fetchJSON(`/reference/${sym}`);
-      const price = data.price;
+      const isGame = sym.startsWith('GAME');
+      let price;
+
+      if (isGame) {
+        // For custom games, fetch order book and calculate mid price
+        const book = await fetchJSON(`/book/${sym}`);
+        const bids = book.bids || [];
+        const asks = book.asks || [];
+
+        if (bids.length > 0 && asks.length > 0) {
+          const bestBid = parseFloat(bids[0].px);
+          const bestAsk = parseFloat(asks[0].px);
+          price = (bestBid + bestAsk) / 2;
+        } else {
+          // No orders yet, show default
+          price = 100.0;
+        }
+      } else {
+        // For regular equities, use reference price
+        const data = await fetchJSON(`/reference/${sym}`);
+        price = data.price;
+      }
 
       const priceEl = $(`#price-${sym}`);
       const changeEl = $(`#change-${sym}`);
