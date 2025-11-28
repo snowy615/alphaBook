@@ -49,17 +49,17 @@
         <section class="card order-book-card">
           <div class="head">
             <div class="sym">{{ symbol }}</div>
-            <div class="ref" id="ref-{{ symbol_safe }}">--</div>
+            <div class="ref" id="ref-{{ symbol }}">--</div>
           </div>
           <div class="meta">
-            <span id="meta-{{ symbol_safe }}">waiting for data…</span>
+            <span id="meta-{{ symbol }}">waiting for data…</span>
           </div>
 
           <div class="order-actions">
             <button id="open-order" class="btn primary">Place Order</button>
           </div>
 
-          <table class="ladder" id="ladder-{{ symbol_safe }}">
+          <table class="ladder" id="ladder-{{ symbol }}">
             <thead>
               <tr>
                 <th></th>
@@ -71,7 +71,7 @@
                 <th></th>
               </tr>
             </thead>
-            <tbody id="ladder-body-{{ symbol_safe }}"></tbody>
+            <tbody id="ladder-body-{{ symbol }}"></tbody>
           </table>
         </section>
       </div>

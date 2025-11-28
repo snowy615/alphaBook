@@ -20,7 +20,6 @@
   };
 
   const SYMBOL = window.SYMBOL;
-  const SYMBOL_SAFE = SYMBOL.replace(/[^a-zA-Z0-9]/g, '_'); // Safe for CSS selectors
   const DEPTH = window.TOP_DEPTH || 10;
   const IS_CUSTOM_GAME = window.SYMBOL.startsWith('GAME');
   let isAuthed = false;
@@ -57,12 +56,12 @@
   }
 
   function setMeta(text) {
-    const el = $(`#meta-${SYMBOL_SAFE}`);
+    const el = $(`#meta-${SYMBOL}`);
     if (el) el.textContent = text;
   }
 
   function setRef(price) {
-    const el = $(`#ref-${SYMBOL_SAFE}`);
+    const el = $(`#ref-${SYMBOL}`);
     if (!el) return; // Element doesn't exist for custom games
 
     // For custom games, compare against last mid price
@@ -86,7 +85,7 @@
   }
 
   function renderLadder(book) {
-    const body = $(`#ladder-body-${SYMBOL_SAFE}`);
+    const body = $(`#ladder-body-${SYMBOL}`);
     if (!body) return;
     body.innerHTML = "";
 
