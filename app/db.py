@@ -46,7 +46,6 @@ def init_db():
         print(f"❌ Error creating tables: {e}")
         raise
 
-
 def get_session():
     with Session(engine) as session:
         yield session
