@@ -72,10 +72,6 @@
       el.classList.add("blink");
       setTimeout(() => el.classList.remove("blink"), 400);
     }
-
-    // Update position current price
-    const currentEl = $("#pos-current");
-    if (currentEl) currentEl.textContent = fmt(price);
   }
 
   function renderLadder(book) {
@@ -178,16 +174,23 @@
       qty: String(qtState.qty)
     };
 
+    console.log("Submitting order:", payload); // DEBUG
+
     qtHint.textContent = "Submitting...";
     $("#qt-submit").disabled = true;
 
     try {
       const res = await fetch("/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify(payload),
-        credentials: "same-origin"
+        credentials: "include"
       });
+
+      console.log("Response status:", res.status); // DEBUG
 
       if (res.status === 401) {
         qtHint.textContent = "You need to log in to place orders.";
@@ -196,13 +199,24 @@
       }
 
       const text = await res.text();
+      console.log("Response text:", text); // DEBUG
+
       if (!res.ok) {
         qtHint.textContent = "Error: " + (text || res.status);
         $("#qt-submit").disabled = false;
         return;
       }
 
-      const ack = JSON.parse(text);
+      let ack;
+      try {
+        ack = JSON.parse(text);
+      } catch (e) {
+        console.error("JSON parse error:", e, text);
+        qtHint.textContent = "Error: Invalid server response";
+        $("#qt-submit").disabled = false;
+        return;
+      }
+
       qtHint.textContent = `Success! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
 
       if (ack?.snapshot) renderLadder(ack.snapshot);
@@ -214,8 +228,8 @@
         $("#qt-submit").disabled = false;
       }, 700);
     } catch (err) {
-      console.error(err);
-      qtHint.textContent = "Network error submitting order.";
+      console.error("Order submission error:", err);
+      qtHint.textContent = "Network error: " + err.message;
       $("#qt-submit").disabled = false;
     }
   });
@@ -320,14 +334,21 @@
       qty: String(qtyNum)
     };
 
+    console.log("Submitting order (modal):", payload); // DEBUG
+
     hint.textContent = "Submitting…";
     try {
       const res = await fetch("/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { 
+          "Content-Type": "application/json",
+          "Accept": "application/json"
+        },
         body: JSON.stringify(payload),
-        credentials: "same-origin"
+        credentials: "include"
       });
+
+      console.log("Response status (modal):", res.status); // DEBUG
 
       if (res.status === 401) {
         hint.textContent = "You need to log in to place orders.";
@@ -336,12 +357,22 @@
       }
 
       const text = await res.text();
+      console.log("Response text (modal):", text); // DEBUG
+
       if (!res.ok) {
         hint.textContent = "Error: " + (text || res.status);
         return;
       }
 
-      const ack = JSON.parse(text);
+      let ack;
+      try {
+        ack = JSON.parse(text);
+      } catch (e) {
+        console.error("JSON parse error:", e, text);
+        hint.textContent = "Error: Invalid server response";
+        return;
+      }
+
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
       inpQty.value = "";
 
@@ -350,8 +381,8 @@
 
       setTimeout(() => dlg.close(), 700);
     } catch (err) {
-      console.error(err);
-      hint.textContent = "Network error submitting order.";
+      console.error("Order submission error (modal):", err);
+      hint.textContent = "Network error: " + err.message;
     }
   });
 
