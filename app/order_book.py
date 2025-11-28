@@ -150,8 +150,12 @@ class OrderBook:
         }
 
     def clear_all_orders(self):
-        """Clear all orders from in-memory book"""
-        from app.state import books
-        for sym in books:
-            books[sym].bids.clear()
-            books[sym].asks.clear()
+        """Clear all orders from this book"""
+        self.bids.clear()
+        self.asks.clear()
+
+def clear_all_orders():
+    """Clear all orders from all books"""
+    from app.state import books
+    for book in books.values():
+        book.clear_all_orders()
