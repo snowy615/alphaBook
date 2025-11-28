@@ -224,6 +224,7 @@ def trade_page(symbol: str, request: Request, session: Session = Depends(get_ses
             "request": request,
             "app_name": "AlphaBook",
             "symbol": symbol,
+            "symbol_safe": symbol.replace(' ', '_').replace('-', '_'),  # Safe for CSS
             "depth": TOP_DEPTH,
             "is_custom_game": is_custom_game,
             "game_info": game_info,

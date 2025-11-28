@@ -97,6 +97,11 @@ async def create_game(
     if not symbol.startswith("GAME"):
         raise HTTPException(status_code=400, detail="Symbol must start with 'GAME'")
 
+    # Check for invalid characters (only alphanumeric allowed)
+    if not symbol.replace('GAME', '').replace('_', '').isalnum():
+        raise HTTPException(status_code=400,
+                            detail="Symbol can only contain letters, numbers, and underscores (no spaces or special characters)")
+
     # Check if symbol already exists
     existing = session.exec(select(CustomGame).where(CustomGame.symbol == symbol)).first()
     if existing:
