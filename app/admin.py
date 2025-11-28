@@ -3,7 +3,7 @@ from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select, func
 from app.db import get_session
 from app.auth import current_user
-from app.models import User, Order, Trade, CustomGame
+from app.models import User, Order, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
@@ -83,6 +83,12 @@ class GameCreate(BaseModel):
     name: str
     instructions: str
     expected_value: float
+class NewsCreate(BaseModel):
+    content: str  # creat news
+
+
+class NewsUpdate(BaseModel):
+    content: str  # edit news
 
 
 @router.post("/admin/games")
@@ -274,3 +280,66 @@ async def reset_all_users(
     clear_all_orders()
 
     return {"ok": True, "message": "All users reset to initial state"}
+
+@router.post("/admin/news")
+async def admin_create_news(
+    payload: NewsCreate,
+    admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Admin add news"""
+    item = MarketNews(content=payload.content)
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return {
+        "ok": True,
+        "news": {
+            "id": item.id,
+            "content": item.content,
+            "created_at": item.created_at.isoformat(),
+        },
+    }
+
+
+@router.put("/admin/news/{news_id}")
+async def admin_update_news(
+    news_id: int,
+    payload: NewsUpdate,
+    admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Admin edit existing news"""
+    item = session.get(MarketNews, news_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="News not found")
+
+    item.content = payload.content
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+
+    return {
+        "ok": True,
+        "news": {
+            "id": item.id,
+            "content": item.content,
+            "created_at": item.created_at.isoformat(),
+        },
+    }
+
+
+@router.delete("/admin/news/{news_id}")
+async def admin_delete_news(
+    news_id: int,
+    admin: User = Depends(require_admin),
+    session: Session = Depends(get_session),
+):
+    """Admin delete news"""
+    item = session.get(MarketNews, news_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="News not found")
+
+    session.delete(item)
+    session.commit()
+    return {"ok": True}
