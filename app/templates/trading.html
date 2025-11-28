@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ symbol }} - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+</head>
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit;">
+        <div class="logo">α</div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Back to Equities</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <div id="loginBox" class="hidden">
+        <a href="/login" class="btn">Login</a>
+        <a href="/signup" class="btn">Sign up</a>
+      </div>
+      <div id="userBox" class="hidden">
+        <span id="userName">user</span>
+        <form method="post" action="/logout" style="display:inline">
+          <button type="submit" class="btn ghost">Logout</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="container trading-container">
+    <!-- Position Summary at Top -->
+    <section id="position-summary" class="position-card-simple">
+      <div class="position-simple-content">
+        <span class="position-label">{{ symbol }} Position</span>
+        <span class="position-value" id="pos-qty">0.00</span>
+        <span class="position-live">Live</span>
+      </div>
+    </section>
+
+    <!-- Two Column Layout: Order Book & News -->
+    <div class="trading-layout">
+      <!-- Left Column: Order Book -->
+      <div class="left-column">
+        <section class="card order-book-card">
+          <div class="head">
+            <div class="sym">{{ symbol }}</div>
+            <div class="ref" id="ref-{{ symbol }}">--</div>
+          </div>
+          <div class="meta">
+            <span id="meta-{{ symbol }}">waiting for data…</span>
+          </div>
+
+          <div class="order-actions">
+            <button id="open-order" class="btn primary">Place Order</button>
+          </div>
+
+          <table class="ladder" id="ladder-{{ symbol }}">
+            <thead>
+              <tr>
+                <th></th>
+                <th>Ask&nbsp;Qty</th>
+                <th>Ask&nbsp;Px</th>
+                <th class="div">—</th>
+                <th>Bid&nbsp;Px</th>
+                <th>Bid&nbsp;Qty</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="ladder-body-{{ symbol }}"></tbody>
+          </table>
+        </section>
+      </div>
+
+      <!-- Right Column: News/Updates -->
+      <div class="right-column">
+        <section class="card news-card">
+          <div class="head">
+            <div class="sym">Market Updates</div>
+          </div>
+          <div class="news-content" id="news-content">
+            <div class="news-item">
+              <div class="news-time">Just now</div>
+              <div class="news-title">{{ symbol }} Trading Active</div>
+              <div class="news-text">Real-time order book data streaming.</div>
+            </div>
+            <div class="news-item">
+              <div class="news-time">5 min ago</div>
+              <div class="news-title">Market Open</div>
+              <div class="news-text">All equities available for trading.</div>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+
+  <!-- Order Modal -->
+  <dialog class="modal" id="order-modal">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Place Order - {{ symbol }}</h3>
+        <button class="icon-close" id="close-order">✕</button>
+      </div>
+      <form id="order-form">
+        <div class="panel-body">
+          <div class="seg">
+            <label><input type="radio" name="side" value="BUY" checked> Buy</label>
+            <label><input type="radio" name="side" value="SELL"> Sell</label>
+          </div>
+          <div class="row-2">
+            <div class="field">
+              <label>Price</label>
+              <input type="number" id="ord-price" step="0.01" required>
+            </div>
+            <div class="field">
+              <label>Quantity</label>
+              <input type="number" id="ord-qty" step="1" min="1" required>
+            </div>
+          </div>
+          <div class="small" id="ord-hint"></div>
+        </div>
+        <div class="panel-foot">
+          <button type="button" class="btn ghost" id="cancel-order">Cancel</button>
+          <button type="submit" class="btn primary">Submit Order</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
+  <!-- Quick Trade Modal -->
+  <dialog class="modal" id="quick-trade-modal">
+    <div class="panel">
+      <div class="panel-head">
+        <h3 id="qt-title">Quick Trade</h3>
+        <button class="icon-close" id="qt-close">✕</button>
+      </div>
+      <div class="panel-body">
+        <div class="qt-info">
+          <div class="qt-side" id="qt-side-label">BUY</div>
+          <div class="qt-symbol" id="qt-symbol">{{ symbol }}</div>
+          <div class="qt-price-label">at</div>
+          <div class="qt-price" id="qt-price">150.00</div>
+        </div>
+
+        <div class="field">
+          <label>Quantity: <span id="qt-qty-display">1</span></label>
+          <input type="range" id="qt-qty-slider" min="1" max="100" value="1" step="1">
+          <div class="slider-labels">
+            <span>1</span>
+            <span>50</span>
+            <span>100</span>
+          </div>
+        </div>
+
+        <div class="qt-summary">
+          <div class="qt-summary-row">
+            <span>Notional:</span>
+            <span id="qt-notional">$150.00</span>
+          </div>
+        </div>
+
+        <div class="small" id="qt-hint"></div>
+      </div>
+      <div class="panel-foot">
+        <button type="button" class="btn ghost" id="qt-cancel">Cancel</button>
+        <button type="button" class="btn primary" id="qt-submit">Submit Order</button>
+      </div>
+    </div>
+  </dialog>
+
+  <div class="footer">
+    <p>{{ app_name }} • {{ symbol }} Trading</p>
+  </div>
+
+  <script>
+    window.SYMBOL = "{{ symbol }}";
+    window.TOP_DEPTH = {{ depth }};
+  </script>
+  <script src="/static/trading.js"></script>
+</body>
+</html>

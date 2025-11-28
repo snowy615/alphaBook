@@ -154,6 +154,7 @@ class OrderBook:
         self.bids.clear()
         self.asks.clear()
 
+
 def clear_all_orders():
     """Clear all orders from all books"""
     from app.state import books

@@ -40,31 +40,72 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
 async def _startup():
     from app.auth import hash_pw
     from sqlmodel import Session
+    import time as time_module
+    import traceback
 
-    init_db()
+    print("=" * 60)
+    print("🚀 AlphaBook Starting Up...")
+    print("=" * 60)
+
+    # Initialize database and create tables
+    try:
+        print("🔄 Initializing database...")
+        init_db()
+        print("✅ Database tables created/verified")
+
+        # Give the database a moment to be ready
+        time_module.sleep(0.5)
+
+    except Exception as e:
+        print(f"❌ FATAL: Database initialization error: {e}")
+        traceback.print_exc()
+        raise  # Stop startup if database fails
 
     # Create admin user if doesn't exist
-    from app.db import engine
-    with Session(engine) as session:
-        admin = session.exec(select(User).where(User.username == "admin")).first()
-        if not admin:
-            admin = User(
-                username="admin",
-                password_hash=hash_pw("alphabook"),
-                balance=10000.0,
-                is_admin=True,
-                is_blacklisted=False
-            )
-            session.add(admin)
-            session.commit()
-            print("✅ Admin user created: username='admin', password='alphabook'")
-        else:
-            if not admin.is_admin:
-                admin.is_admin = True
-                session.add(admin)
-                session.commit()
+    max_retries = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            from app.db import engine
+            print(f"🔄 Setting up admin user (attempt {attempt}/{max_retries})...")
 
+            with Session(engine) as session:
+                admin = session.exec(select(User).where(User.username == "admin")).first()
+                if not admin:
+                    admin = User(
+                        username="admin",
+                        password_hash=hash_pw("alphabook"),
+                        balance=10000.0,
+                        is_admin=True,
+                        is_blacklisted=False
+                    )
+                    session.add(admin)
+                    session.commit()
+                    print("✅ Admin user created: username='admin', password='alphabook'")
+                else:
+                    if not admin.is_admin:
+                        admin.is_admin = True
+                        session.add(admin)
+                        session.commit()
+                    print(f"✅ Admin user verified: {admin.username}")
+            break  # Success, exit retry loop
+
+        except Exception as e:
+            print(f"⚠️ Admin user setup error (attempt {attempt}/{max_retries}): {e}")
+            if attempt == max_retries:
+                print("❌ FATAL: Could not set up admin user after retries")
+                traceback.print_exc()
+                raise
+            time_module.sleep(1)
+
+    # Start market data engine
+    print("🔄 Starting market data engine...")
     asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
+    print("✅ Market data engine started")
+
+    print("=" * 60)
+    print("✅ AlphaBook Started Successfully!")
+    print("=" * 60)
+
 
 # ---- PnL helpers ----
 def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
@@ -125,6 +166,26 @@ def home(request: Request):
             "app_name": "AlphaBook",
             "symbols": DEFAULT_SYMBOLS,
             "symbols_json": json.dumps(DEFAULT_SYMBOLS),
+            "depth": TOP_DEPTH,
+        },
+    )
+
+
+@app.get("/trade/{symbol}", include_in_schema=False)
+def trade_page(symbol: str, request: Request):
+    """Individual trading page for a specific symbol"""
+    symbol = symbol.upper()
+
+    # Validate symbol
+    if symbol not in DEFAULT_SYMBOLS:
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
+
+    return templates.TemplateResponse(
+        "trading.html",
+        {
+            "request": request,
+            "app_name": "AlphaBook",
+            "symbol": symbol,
             "depth": TOP_DEPTH,
         },
     )
