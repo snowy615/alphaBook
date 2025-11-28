@@ -48,3 +48,9 @@ class CustomGame(SQLModel, table=True):
     created_by: int = Field(foreign_key="user.id")
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+class MarketNews(SQLModel, table=True):
+    """Simple market news item that admins can publish."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    content: str  # text 
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
