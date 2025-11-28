@@ -5,6 +5,8 @@ from decimal import Decimal
 from typing import Dict, Set, List
 import datetime as dt
 
+from pydantic import BaseModel
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -35,6 +37,21 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
     lambda: defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
 )
 
+class NewsOut(BaseModel):
+    id: int
+    content: str
+    created_at: dt.datetime
+
+    class Config:
+        from_attributes = True
+
+@app.get("/news", response_model=List[NewsOut])
+def get_news(limit: int = 20, session: Session = Depends(get_session)):
+    from app.models import MarketNews
+    items = session.exec(
+        select(MarketNews).order_by(MarketNews.created_at.desc()).limit(limit)
+    ).all()
+    return items
 
 @app.on_event("startup")
 async def _startup():
