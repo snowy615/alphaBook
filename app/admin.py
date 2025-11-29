@@ -8,6 +8,7 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
+from decimal import Decimal
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -19,6 +20,113 @@ def require_admin(user: User = Depends(current_user)):
     if not user.is_admin:
         raise HTTPException(status_code=403, detail="Admin access required")
     return user
+
+
+def calculate_user_pnl(user_id: int, session: Session) -> float:
+    """Calculate P&L for a user considering expected values for custom games"""
+    from app.market_data import get_ref_price
+
+    # Get all trades for this user
+    trades = session.exec(
+        select(Trade).where(
+            (Trade.buyer_id == user_id) | (Trade.seller_id == user_id)
+        )
+    ).all()
+
+    # Get all custom games with their expected values
+    games = session.exec(select(CustomGame)).all()
+    game_expected_values = {game.symbol: float(game.expected_value) for game in games}
+
+    # Track positions
+    positions = {}
+
+    for trade in trades:
+        symbol = trade.symbol
+        price = Decimal(trade.price)
+        qty = Decimal(trade.qty)
+
+        if symbol not in positions:
+            positions[symbol] = {
+                "qty": Decimal("0"),
+                "total_cost": Decimal("0"),
+                "realized_pnl": Decimal("0")
+            }
+
+        pos = positions[symbol]
+
+        # User is buyer
+        if trade.buyer_id == user_id:
+            if pos["qty"] >= 0:
+                # Opening/adding to long
+                pos["total_cost"] += price * qty
+                pos["qty"] += qty
+            else:
+                # Covering short
+                close_qty = min(qty, abs(pos["qty"]))
+                if pos["qty"] != 0:
+                    avg_short = abs(pos["total_cost"] / pos["qty"])
+                    pos["realized_pnl"] += (avg_short - price) * close_qty
+
+                pos["qty"] += qty
+                remaining = qty - close_qty
+
+                if pos["qty"] > 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+
+        # User is seller
+        if trade.seller_id == user_id:
+            if pos["qty"] <= 0:
+                # Opening/adding to short
+                pos["total_cost"] += price * qty
+                pos["qty"] -= qty
+            else:
+                # Closing long
+                close_qty = min(qty, pos["qty"])
+                if pos["qty"] != 0:
+                    avg_long = pos["total_cost"] / pos["qty"]
+                    pos["realized_pnl"] += (price - avg_long) * close_qty
+
+                pos["qty"] -= qty
+                remaining = qty - close_qty
+
+                if pos["qty"] < 0:
+                    pos["total_cost"] = price * remaining
+                elif pos["qty"] == 0:
+                    pos["total_cost"] = Decimal("0")
+
+    # Calculate total P&L
+    total_pnl = Decimal("0")
+
+    for symbol, pos in positions.items():
+        qty = pos["qty"]
+        total_cost = pos["total_cost"]
+        realized = pos["realized_pnl"]
+
+        # Determine reference price: use expected value for games, market price for equities
+        if symbol in game_expected_values:
+            ref_price = Decimal(str(game_expected_values[symbol]))
+        else:
+            market_ref = get_ref_price(symbol)
+            ref_price = Decimal(str(market_ref)) if market_ref else Decimal("0")
+
+        # Calculate unrealized P&L
+        if qty != 0 and total_cost != 0:
+            avg_cost = total_cost / abs(qty)
+
+            if qty > 0:
+                # Long position
+                unrealized = (ref_price - avg_cost) * qty
+            else:
+                # Short position
+                unrealized = (avg_cost - ref_price) * abs(qty)
+        else:
+            unrealized = Decimal("0")
+
+        total_pnl += realized + unrealized
+
+    return float(total_pnl)
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -46,8 +154,8 @@ async def admin_dashboard(
             )
         ).one()
 
-        # Calculate P&L
-        pnl = u.balance - 10000.0
+        # Calculate P&L using expected values for games
+        pnl = calculate_user_pnl(u.id, session)
 
         user_stats.append({
             "id": u.id,
@@ -83,6 +191,8 @@ class GameCreate(BaseModel):
     name: str
     instructions: str
     expected_value: float
+
+
 class NewsCreate(BaseModel):
     content: str  # creat news
 
@@ -281,11 +391,12 @@ async def reset_all_users(
 
     return {"ok": True, "message": "All users reset to initial state"}
 
+
 @router.post("/admin/news")
 async def admin_create_news(
-    payload: NewsCreate,
-    admin: User = Depends(require_admin),
-    session: Session = Depends(get_session),
+        payload: NewsCreate,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session),
 ):
     """Admin add news"""
     item = MarketNews(content=payload.content)
@@ -304,10 +415,10 @@ async def admin_create_news(
 
 @router.put("/admin/news/{news_id}")
 async def admin_update_news(
-    news_id: int,
-    payload: NewsUpdate,
-    admin: User = Depends(require_admin),
-    session: Session = Depends(get_session),
+        news_id: int,
+        payload: NewsUpdate,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session),
 ):
     """Admin edit existing news"""
     item = session.get(MarketNews, news_id)
@@ -331,9 +442,9 @@ async def admin_update_news(
 
 @router.delete("/admin/news/{news_id}")
 async def admin_delete_news(
-    news_id: int,
-    admin: User = Depends(require_admin),
-    session: Session = Depends(get_session),
+        news_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session),
 ):
     """Admin delete news"""
     item = session.get(MarketNews, news_id)
