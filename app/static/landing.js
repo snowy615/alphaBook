@@ -77,8 +77,8 @@
           const bestAsk = parseFloat(asks[0].px);
           price = (bestBid + bestAsk) / 2;
         } else {
-          // No orders yet, show default
-          price = 100.0;
+          // No orders yet, don't show a price
+          price = null;
         }
       } else {
         // For regular equities, use reference price
@@ -89,17 +89,24 @@
       const priceEl = $(`#price-${sym}`);
       const changeEl = $(`#change-${sym}`);
 
-      if (priceEl && price !== null && price !== undefined) {
-        const oldPrice = prices[sym];
-        prices[sym] = price;
+      if (priceEl) {
+        if (price !== null && price !== undefined) {
+          const oldPrice = prices[sym];
+          prices[sym] = price;
 
-        priceEl.textContent = `$${fmt(price)}`;
+          priceEl.textContent = `$${fmt(price)}`;
 
-        if (oldPrice !== undefined) {
-          const change = ((price - oldPrice) / oldPrice) * 100;
-          const changeText = (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
-          changeEl.textContent = changeText;
-          changeEl.className = "equity-change " + (change >= 0 ? "positive" : "negative");
+          if (oldPrice !== undefined) {
+            const change = ((price - oldPrice) / oldPrice) * 100;
+            const changeText = (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
+            changeEl.textContent = changeText;
+            changeEl.className = "equity-change " + (change >= 0 ? "positive" : "negative");
+          }
+        } else {
+          // No price available - show placeholder
+          priceEl.textContent = "—";
+          changeEl.textContent = "No orders yet";
+          changeEl.className = "equity-change";
         }
       }
     } catch (e) {

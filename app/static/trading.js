@@ -667,6 +667,32 @@
       // Update position
       updatePosition();
 
+      // Refresh the order book by fetching latest snapshot
+      try {
+        const bookData = await fetchJSON(`/book/${SYMBOL}`);
+        if (bookData) {
+          renderLadder(bookData);
+
+          // For custom games, update the reference price from the new book
+          if (IS_CUSTOM_GAME) {
+            const bids = bookData.bids || [];
+            const asks = bookData.asks || [];
+            if (bids.length > 0 && asks.length > 0) {
+              const bestBid = parseFloat(bids[0].px);
+              const bestAsk = parseFloat(asks[0].px);
+              const mid = (bestBid + bestAsk) / 2;
+              setRef(mid);
+            } else {
+              // No more orders - clear the price
+              const refEl = $(`#ref-${SYMBOL}`);
+              if (refEl) refEl.textContent = "--";
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error refreshing book:", err);
+      }
+
     } catch (err) {
       console.error("Error canceling order:", err);
       alert('Failed to cancel order: ' + err.message);
