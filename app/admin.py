@@ -465,6 +465,7 @@ async def admin_delete_news(
     if not item:
         raise HTTPException(status_code=404, detail="News not found")
 
+
     session.delete(item)
     session.commit()
     return {"ok": True}
