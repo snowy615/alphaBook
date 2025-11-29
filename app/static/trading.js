@@ -267,6 +267,24 @@
       return;
     }
 
+    // Max position limit validation (100 shares)
+    const MAX_POSITION = 100;
+    const currentPos = window.currentPosition || 0;
+
+    if (qtState.side === "BUY") {
+      const newPosition = currentPos + qtState.qty;
+      if (newPosition > MAX_POSITION) {
+        qtHint.textContent = `Would exceed max position of ${MAX_POSITION}. Current: ${currentPos.toFixed(2)}`;
+        return;
+      }
+    } else if (qtState.side === "SELL") {
+      const newPosition = currentPos - qtState.qty;
+      if (newPosition < -MAX_POSITION) {
+        qtHint.textContent = `Would exceed max short of ${MAX_POSITION}. Current: ${currentPos.toFixed(2)}`;
+        return;
+      }
+    }
+
     const payload = {
       symbol: SYMBOL,
       side: qtState.side,
@@ -507,6 +525,24 @@
       return;
     }
 
+    // Max position limit validation (100 shares)
+    const MAX_POSITION = 100;
+    const currentPos = window.currentPosition || 0;
+
+    if (side === "BUY") {
+      const newPosition = currentPos + qtyNum;
+      if (newPosition > MAX_POSITION) {
+        hint.textContent = `Order would exceed max position limit of ${MAX_POSITION}. Current position: ${currentPos.toFixed(2)}`;
+        return;
+      }
+    } else if (side === "SELL") {
+      const newPosition = currentPos - qtyNum;
+      if (newPosition < -MAX_POSITION) {
+        hint.textContent = `Order would exceed max short position limit of ${MAX_POSITION}. Current position: ${currentPos.toFixed(2)}`;
+        return;
+      }
+    }
+
     const payload = {
       symbol: SYMBOL,
       side,
@@ -587,6 +623,9 @@
       if (symMetrics) {
         const qty = parseFloat(symMetrics.position || 0);
 
+        // Store position globally for order validation
+        window.currentPosition = qty;
+
         // Format with + or - prefix (except for 0)
         let qtyFormatted;
         if (qty === 0) {
@@ -603,11 +642,13 @@
         posQty.textContent = qtyFormatted;
       } else {
         // No metrics for this symbol, show 0
+        window.currentPosition = 0;
         posQty.textContent = "0.00";
         posQty.className = "position-value";
       }
     } catch (e) {
       console.error("Error updating position:", e);
+      window.currentPosition = 0;
     }
   }
 
