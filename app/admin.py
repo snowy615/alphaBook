@@ -25,6 +25,9 @@ def require_admin(user: User = Depends(current_user)):
 def calculate_user_pnl(user_id: int, session: Session) -> float:
     """Calculate P&L for a user considering expected values for custom games"""
     from app.market_data import get_ref_price
+    import logging
+
+    log = logging.getLogger("admin")
 
     # Get all trades for this user
     trades = session.exec(
@@ -33,9 +36,13 @@ def calculate_user_pnl(user_id: int, session: Session) -> float:
         )
     ).all()
 
+    log.info(f"Calculating P&L for user {user_id}, found {len(trades)} trades")
+
     # Get all custom games with their expected values
     games = session.exec(select(CustomGame)).all()
     game_expected_values = {game.symbol: float(game.expected_value) for game in games}
+
+    log.info(f"Game expected values: {game_expected_values}")
 
     # Track positions
     positions = {}
@@ -96,6 +103,8 @@ def calculate_user_pnl(user_id: int, session: Session) -> float:
                 elif pos["qty"] == 0:
                     pos["total_cost"] = Decimal("0")
 
+    log.info(f"User {user_id} positions: {positions}")
+
     # Calculate total P&L
     total_pnl = Decimal("0")
 
@@ -111,20 +120,25 @@ def calculate_user_pnl(user_id: int, session: Session) -> float:
             market_ref = get_ref_price(symbol)
             ref_price = Decimal(str(market_ref)) if market_ref else Decimal("0")
 
+        log.info(f"Symbol {symbol}: qty={qty}, total_cost={total_cost}, ref_price={ref_price}")
+
         # Calculate unrealized P&L
-        if qty != 0 and total_cost != 0:
+        unrealized = Decimal("0")
+        if qty != 0 and ref_price > 0:
             avg_cost = total_cost / abs(qty)
 
             if qty > 0:
-                # Long position
+                # Long position: profit if ref_price > avg_cost
                 unrealized = (ref_price - avg_cost) * qty
             else:
-                # Short position
+                # Short position: profit if avg_cost > ref_price
                 unrealized = (avg_cost - ref_price) * abs(qty)
-        else:
-            unrealized = Decimal("0")
+
+        log.info(f"Symbol {symbol}: realized={realized}, unrealized={unrealized}")
 
         total_pnl += realized + unrealized
+
+    log.info(f"User {user_id} total P&L: {total_pnl}")
 
     return float(total_pnl)
 
