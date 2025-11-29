@@ -353,8 +353,47 @@ body{
 /* News Card */
 .news-card, .game-info-card {
   height: fit-content;
-  max-height: 600px;
-  overflow-y: auto;
+}
+
+.scrollable-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.scrollable-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.scrollable-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+
+.scrollable-content::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+.clickable {
+  user-select: none;
+}
+
+.expand-icon {
+  font-size: 14px;
+  transition: transform 0.2s ease;
+  color: var(--muted);
+}
+
+.expand-icon.expanded {
+  transform: rotate(-180deg);
+}
+
+.game-instructions {
+  overflow: hidden;
+  transition: max-height 0.3s ease;
 }
 
 /* My Orders */

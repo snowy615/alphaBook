@@ -26,6 +26,22 @@
   let lastRef = null;
   let lastMid = null;
 
+  // Toggle instructions collapse
+  window.toggleInstructions = function() {
+    const content = $("#game-instructions-content");
+    const icon = $("#instructions-icon");
+
+    if (!content || !icon) return;
+
+    if (content.style.display === "none") {
+      content.style.display = "block";
+      icon.classList.add("expanded");
+    } else {
+      content.style.display = "none";
+      icon.classList.remove("expanded");
+    }
+  };
+
   // WebSocket connection
   function connectWS() {
     const wsProto = location.protocol === "https:" ? "wss" : "ws";
@@ -580,7 +596,12 @@
         return;
       }
 
-      box.innerHTML = items
+      // Sort by created_at (most recent first) - already sorted by server but ensure it
+      const sortedItems = items.sort((a, b) => {
+        return new Date(b.created_at) - new Date(a.created_at);
+      });
+
+      box.innerHTML = sortedItems
         .map((n) => {
           const dt = new Date(n.created_at);
           const ts = dt.toLocaleTimeString();
@@ -623,6 +644,13 @@
 
       // Filter orders for current symbol
       const myOrders = allOrders.filter(o => o.symbol === SYMBOL && o.status === 'OPEN');
+
+      // Sort by created_at (most recent first)
+      myOrders.sort((a, b) => {
+        const dateA = new Date(a.created_at || 0);
+        const dateB = new Date(b.created_at || 0);
+        return dateB - dateA; // Descending order (newest first)
+      });
 
       const container = $("#my-orders-list");
       if (!container) return;

@@ -81,24 +81,25 @@
       <!-- Right Column: Game Instructions + News OR just News -->
       <div class="right-column">
         {% if is_custom_game and game_info %}
-        <!-- Game Instructions Card -->
+        <!-- Game Instructions Card - Collapsible -->
         <section class="card game-info-card" style="margin-bottom: 24px;">
-          <div class="head">
+          <div class="head clickable" onclick="toggleInstructions()" style="cursor: pointer;">
             <div class="sym">{{ game_info.name }}</div>
+            <div class="expand-icon" id="instructions-icon">▼</div>
           </div>
-          <div class="game-instructions">
+          <div class="game-instructions" id="game-instructions-content" style="display: none;">
             <h4>Instructions</h4>
             <p>{{ game_info.instructions }}</p>
           </div>
         </section>
         {% endif %}
 
-        <!-- My Orders Card -->
+        <!-- My Orders Card - Fixed height with scroll -->
         <section class="card" id="my-orders-card" style="margin-bottom: 24px;">
           <div class="head">
             <div class="sym">My Orders</div>
           </div>
-          <div style="padding: 16px;">
+          <div class="scrollable-content" style="max-height: 300px; overflow-y: auto; padding: 16px;">
             <div id="my-orders-list">
               <div class="small" style="text-align: center; color: var(--muted); padding: 20px;">
                 Loading orders...
@@ -107,12 +108,12 @@
           </div>
         </section>
 
-        <!-- Market Updates Card (shown for both games and regular equities) -->
+        <!-- Market Updates Card - Fixed height with scroll -->
         <section class="card news-card">
           <div class="head">
             <div class="sym">Market Updates</div>
           </div>
-          <div class="news-content" id="news-content">
+          <div class="news-content scrollable-content" id="news-content" style="max-height: 300px; overflow-y: auto; padding: 16px;">
             <div class="news-item">
               <div class="news-time">Just now</div>
               <div class="news-title">{{ symbol }} Trading Active</div>
