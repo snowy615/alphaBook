@@ -616,20 +616,28 @@
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
     const userNameEl = $("#userName");
+    const adminLink = $("#adminLink");
 
     function showGuest() {
       isAuthed = false;
       loginBox?.classList.remove("hidden");
       userBox?.classList.add("hidden");
       $("#position-summary")?.classList.add("hidden");
+      if (adminLink) adminLink.style.display = "none";
     }
 
-    function showUser(nameLike) {
+    function showUser(nameLike, isAdmin) {
       isAuthed = true;
       if (userNameEl) userNameEl.textContent = String(nameLike || "user");
       loginBox?.classList.add("hidden");
       userBox?.classList.remove("hidden");
       $("#position-summary")?.classList.remove("hidden");
+
+      // Show admin link only for admin users
+      if (adminLink) {
+        adminLink.style.display = isAdmin ? "inline-block" : "none";
+      }
+
       updatePosition();
       loadMyOrders(); // Load orders when user is shown
     }
@@ -637,7 +645,8 @@
     try {
       const me = await fetchJSON("/me");
       const nameLike = me?.username || me?.name || me?.email || me?.id || "user";
-      showUser(nameLike);
+      const isAdmin = me?.is_admin || false;
+      showUser(nameLike, isAdmin);
     } catch {
       showGuest();
     }
@@ -744,27 +753,45 @@
         // Calculate remaining quantity - check multiple possible field names
         let remaining;
 
-        // Debug logging for this specific order
-        console.log(`Order ${order.id} quantity fields:`, {
-          qty: order.qty,
-          remaining_qty: order.remaining_qty,
-          filled_qty: order.filled_qty,
-          filled: order.filled
-        });
+        // Enhanced debug logging
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
+        console.log(`Order ID: ${order.id}`);
+        console.log(`All order fields:`, order);
+        console.log(`Quantity fields check:`);
+        console.log(`  - qty: ${order.qty}`);
+        console.log(`  - remaining_qty: ${order.remaining_qty}`);
+        console.log(`  - filled_qty: ${order.filled_qty}`);
+        console.log(`  - filled: ${order.filled}`);
+        console.log(`  - remaining: ${order.remaining}`);
+        console.log(`  - unfilled: ${order.unfilled}`);
+        console.log(`  - leaves_qty: ${order.leaves_qty}`);
 
+        // Try multiple field name variations
         if (order.remaining_qty !== undefined && order.remaining_qty !== null) {
           remaining = parseFloat(order.remaining_qty);
-          console.log(`Using remaining_qty: ${remaining}`);
+          console.log(`✓ Using remaining_qty: ${remaining}`);
+        } else if (order.remaining !== undefined && order.remaining !== null) {
+          remaining = parseFloat(order.remaining);
+          console.log(`✓ Using remaining: ${remaining}`);
+        } else if (order.unfilled !== undefined && order.unfilled !== null) {
+          remaining = parseFloat(order.unfilled);
+          console.log(`✓ Using unfilled: ${remaining}`);
+        } else if (order.leaves_qty !== undefined && order.leaves_qty !== null) {
+          remaining = parseFloat(order.leaves_qty);
+          console.log(`✓ Using leaves_qty: ${remaining}`);
         } else if (order.filled_qty !== undefined && order.filled_qty !== null) {
           remaining = parseFloat(order.qty) - parseFloat(order.filled_qty);
-          console.log(`Calculating from filled_qty: ${order.qty} - ${order.filled_qty} = ${remaining}`);
+          console.log(`✓ Calculating from filled_qty: ${order.qty} - ${order.filled_qty} = ${remaining}`);
         } else if (order.filled !== undefined && order.filled !== null) {
           remaining = parseFloat(order.qty) - parseFloat(order.filled);
-          console.log(`Calculating from filled: ${order.qty} - ${order.filled} = ${remaining}`);
+          console.log(`✓ Calculating from filled: ${order.qty} - ${order.filled} = ${remaining}`);
         } else {
           remaining = parseFloat(order.qty);
-          console.log(`Fallback to original qty: ${remaining}`);
+          console.log(`⚠️ Fallback to original qty: ${remaining} (NO FILL DATA FOUND)`);
+          console.log(`⚠️ WARNING: Backend is not returning fill tracking!`);
         }
+        console.log(`Final remaining quantity: ${remaining}`);
+        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
         return `
           <div class="order-item ${orderClass}">
