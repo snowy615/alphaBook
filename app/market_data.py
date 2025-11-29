@@ -160,8 +160,9 @@ def get_ref_price(symbol: str) -> Optional[float]:
 
     # Check if it's a custom game
     if sym.startswith("GAME"):
-        # For custom games, use mid hint from order book or default to 100
-        return _mid_hint.get(sym) or 100.0
+        # For custom games, only use mid hint from order book if it exists
+        # Don't return a default value
+        return _mid_hint.get(sym)
 
     return _synth.get(sym) or _official.get(sym) or _mid_hint.get(sym)
 def get_official_info() -> Dict[str, Dict[str, str]]:

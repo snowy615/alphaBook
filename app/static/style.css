@@ -350,6 +350,94 @@ body{
   overflow-y: auto;
 }
 
+/* My Orders */
+.order-item {
+  padding: 12px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.order-item.buy-order {
+  border-left: 3px solid var(--green);
+}
+
+.order-item.sell-order {
+  border-left: 3px solid var(--red);
+}
+
+.order-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.order-side {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+
+.order-side.buy {
+  color: var(--green);
+}
+
+.order-side.sell {
+  color: var(--red);
+}
+
+.order-details {
+  font-size: 13px;
+  color: var(--text);
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.order-details span {
+  white-space: nowrap;
+}
+
+.order-price {
+  font-weight: 600;
+}
+
+.order-qty {
+  color: var(--muted);
+}
+
+.cancel-order-btn {
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--red);
+  background: rgba(255, 107, 107, 0.1);
+  color: var(--red);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+.cancel-order-btn:hover {
+  background: var(--red);
+  color: white;
+  transform: translateY(-1px);
+}
+
+.cancel-order-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .news-content, .game-instructions {
   padding: 16px;
 }

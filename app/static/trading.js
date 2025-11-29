@@ -263,6 +263,7 @@
 
       if (ack?.snapshot) renderLadder(ack.snapshot);
       updatePosition();
+      loadMyOrders(); // Reload orders after placing order
 
       setTimeout(() => {
         quickTradeDlg.close();
@@ -447,6 +448,7 @@
 
       if (ack?.snapshot) renderLadder(ack.snapshot);
       updatePosition();
+      loadMyOrders(); // Reload orders after placing order
 
       setTimeout(() => dlg.close(), 700);
     } catch (err) {
@@ -519,6 +521,7 @@
       userBox?.classList.remove("hidden");
       $("#position-summary")?.classList.remove("hidden");
       updatePosition();
+      loadMyOrders(); // Load orders when user is shown
     }
 
     try {
@@ -572,14 +575,121 @@
   }
 
 
+  // Load my orders for this symbol
+  async function loadMyOrders() {
+    if (!isAuthed) {
+      const container = $("#my-orders-list");
+      if (container) {
+        container.innerHTML = `
+          <div class="small" style="text-align: center; color: var(--muted); padding: 20px;">
+            Please log in to view your orders
+          </div>
+        `;
+      }
+      return;
+    }
+
+    try {
+      const res = await fetchJSON("/me/orders");
+      const allOrders = Array.isArray(res) ? res : [];
+
+      // Filter orders for current symbol
+      const myOrders = allOrders.filter(o => o.symbol === SYMBOL && o.status === 'OPEN');
+
+      const container = $("#my-orders-list");
+      if (!container) return;
+
+      if (myOrders.length === 0) {
+        container.innerHTML = `
+          <div class="small" style="text-align: center; color: var(--muted); padding: 20px;">
+            No open orders for ${SYMBOL}
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = myOrders.map(order => {
+        const side = order.side.toUpperCase();
+        const sideClass = side === 'BUY' ? 'buy' : 'sell';
+        const orderClass = side === 'BUY' ? 'buy-order' : 'sell-order';
+        const remaining = parseFloat(order.qty) - parseFloat(order.filled_qty || 0);
+
+        return `
+          <div class="order-item ${orderClass}">
+            <div class="order-info">
+              <div class="order-side ${sideClass}">${side}</div>
+              <div class="order-details">
+                <span class="order-price">@${fmt(order.price)}</span>
+                <span class="order-qty">Qty: ${fmt(remaining)}</span>
+              </div>
+            </div>
+            <button class="cancel-order-btn" data-order-id="${order.id}" onclick="cancelMyOrder('${order.id}')">
+              Cancel
+            </button>
+          </div>
+        `;
+      }).join('');
+
+    } catch (err) {
+      console.error("Error loading orders:", err);
+      const container = $("#my-orders-list");
+      if (container) {
+        container.innerHTML = `
+          <div class="small" style="text-align: center; color: var(--muted); padding: 20px;">
+            Error loading orders
+          </div>
+        `;
+      }
+    }
+  }
+
+  // Cancel an order
+  window.cancelMyOrder = async function(orderId) {
+    const btn = document.querySelector(`button[data-order-id="${orderId}"]`);
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = 'Canceling...';
+    }
+
+    try {
+      const res = await fetch(`/me/orders/${orderId}/cancel`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+
+      if (!res.ok) {
+        throw new Error('Failed to cancel order');
+      }
+
+      // Reload orders
+      await loadMyOrders();
+
+      // Update position
+      updatePosition();
+
+    } catch (err) {
+      console.error("Error canceling order:", err);
+      alert('Failed to cancel order: ' + err.message);
+
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = 'Cancel';
+      }
+    }
+  };
+
   // Initialize
   connectWS();
   initAuthUI();
   loadNews();
   setInterval(loadNews, 5000);    // refresh every 5 seconds
 
-  // Refresh position every 5 seconds
+  // Load orders immediately and refresh periodically
+  loadMyOrders();
   setInterval(() => {
-    if (isAuthed) updatePosition();
-  }, 5000);
+    if (isAuthed) {
+      loadMyOrders();
+      updatePosition();
+    }
+  }, 3000); // refresh every 3 seconds
 })();
