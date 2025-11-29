@@ -143,22 +143,19 @@
         ? `<button class="trade-btn buy-btn" data-side="BUY" data-px="${askPx}" data-qty="${askQty}">Buy</button>`
         : '';
 
-      // Add clickable empty cells for bid side when no bids exist at this price
-      const emptyBidCell = `<td class="empty-cell clickable" onclick="openMarketMaker(${askPx}, 'BID')" title="Click to place bid"></td>`;
-
       tr.innerHTML = `
         <td class="action-cell">${buyButton}</td>
         <td>${fmt(askQty)}</td>
         <td>${fmt(askPx)}</td>
         <td class="div"></td>
-        ${emptyBidCell}
-        ${emptyBidCell}
+        <td></td>
+        <td></td>
         <td class="action-cell"></td>
       `;
       body.appendChild(tr);
     }
 
-    // Mid row - Add liquidity buttons (+ Make Market)
+    // Mid row - Add liquidity buttons
     const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
 
     const midtr = document.createElement("tr");
@@ -201,13 +198,10 @@
         ? `<button class="trade-btn sell-btn" data-side="SELL" data-px="${bidPx}" data-qty="${bidQty}">Sell</button>`
         : '';
 
-      // Add clickable empty cells for ask side when no asks exist at this price
-      const emptyAskCell = `<td class="empty-cell clickable" onclick="openMarketMaker(${bidPx}, 'ASK')" title="Click to place ask"></td>`;
-
       tr.innerHTML = `
         <td class="action-cell"></td>
-        ${emptyAskCell}
-        ${emptyAskCell}
+        <td></td>
+        <td></td>
         <td class="div"></td>
         <td>${fmt(bidPx)}</td>
         <td>${fmt(bidQty)}</td>
@@ -216,43 +210,6 @@
       body.appendChild(tr);
     }
   }
-
-  // Market Maker Modal
-  window.openMarketMaker = function(price, side) {
-    if (!isAuthed) {
-      alert("Please log in to place orders");
-      return;
-    }
-
-    const modal = $("#market-maker-modal");
-    if (!modal) return;
-
-    // Set the price
-    $("#mm-price").value = price.toFixed(2);
-
-    // Set which sides to show
-    const bidSection = $("#mm-bid-section");
-    const askSection = $("#mm-ask-section");
-
-    if (side === 'BID' || side === 'BOTH') {
-      bidSection.style.display = 'block';
-      $("#mm-bid-qty").value = '10';
-    } else {
-      bidSection.style.display = 'none';
-    }
-
-    if (side === 'ASK' || side === 'BOTH') {
-      askSection.style.display = 'block';
-      $("#mm-ask-qty").value = '10';
-    } else {
-      askSection.style.display = 'none';
-    }
-
-    // Reset hint
-    $("#mm-hint").textContent = '';
-
-    modal.showModal();
-  };
 
   // Quick trade modal
   const quickTradeDlg = $("#quick-trade-modal");
@@ -771,12 +728,27 @@
 
         // Calculate remaining quantity - check multiple possible field names
         let remaining;
+
+        // Debug logging for this specific order
+        console.log(`Order ${order.id} quantity fields:`, {
+          qty: order.qty,
+          remaining_qty: order.remaining_qty,
+          filled_qty: order.filled_qty,
+          filled: order.filled
+        });
+
         if (order.remaining_qty !== undefined && order.remaining_qty !== null) {
           remaining = parseFloat(order.remaining_qty);
+          console.log(`Using remaining_qty: ${remaining}`);
         } else if (order.filled_qty !== undefined && order.filled_qty !== null) {
           remaining = parseFloat(order.qty) - parseFloat(order.filled_qty);
+          console.log(`Calculating from filled_qty: ${order.qty} - ${order.filled_qty} = ${remaining}`);
+        } else if (order.filled !== undefined && order.filled !== null) {
+          remaining = parseFloat(order.qty) - parseFloat(order.filled);
+          console.log(`Calculating from filled: ${order.qty} - ${order.filled} = ${remaining}`);
         } else {
           remaining = parseFloat(order.qty);
+          console.log(`Fallback to original qty: ${remaining}`);
         }
 
         return `
@@ -868,102 +840,6 @@
       }
     }
   };
-
-  // Market Maker form submission
-  $("#market-maker-form")?.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const price = parseFloat($("#mm-price").value);
-    const bidQty = parseFloat($("#mm-bid-qty")?.value || 0);
-    const askQty = parseFloat($("#mm-ask-qty")?.value || 0);
-    const hint = $("#mm-hint");
-    const submitBtn = e.target.querySelector('button[type="submit"]');
-
-    if (!price || price <= 0) {
-      hint.textContent = 'Invalid price';
-      return;
-    }
-
-    if (bidQty <= 0 && askQty <= 0) {
-      hint.textContent = 'Enter quantity for at least one side';
-      return;
-    }
-
-    hint.textContent = 'Placing orders...';
-    submitBtn.disabled = true;
-
-    try {
-      const orders = [];
-
-      // Place bid order
-      if (bidQty > 0) {
-        orders.push({
-          side: 'BUY',
-          price: price,
-          qty: bidQty
-        });
-      }
-
-      // Place ask order
-      if (askQty > 0) {
-        orders.push({
-          side: 'SELL',
-          price: price,
-          qty: askQty
-        });
-      }
-
-      // Submit all orders
-      let successCount = 0;
-      for (const order of orders) {
-        const res = await fetch('/order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            symbol: SYMBOL,
-            side: order.side,
-            price: order.price,
-            qty: order.qty
-          })
-        });
-
-        if (res.ok) {
-          successCount++;
-        } else {
-          const data = await res.json();
-          console.error('Order failed:', data);
-        }
-      }
-
-      if (successCount === orders.length) {
-        hint.textContent = `${successCount} order(s) placed successfully!`;
-
-        // Update UI
-        await loadMyOrders();
-        await updatePosition();
-
-        // Refresh order book
-        const bookData = await fetchJSON(`/book/${SYMBOL}`);
-        if (bookData) {
-          renderLadder(bookData);
-        }
-
-        setTimeout(() => {
-          $("#market-maker-modal").close();
-        }, 500);
-      } else {
-        hint.textContent = `Placed ${successCount} of ${orders.length} orders`;
-        submitBtn.disabled = false;
-      }
-    } catch (err) {
-      hint.textContent = 'Network error: ' + err.message;
-      submitBtn.disabled = false;
-    }
-  });
-
-  $("#mm-close")?.addEventListener('click', () => $("#market-maker-modal").close());
-  $("#mm-cancel")?.addEventListener('click', () => $("#market-maker-modal").close());
 
   // Initialize
   connectWS();
