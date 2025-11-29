@@ -264,30 +264,44 @@
       return;
     }
 
-    // Validate inputs
-    if (!side || typeof side !== 'string') {
-      console.error('Invalid side parameter:', side);
+    // Validate and normalize inputs
+    const normalizedSide = (side || '').trim().toUpperCase();
+    if (!normalizedSide || (normalizedSide !== 'BUY' && normalizedSide !== 'SELL')) {
+      console.error('Invalid side parameter:', side, 'normalized to:', normalizedSide);
+      alert('Invalid trade side. Please try again.');
       return;
     }
 
     const max = Math.max(1, Math.floor(parseFloat(maxQty) || 100));
 
     qtState = {
-      side: side.toUpperCase(),
+      side: normalizedSide,
       price: parseFloat(price),
       qty: 1,
       maxQty: max
     };
 
-    $("#qt-title").textContent = `Quick ${qtState.side}`;
+    console.log('openQuickTrade called with qtState:', qtState); // DEBUG
+
+    const titleEl = $("#qt-title");
+    if (titleEl) titleEl.textContent = `Quick ${qtState.side}`;
+
     const sideLabel = $("#qt-side-label");
     if (sideLabel) {
       sideLabel.textContent = qtState.side;
       const sideClass = qtState.side.toLowerCase();
-      sideLabel.className = `qt-side ${sideClass}`;
+      // Clear existing classes first
+      sideLabel.className = '';
+      // Add new classes one at a time
+      sideLabel.classList.add('qt-side');
+      sideLabel.classList.add(sideClass);
     }
-    $("#qt-symbol").textContent = SYMBOL;
-    $("#qt-price").textContent = fmt(price);
+
+    const symbolEl = $("#qt-symbol");
+    if (symbolEl) symbolEl.textContent = SYMBOL;
+
+    const priceEl = $("#qt-price");
+    if (priceEl) priceEl.textContent = fmt(price);
 
     qtSlider.max = max;
     qtSlider.value = 1;
@@ -316,8 +330,12 @@
     const px = parseFloat(btn.dataset.px);
     const qty = btn.dataset.qty;
 
-    if (side && isFinite(px) && qty) {
-      openQuickTrade(side, px, qty);
+    console.log('Trade button clicked:', { side, px, qty, dataset: btn.dataset }); // DEBUG
+
+    if (side && side.trim() && isFinite(px) && qty) {
+      openQuickTrade(side.trim(), px, qty);
+    } else {
+      console.error('Invalid trade button data:', { side, px, qty });
     }
   });
 
