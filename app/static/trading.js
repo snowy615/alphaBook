@@ -155,20 +155,27 @@
       body.appendChild(tr);
     }
 
-    // Mid row - Add liquidity buttons
+    // Mid row - Add liquidity buttons (always shown)
     const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
 
     const midtr = document.createElement("tr");
     midtr.className = "midrow";
 
-    // Create + buttons for adding liquidity at best prices
-    const addAskButton = (bestAsk != null)
-      ? `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', ${bestAsk})" title="Add liquidity on ask side">+ Sell @ ${fmt(bestAsk)}</button>`
-      : '';
+    // Create + buttons - always show them, even when order book is empty
+    // If no price available, show placeholder button that opens Place Order modal
+    let addAskButton, addBidButton;
 
-    const addBidButton = (bestBid != null)
-      ? `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', ${bestBid})" title="Add liquidity on bid side">+ Buy @ ${fmt(bestBid)}</button>`
-      : '';
+    if (bestAsk != null) {
+      addAskButton = `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', ${bestAsk})" title="Add liquidity on ask side">+ Sell @ ${fmt(bestAsk)}</button>`;
+    } else {
+      addAskButton = `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', null)" title="Place sell order">+ Sell</button>`;
+    }
+
+    if (bestBid != null) {
+      addBidButton = `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', ${bestBid})" title="Add liquidity on bid side">+ Buy @ ${fmt(bestBid)}</button>`;
+    } else {
+      addBidButton = `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', null)" title="Place buy order">+ Buy</button>`;
+    }
 
     midtr.innerHTML = `
       <td colspan="3" class="mid-action-left">
@@ -455,9 +462,17 @@
       }
     });
 
-    // Set the price
-    if (inpPx && price) {
-      inpPx.value = price.toFixed(2);
+    // Set the price (if available, otherwise use last ref or leave empty)
+    if (inpPx) {
+      if (price !== null && price !== undefined) {
+        inpPx.value = price.toFixed(2);
+      } else if (lastRef !== null && isFinite(lastRef)) {
+        // Use last reference price if available
+        inpPx.value = Number(lastRef).toFixed(2);
+      } else {
+        // Leave empty for user to enter
+        inpPx.value = "";
+      }
     }
 
     // Set default quantity if empty
