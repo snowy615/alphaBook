@@ -158,17 +158,32 @@
       body.appendChild(tr);
     }
 
-    // Mid row
+    // Mid row - Add liquidity buttons (+ Make Market)
     const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
 
     const midtr = document.createElement("tr");
     midtr.className = "midrow";
+
+    // Create + buttons for adding liquidity at best prices
+    const addAskButton = (bestAsk != null)
+      ? `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', ${bestAsk})" title="Add liquidity on ask side">+ Sell @ ${fmt(bestAsk)}</button>`
+      : '';
+
+    const addBidButton = (bestBid != null)
+      ? `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', ${bestBid})" title="Add liquidity on bid side">+ Buy @ ${fmt(bestBid)}</button>`
+      : '';
+
     midtr.innerHTML = `
-      <td colspan="7">
-        ${bestBid!=null && bestAsk!=null
-          ? `Spread: ${fmt(sp)} • Mid: ${fmt(mid)} • Best Bid: ${fmt(bestBid)} • Best Ask: ${fmt(bestAsk)}`
-          : `Waiting for depth…`}
-      </td>`;
+      <td colspan="3" class="mid-action-left">
+        ${addAskButton}
+      </td>
+      <td class="mid-divider">
+        ${bestBid!=null && bestAsk!=null ? `Spread: ${fmt(sp)}` : '—'}
+      </td>
+      <td colspan="3" class="mid-action-right">
+        ${addBidButton}
+      </td>
+    `;
     body.appendChild(midtr);
 
     // Bids block
@@ -468,6 +483,42 @@
     if (!dlg.open) { prefill(); dlg.showModal(); }
   });
 
+  // Function to open place order modal with pre-filled values
+  window.openPlaceOrder = function(side, price) {
+    if (!isAuthed) {
+      alert("Please log in to place orders");
+      return;
+    }
+
+    // Set the side (BUY or SELL)
+    const sideRadios = document.querySelectorAll('input[name="side"]');
+    sideRadios.forEach(radio => {
+      if (radio.value === side) {
+        radio.checked = true;
+      }
+    });
+
+    // Set the price
+    if (inpPx && price) {
+      inpPx.value = price.toFixed(2);
+    }
+
+    // Set default quantity if empty
+    if (inpQty && !inpQty.value) {
+      inpQty.value = "10";
+    }
+
+    // Clear hint
+    if (hint) {
+      hint.textContent = '';
+    }
+
+    // Open modal
+    if (dlg && !dlg.open) {
+      dlg.showModal();
+    }
+  };
+
   closeBtn?.addEventListener("click", () => dlg.close());
   cancelBtn?.addEventListener("click", () => dlg.close());
 
@@ -688,6 +739,12 @@
       // Filter orders for current symbol
       const myOrders = allOrders.filter(o => o.symbol === SYMBOL && o.status === 'OPEN');
 
+      // Debug: Log first order to see structure
+      if (myOrders.length > 0) {
+        console.log('Sample order object:', myOrders[0]);
+        console.log('Order fields:', Object.keys(myOrders[0]));
+      }
+
       // Sort by created_at (most recent first)
       myOrders.sort((a, b) => {
         const dateA = new Date(a.created_at || 0);
@@ -711,7 +768,16 @@
         const side = order.side.toUpperCase();
         const sideClass = side === 'BUY' ? 'buy' : 'sell';
         const orderClass = side === 'BUY' ? 'buy-order' : 'sell-order';
-        const remaining = parseFloat(order.qty) - parseFloat(order.filled_qty || 0);
+
+        // Calculate remaining quantity - check multiple possible field names
+        let remaining;
+        if (order.remaining_qty !== undefined && order.remaining_qty !== null) {
+          remaining = parseFloat(order.remaining_qty);
+        } else if (order.filled_qty !== undefined && order.filled_qty !== null) {
+          remaining = parseFloat(order.qty) - parseFloat(order.filled_qty);
+        } else {
+          remaining = parseFloat(order.qty);
+        }
 
         return `
           <div class="order-item ${orderClass}">
