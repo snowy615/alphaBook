@@ -350,6 +350,29 @@ body{
   box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
 }
 
+/* Empty cell clickable for market making */
+.empty-cell.clickable {
+  cursor: pointer;
+  transition: background 0.2s;
+  position: relative;
+}
+
+.empty-cell.clickable:hover {
+  background: rgba(108, 92, 231, 0.1);
+}
+
+.empty-cell.clickable:hover::after {
+  content: '+ Make';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 10px;
+  color: var(--brand);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 /* News Card */
 .news-card, .game-info-card {
   height: fit-content;

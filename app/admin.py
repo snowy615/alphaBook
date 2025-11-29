@@ -302,6 +302,38 @@ async def delete_game(
     return {"ok": True, "message": "Game deactivated"}
 
 
+class ResolveGame(BaseModel):
+    expected_value: float
+
+
+@router.post("/admin/games/{game_id}/resolve")
+async def resolve_game(
+        game_id: int,
+        resolve_data: ResolveGame,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Update the expected value for a custom game (used for final P&L calculation)"""
+    db_game = session.get(CustomGame, game_id)
+    if not db_game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    # Update the expected value
+    old_value = db_game.expected_value
+    db_game.expected_value = resolve_data.expected_value
+    db_game.updated_at = dt.datetime.utcnow()
+
+    session.add(db_game)
+    session.commit()
+
+    return {
+        "ok": True,
+        "message": f"Expected value updated from ${old_value:.2f} to ${resolve_data.expected_value:.2f}",
+        "old_value": old_value,
+        "new_value": resolve_data.expected_value
+    }
+
+
 @router.post("/admin/users/{user_id}/blacklist")
 async def blacklist_user(
         user_id: int,
@@ -464,7 +496,6 @@ async def admin_delete_news(
     item = session.get(MarketNews, news_id)
     if not item:
         raise HTTPException(status_code=404, detail="News not found")
-
 
     session.delete(item)
     session.commit()

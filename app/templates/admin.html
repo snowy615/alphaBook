@@ -310,6 +310,7 @@
           <th>Name</th>
           <th>Instructions</th>
           <th>Expected Value</th>
+          <th>Status</th>
           <th>Created</th>
           <th>Actions</th>
         </tr>
@@ -322,16 +323,31 @@
           <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
             {{ game.instructions }}
           </td>
-          <td>${{ "%.2f" | format(game.expected_value) }}</td>
+          <td>
+            <strong style="color: var(--brand);">${{ "%.2f" | format(game.expected_value) }}</strong>
+          </td>
+          <td>
+            <span class="badge badge-active">Active</span>
+          </td>
           <td>{{ game.created_at.strftime('%Y-%m-%d') }}</td>
           <td>
-            <button class="action-btn btn-blacklist" onclick="editGame({{ game.id }}, '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">Edit</button>
-            <button class="action-btn btn-delete" onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">Delete</button>
+            <button class="action-btn" style="background: rgba(108, 92, 231, 0.2); color: var(--brand);"
+                    onclick="resolveGame({{ game.id }}, '{{ game.symbol }}', {{ game.expected_value }})">
+              Resolve
+            </button>
+            <button class="action-btn btn-blacklist"
+                    onclick="editGame({{ game.id }}, '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">
+              Edit
+            </button>
+            <button class="action-btn btn-delete"
+                    onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">
+              Delete
+            </button>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="6" style="text-align: center; color: var(--muted); padding: 40px;">
+          <td colspan="7" style="text-align: center; color: var(--muted); padding: 40px;">
             No custom games created yet. Click "Create New Game" to get started.
           </td>
         </tr>
@@ -377,6 +393,42 @@
     </div>
   </dialog>
 
+  <!-- Resolve Game Modal -->
+  <dialog id="resolve-modal" class="modal">
+    <div class="panel">
+      <div class="panel-head">
+        <h3>Resolve Game</h3>
+        <button class="icon-close" onclick="closeResolveModal()">✕</button>
+      </div>
+      <form id="resolve-form">
+        <div class="panel-body">
+          <div style="margin-bottom: 16px;">
+            <strong>Game:</strong> <span id="resolve-game-symbol"></span>
+          </div>
+          <div style="margin-bottom: 16px; padding: 12px; background: rgba(255, 107, 107, 0.1); border-radius: 8px; border: 1px solid rgba(255, 107, 107, 0.3);">
+            <strong style="color: var(--red);">⚠️ Warning:</strong> Setting the final expected value will determine all users' P&L for this game. This action will update the expected value used for P&L calculations.
+          </div>
+          <div class="field">
+            <label>Current Expected Value</label>
+            <input type="text" id="resolve-current-value" disabled style="background: #1a1f2e;" />
+          </div>
+          <div class="field">
+            <label>Final Expected Value (Actual Outcome)</label>
+            <input type="number" id="resolve-new-value" step="0.01" placeholder="Enter final value" required />
+            <div class="small" style="margin-top: 6px;">
+              Enter the actual/final value for this game. This will be used to calculate final P&L.
+            </div>
+          </div>
+          <div class="small" id="resolve-hint"></div>
+        </div>
+        <div class="panel-foot">
+          <button type="button" class="btn ghost" onclick="closeResolveModal()">Cancel</button>
+          <button type="submit" class="btn primary" style="background: var(--brand);">Update Expected Value</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
+
   <style>
   .modal {
     border: none;
@@ -391,6 +443,7 @@
 
   <script>
   let editingGameId = null;
+  let resolvingGameId = null;
 
   function openGameModal(editing = false) {
     editingGameId = null;
@@ -416,6 +469,20 @@
   function closeGameModal() {
     document.getElementById('game-modal').close();
     editingGameId = null;
+  }
+
+  function resolveGame(id, symbol, currentValue) {
+    resolvingGameId = id;
+    document.getElementById('resolve-game-symbol').textContent = symbol;
+    document.getElementById('resolve-current-value').value = '$' + currentValue.toFixed(2);
+    document.getElementById('resolve-new-value').value = currentValue.toFixed(2);
+    document.getElementById('resolve-hint').textContent = '';
+    document.getElementById('resolve-modal').showModal();
+  }
+
+  function closeResolveModal() {
+    document.getElementById('resolve-modal').close();
+    resolvingGameId = null;
   }
 
   document.getElementById('game-form')?.addEventListener('submit', async (e) => {
@@ -457,6 +524,49 @@
       } else {
         const data = await res.json();
         hint.textContent = 'Error: ' + (data.detail || 'Failed to save game');
+        submitBtn.disabled = false;
+      }
+    } catch (err) {
+      hint.textContent = 'Network error: ' + err.message;
+      submitBtn.disabled = false;
+    }
+  });
+
+  document.getElementById('resolve-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    if (!resolvingGameId) return;
+
+    const newValue = parseFloat(document.getElementById('resolve-new-value').value);
+    const hint = document.getElementById('resolve-hint');
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+
+    if (!confirm(`Are you sure you want to set the final expected value to $${newValue.toFixed(2)}? This will affect all users' P&L calculations.`)) {
+      return;
+    }
+
+    hint.textContent = 'Updating expected value...';
+    submitBtn.disabled = true;
+
+    try {
+      const res = await fetch(`/admin/games/${resolvingGameId}/resolve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({
+          expected_value: newValue
+        })
+      });
+
+      if (res.ok) {
+        hint.textContent = 'Expected value updated! Refreshing...';
+        setTimeout(() => {
+          closeResolveModal();
+          location.reload();
+        }, 500);
+      } else {
+        const data = await res.json();
+        hint.textContent = 'Error: ' + (data.detail || 'Failed to update expected value');
         submitBtn.disabled = false;
       }
     } catch (err) {
