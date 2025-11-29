@@ -78,7 +78,12 @@
 
     if (!isNaN(old) && !isNaN(price)) {
       el.classList.remove("up", "down", "blink");
-      el.classList.add(price > old ? "up" : price < old ? "down" : "");
+      if (price > old) {
+        el.classList.add("up");
+      } else if (price < old) {
+        el.classList.add("down");
+      }
+      // If price === old, don't add any class
       el.classList.add("blink");
       setTimeout(() => el.classList.remove("blink"), 400);
     }
@@ -87,10 +92,15 @@
   function renderLadder(book) {
     const body = $(`#ladder-body-${SYMBOL}`);
     if (!body) return;
+
+    console.log('renderLadder called with book:', book); // DEBUG
+
     body.innerHTML = "";
 
     const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>parseFloat(a.px)-parseFloat(b.px));
     const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>parseFloat(b.px)-parseFloat(a.px));
+
+    console.log('Processed asks:', asks, 'bids:', bids); // DEBUG
 
     // Calculate mid price from order book
     const bestAsk = asks[0] ? parseFloat(asks[0].px) : null;
@@ -105,14 +115,18 @@
     // Asks block
     for (let i = asks.length - 1; i >= 0; i--) {
       const a = asks[i];
+      // Ensure valid values
+      const askPx = a.px || a.price || 0;
+      const askQty = a.qty || a.quantity || 0;
+
       const tr = document.createElement("tr");
       tr.className = "row-ask";
       tr.innerHTML = `
         <td class="action-cell">
-          <button class="trade-btn buy-btn" data-side="BUY" data-px="${a.px}" data-qty="${a.qty}">Buy</button>
+          <button class="trade-btn buy-btn" data-side="BUY" data-px="${askPx}" data-qty="${askQty}">Buy</button>
         </td>
-        <td>${fmt(a.qty)}</td>
-        <td>${fmt(a.px)}</td>
+        <td>${fmt(askQty)}</td>
+        <td>${fmt(askPx)}</td>
         <td class="div"></td>
         <td></td>
         <td></td>
@@ -137,6 +151,10 @@
     // Bids block
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
+      // Ensure valid values
+      const bidPx = b.px || b.price || 0;
+      const bidQty = b.qty || b.quantity || 0;
+
       const tr = document.createElement("tr");
       tr.className = "row-bid";
       tr.innerHTML = `
@@ -144,10 +162,10 @@
         <td></td>
         <td></td>
         <td class="div"></td>
-        <td>${fmt(b.px)}</td>
-        <td>${fmt(b.qty)}</td>
+        <td>${fmt(bidPx)}</td>
+        <td>${fmt(bidQty)}</td>
         <td class="action-cell">
-          <button class="trade-btn sell-btn" data-side="SELL" data-px="${b.px}" data-qty="${b.qty}">Sell</button>
+          <button class="trade-btn sell-btn" data-side="SELL" data-px="${bidPx}" data-qty="${bidQty}">Sell</button>
         </td>
       `;
       body.appendChild(tr);
