@@ -278,10 +278,9 @@
 
     const sliderLabels = $(".slider-labels");
     if (sliderLabels) {
-      const mid = Math.floor(max / 2);
       sliderLabels.innerHTML = `
         <span>1</span>
-        <span>${mid}</span>
+        <span></span>
         <span>${max}</span>
       `;
     }
@@ -477,7 +476,7 @@
       showGuest();
     }
   }
-  
+
   async function loadNews() {
     const box = $("#news-content");
     if (!box) return; // 自定义 game 的页面是 game-info-card，没有 news-content，直接跳过
@@ -523,7 +522,7 @@
   // Initialize
   connectWS();
   initAuthUI();
-  loadNews();                    
+  loadNews();
   setInterval(loadNews, 5000);    // refresh every 5 seconds
 
   // Refresh position every 5 seconds
