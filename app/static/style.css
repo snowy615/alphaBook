@@ -260,6 +260,7 @@ body{
   padding: 8px;
   border-bottom: 1px dashed var(--border);
   font-size: 13px;
+  text-align: center;
 }
 
 .ladder th {
@@ -269,7 +270,7 @@ body{
 }
 
 .ladder td {
-  text-align: right;
+  text-align: center;
 }
 
 .ladder td.div {
