@@ -190,4 +190,7 @@ def whoami(user: User = Depends(current_user)):
 # Alias the simple /me endpoint the UI polls to flip header buttons
 @router.get("/me", include_in_schema=False)
 def me(user: User = Depends(current_user)):
-    return JSONResponse({"username": user.username})
+    return JSONResponse({
+        "username": user.username,
+        "is_admin": user.is_admin
+    })
