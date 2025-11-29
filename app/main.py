@@ -17,7 +17,7 @@ from app.schemas import OrderIn, Ack, PriceOut
 from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
 from app.db import init_db, get_session
 from app.auth import router as auth_router, current_user
-from app.models import User, Order as DBOrder, Trade as DBTrade
+from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
@@ -178,16 +178,22 @@ def _metrics_for(user_id: int):
 def home(request: Request, session: Session = Depends(get_session)):
     from app.models import CustomGame
 
-    # Get all symbols including custom games
-    all_symbols = list(DEFAULT_SYMBOLS)
-    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
+    # Only show visible & active custom games on the landing page
+    games = session.exec(
+        select(CustomGame).where(
+            CustomGame.is_active == True,
+            CustomGame.is_visible == True,
+        )
+    ).all()
 
+    symbols: List[str] = []
     game_data = {}
+
     for game in games:
-        all_symbols.append(game.symbol)
+        symbols.append(game.symbol)
         game_data[game.symbol] = {
             "name": game.name,
-            "instructions": game.instructions
+            "instructions": game.instructions,
         }
 
     return templates.TemplateResponse(
@@ -195,45 +201,38 @@ def home(request: Request, session: Session = Depends(get_session)):
         {
             "request": request,
             "app_name": "AlphaBook",
-            "symbols": all_symbols,
-            "symbols_json": json.dumps(all_symbols),
+            "symbols": symbols,
+            "symbols_json": json.dumps(symbols),
             "game_data_json": json.dumps(game_data),
             "depth": TOP_DEPTH,
         },
     )
 
 
+
 @app.get("/trade/{symbol}", include_in_schema=False)
 def trade_page(symbol: str, request: Request, session: Session = Depends(get_session)):
-    """Individual trading page for a specific symbol"""
+    """Individual trading page for a specific custom game symbol"""
     from app.models import CustomGame
 
     symbol = symbol.upper()
 
-    # Check if it's a default symbol or custom game
-    is_custom_game = False
-    game_info = None
+    game = session.exec(
+        select(CustomGame).where(
+            CustomGame.symbol == symbol,
+            CustomGame.is_active == True,
+            CustomGame.is_visible == True,
+        )
+    ).first()
 
-    if symbol in DEFAULT_SYMBOLS:
-        # Regular equity
-        pass
-    else:
-        # Check if it's a custom game
-        game = session.exec(
-            select(CustomGame).where(
-                CustomGame.symbol == symbol,
-                CustomGame.is_active == True
-            )
-        ).first()
+    if not game:
+        raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
 
-        if not game:
-            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
-
-        is_custom_game = True
-        game_info = {
-            "name": game.name,
-            "instructions": game.instructions
-        }
+    is_custom_game = True
+    game_info = {
+        "name": game.name,
+        "instructions": game.instructions
+    }
 
     return templates.TemplateResponse(
         "trading.html",
@@ -248,20 +247,23 @@ def trade_page(symbol: str, request: Request, session: Session = Depends(get_ses
     )
 
 
+
 # ---- Utils ----
 @app.get("/symbols")
 def get_symbols(session: Session = Depends(get_session)):
-    """Get all available symbols including custom games"""
+    """Get all available symbols (only visible custom games)."""
     from app.models import CustomGame
 
-    symbols = list(DEFAULT_SYMBOLS)
+    games = session.exec(
+        select(CustomGame).where(
+            CustomGame.is_active == True,
+            CustomGame.is_visible == True,
+        )
+    ).all()
 
-    # Add active custom games
-    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
-    for game in games:
-        symbols.append(game.symbol)
-
+    symbols = [g.symbol for g in games]
     return {"symbols": symbols}
+
 
 
 @app.get("/health")
@@ -313,14 +315,17 @@ def me_orders(user: User = Depends(current_user), session: Session = Depends(get
 
     return rows
 
-
 @app.delete("/orders/{order_id}", include_in_schema=False)
 def cancel_order(
         order_id: str,
         user: User = Depends(current_user),
         session: Session = Depends(get_session)
 ):
-    """Cancel one of the user's orders from both memory and database."""
+    """
+    Cancel one of the user's orders from both memory and database.
+
+    When the related CustomGame is paused, cancellation is NOT allowed.
+    """
     # Find in database
     stmt = select(DBOrder).where(
         DBOrder.order_id == order_id,
@@ -332,10 +337,23 @@ def cancel_order(
     if not db_order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    symbol = db_order.symbol.upper()
+
+    # Check if this symbol is a custom game and whether it is paused
+    game = session.exec(
+        select(CustomGame).where(CustomGame.symbol == symbol)
+    ).first()
+
+    # If there is a related custom game and it is paused, block cancellation
+    if game and game.is_paused:
+        raise HTTPException(
+            status_code=403,
+            detail="Trading for this game is currently paused; orders cannot be cancelled."
+        )
+
     # Cancel in memory book
-    symbol = db_order.symbol
     book = books[symbol]
-    canceled = book.cancel(order_id, user_id=str(user.id))
+    book.cancel(order_id, user_id=str(user.id))
 
     # Update database
     db_order.status = "CANCELED"
@@ -345,14 +363,30 @@ def cancel_order(
 
     return {"ok": True, "status": "CANCELED"}
 
-
 @app.post("/orders", response_model=Ack)
 async def submit_order(
         order_in: OrderIn,
         user: User = Depends(current_user),
         session: Session = Depends(get_session)
 ):
-    symbol = order_in.symbol
+    symbol = order_in.symbol.upper()
+
+    # Only allow trading on defined custom games, and enforce visibility/pause flags
+    from app.models import CustomGame
+    cg = session.exec(
+        select(CustomGame).where(CustomGame.symbol == symbol)
+    ).first()
+
+    if not cg:
+        raise HTTPException(status_code=404, detail="Symbol is not tradable.")
+
+    if not cg.is_active:
+        raise HTTPException(status_code=403, detail="This game is not active.")
+    if not cg.is_visible:
+        raise HTTPException(status_code=403, detail="This game is hidden by the administrator.")
+    if cg.is_paused:
+        raise HTTPException(status_code=403, detail="Trading for this game is currently paused.")
+
     book = books[symbol]
     lock = locks[symbol]
 

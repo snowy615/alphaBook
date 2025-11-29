@@ -863,7 +863,7 @@
     }
   }
 
-  // Cancel an order
+  // Cancel an order (goes through /orders/{id} which enforces pause)
   window.cancelMyOrder = async function(orderId) {
     const btn = document.querySelector(`button[data-order-id="${orderId}"]`);
     if (btn) {
@@ -872,14 +872,33 @@
     }
 
     try {
-      const res = await fetch(`/me/orders/${orderId}/cancel`, {
-        method: 'POST',
+      const res = await fetch(`/orders/${orderId}`, {
+        method: 'DELETE',
         credentials: 'include'
       });
 
       if (!res.ok) {
-        throw new Error('Failed to cancel order');
+        // Try to read backend error detail (e.g. paused message)
+        let msg = 'Failed to cancel order';
+        try {
+          const data = await res.json();
+          if (data && data.detail) {
+            msg = data.detail;
+          }
+        } catch (_) {
+          // ignore parse errors, keep default msg
+        }
+
+        alert(msg);
+
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = 'Cancel';
+        }
+        return;
       }
+
+      // ✅ Only here means cancel succeeded
 
       // Reload orders
       await loadMyOrders();

@@ -281,7 +281,6 @@ async def update_game(
 
     return {"ok": True, "message": "Game updated"}
 
-
 @router.delete("/admin/games/{game_id}")
 async def delete_game(
         game_id: int,
@@ -300,6 +299,77 @@ async def delete_game(
     session.commit()
 
     return {"ok": True, "message": "Game deactivated"}
+
+@router.post("/admin/games/{game_id}/show")
+async def show_game(
+        game_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Mark a custom game as visible in the lobby and /symbols."""
+    game = session.get(CustomGame, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    game.is_visible = True
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return {"ok": True, "id": game.id, "is_visible": game.is_visible}
+
+
+@router.post("/admin/games/{game_id}/hide")
+async def hide_game(
+        game_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Hide a custom game so users cannot see it in the lobby or /symbols."""
+    game = session.get(CustomGame, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    game.is_visible = False
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return {"ok": True, "id": game.id, "is_visible": game.is_visible}
+
+
+@router.post("/admin/games/{game_id}/pause")
+async def pause_game(
+        game_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Pause trading for a custom game."""
+    game = session.get(CustomGame, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    game.is_paused = True
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return {"ok": True, "id": game.id, "is_paused": game.is_paused}
+
+
+@router.post("/admin/games/{game_id}/resume")
+async def resume_game(
+        game_id: int,
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Resume trading for a custom game."""
+    game = session.get(CustomGame, game_id)
+    if not game:
+        raise HTTPException(status_code=404, detail="Game not found")
+
+    game.is_paused = False
+    session.add(game)
+    session.commit()
+    session.refresh(game)
+    return {"ok": True, "id": game.id, "is_paused": game.is_paused}
 
 
 class ResolveGame(BaseModel):

@@ -45,9 +45,14 @@ class CustomGame(SQLModel, table=True):
     instructions: str  # Instructions shown to users
     expected_value: float  # True value used for P&L calculation (hidden from users)
     is_active: bool = Field(default=True)
+    # NEW: whether this game is visible in the lobby / symbol list
+    is_visible: bool = Field(default=True)
+    # NEW: whether trading is paused for this game
+    is_paused: bool = Field(default=False)
     created_by: int = Field(foreign_key="user.id")
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
 
 class MarketNews(SQLModel, table=True):
     """Simple market news item that admins can publish."""
