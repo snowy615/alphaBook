@@ -184,6 +184,12 @@
       return;
     }
 
+    // Validate qtState
+    if (!qtState.side || !qtState.symbol) {
+      qtHint.textContent = "Invalid order parameters. Please try again.";
+      return;
+    }
+
     const payload = {
       symbol: SYMBOL,
       side: qtState.side,
@@ -194,7 +200,8 @@
     console.log("Submitting order:", payload); // DEBUG
 
     qtHint.textContent = "Submitting...";
-    $("#qt-submit").disabled = true;
+    const submitBtn = $("#qt-submit");
+    if (submitBtn) submitBtn.disabled = true;
 
     try {
       const res = await fetch("/orders", {
@@ -220,7 +227,7 @@
 
       if (!res.ok) {
         qtHint.textContent = "Error: " + (text || res.status);
-        $("#qt-submit").disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
         return;
       }
 
@@ -230,7 +237,7 @@
       } catch (e) {
         console.error("JSON parse error:", e, text);
         qtHint.textContent = "Error: Invalid server response";
-        $("#qt-submit").disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
         return;
       }
 
@@ -242,12 +249,12 @@
       setTimeout(() => {
         quickTradeDlg.close();
         qtHint.textContent = "";
-        $("#qt-submit").disabled = false;
+        if (submitBtn) submitBtn.disabled = false;
       }, 700);
     } catch (err) {
       console.error("Order submission error:", err);
       qtHint.textContent = "Network error: " + err.message;
-      $("#qt-submit").disabled = false;
+      if (submitBtn) submitBtn.disabled = false;
     }
   });
 
@@ -257,18 +264,28 @@
       return;
     }
 
+    // Validate inputs
+    if (!side || typeof side !== 'string') {
+      console.error('Invalid side parameter:', side);
+      return;
+    }
+
     const max = Math.max(1, Math.floor(parseFloat(maxQty) || 100));
 
     qtState = {
-      side: side,
+      side: side.toUpperCase(),
       price: parseFloat(price),
       qty: 1,
       maxQty: max
     };
 
-    $("#qt-title").textContent = `Quick ${side}`;
-    $("#qt-side-label").textContent = side;
-    $("#qt-side-label").className = `qt-side ${side.toLowerCase()}`;
+    $("#qt-title").textContent = `Quick ${qtState.side}`;
+    const sideLabel = $("#qt-side-label");
+    if (sideLabel) {
+      sideLabel.textContent = qtState.side;
+      const sideClass = qtState.side.toLowerCase();
+      sideLabel.className = `qt-side ${sideClass}`;
+    }
     $("#qt-symbol").textContent = SYMBOL;
     $("#qt-price").textContent = fmt(price);
 
