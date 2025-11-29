@@ -115,16 +115,20 @@
     // Asks block
     for (let i = asks.length - 1; i >= 0; i--) {
       const a = asks[i];
-      // Ensure valid values
-      const askPx = a.px || a.price || 0;
-      const askQty = a.qty || a.quantity || 0;
+      // Ensure valid values - use string conversion to handle both formats
+      const askPx = parseFloat(a.px || a.price || 0);
+      const askQty = parseFloat(a.qty || a.quantity || 0);
 
       const tr = document.createElement("tr");
       tr.className = "row-ask";
+
+      // Only create Buy button if we have valid price and quantity
+      const buyButton = (askPx > 0 && askQty > 0)
+        ? `<button class="trade-btn buy-btn" data-side="BUY" data-px="${askPx}" data-qty="${askQty}">Buy</button>`
+        : '';
+
       tr.innerHTML = `
-        <td class="action-cell">
-          <button class="trade-btn buy-btn" data-side="BUY" data-px="${askPx}" data-qty="${askQty}">Buy</button>
-        </td>
+        <td class="action-cell">${buyButton}</td>
         <td>${fmt(askQty)}</td>
         <td>${fmt(askPx)}</td>
         <td class="div"></td>
@@ -151,12 +155,18 @@
     // Bids block
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
-      // Ensure valid values
-      const bidPx = b.px || b.price || 0;
-      const bidQty = b.qty || b.quantity || 0;
+      // Ensure valid values - use parseFloat to handle both formats
+      const bidPx = parseFloat(b.px || b.price || 0);
+      const bidQty = parseFloat(b.qty || b.quantity || 0);
 
       const tr = document.createElement("tr");
       tr.className = "row-bid";
+
+      // Only create Sell button if we have valid price and quantity
+      const sellButton = (bidPx > 0 && bidQty > 0)
+        ? `<button class="trade-btn sell-btn" data-side="SELL" data-px="${bidPx}" data-qty="${bidQty}">Sell</button>`
+        : '';
+
       tr.innerHTML = `
         <td class="action-cell"></td>
         <td></td>
@@ -164,9 +174,7 @@
         <td class="div"></td>
         <td>${fmt(bidPx)}</td>
         <td>${fmt(bidQty)}</td>
-        <td class="action-cell">
-          <button class="trade-btn sell-btn" data-side="SELL" data-px="${bidPx}" data-qty="${bidQty}">Sell</button>
-        </td>
+        <td class="action-cell">${sellButton}</td>
       `;
       body.appendChild(tr);
     }
@@ -202,9 +210,22 @@
       return;
     }
 
-    // Validate qtState
-    if (!qtState.side || !qtState.symbol) {
-      qtHint.textContent = "Invalid order parameters. Please try again.";
+    // Validate qtState has required fields
+    if (!qtState.side) {
+      qtHint.textContent = "Invalid order side. Please try again.";
+      console.error("Invalid qtState:", qtState);
+      return;
+    }
+
+    if (!qtState.price || !isFinite(qtState.price) || qtState.price <= 0) {
+      qtHint.textContent = "Invalid price. Please try again.";
+      console.error("Invalid price in qtState:", qtState);
+      return;
+    }
+
+    if (!qtState.qty || qtState.qty <= 0) {
+      qtHint.textContent = "Invalid quantity. Please try again.";
+      console.error("Invalid qty in qtState:", qtState);
       return;
     }
 
@@ -291,11 +312,18 @@
       return;
     }
 
+    const parsedPrice = parseFloat(price);
+    if (!isFinite(parsedPrice) || parsedPrice <= 0) {
+      console.error('Invalid price parameter:', price, 'parsed to:', parsedPrice);
+      alert('Invalid price. Please try again.');
+      return;
+    }
+
     const max = Math.max(1, Math.floor(parseFloat(maxQty) || 100));
 
     qtState = {
       side: normalizedSide,
-      price: parseFloat(price),
+      price: parsedPrice,
       qty: 1,
       maxQty: max
     };
