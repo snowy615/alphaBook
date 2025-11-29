@@ -76,10 +76,11 @@
         </section>
       </div>
 
-      <!-- Right Column: News/Updates or Game Instructions -->
+      <!-- Right Column: Game Instructions + News OR just News -->
       <div class="right-column">
         {% if is_custom_game and game_info %}
-        <section class="card game-info-card">
+        <!-- Game Instructions Card -->
+        <section class="card game-info-card" style="margin-bottom: 24px;">
           <div class="head">
             <div class="sym">{{ game_info.name }}</div>
           </div>
@@ -88,7 +89,9 @@
             <p>{{ game_info.instructions }}</p>
           </div>
         </section>
-        {% else %}
+        {% endif %}
+
+        <!-- Market Updates Card (shown for both games and regular equities) -->
         <section class="card news-card">
           <div class="head">
             <div class="sym">Market Updates</div>
@@ -106,7 +109,6 @@
             </div>
           </div>
         </section>
-        {% endif %}
       </div>
     </div>
   </div>
