@@ -235,6 +235,7 @@
       <button class="admin-tab active" onclick="switchTab('users')">All Users</button>
       <button class="admin-tab" onclick="switchTab('games')">Custom Games</button>
       <button class="admin-tab" onclick="switchTab('leaderboard')">Leaderboard</button>
+      <button class="admin-tab" onclick="switchTab('news')">Market News</button>
       <button class="admin-tab" onclick="switchTab('settings')">Settings</button>
     </div>
 
@@ -527,6 +528,37 @@
       </table>
     </div>
 
+    <!-- Market News Tab -->
+    <div id="news-tab" class="tab-content">
+      <div class="card">
+        <h2>Market News</h2>
+        <p class="small" style="color: var(--muted); margin-bottom: 16px;">
+          Admin can publish short messages here. Users will see them on the trading page in the <strong>Market Updates</strong> panel.
+        </p>
+
+        <!-- Create news -->
+        <div style="margin-bottom: 24px;">
+          <label for="news-input" class="small" style="display:block; margin-bottom:4px;">New message</label>
+          <div style="display:flex; gap:8px;">
+            <input
+              id="news-input"
+              type="text"
+              placeholder="Type market news here..."
+              style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#050814; color:#fff;"
+            />
+            <button class="btn primary" type="button" onclick="createNews()">Publish</button>
+          </div>
+          <div id="news-hint" class="small" style="margin-top:6px; color: var(--muted);"></div>
+        </div>
+
+        <!-- News list -->
+        <div>
+          <h3 style="margin-bottom:8px;">Existing News</h3>
+          <div id="admin-news-list" class="card" style="padding:0; border:none;"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Tab -->
     <div id="settings-tab" class="tab-content">
       <div class="danger-zone">
@@ -639,6 +671,146 @@
         alert('Network error: ' + err.message);
       }
     }
+
+    function escapeHtml(str) {
+      if (str === null || str === undefined) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    async function loadAdminNews() {
+      const container = document.getElementById('admin-news-list');
+      if (!container) return;
+
+      container.innerHTML = '<div style="padding:12px;" class="small">Loading…</div>';
+
+      try {
+        const res = await fetch('/news?limit=100', { credentials: 'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const items = await res.json();
+
+        if (!items.length) {
+          container.innerHTML = '<div style="padding:12px;" class="small">No news yet.</div>';
+          return;
+        }
+
+        container.innerHTML = items
+          .map((n) => {
+            const dt = new Date(n.created_at);
+            const ts = dt.toLocaleString();
+            const safeContent = escapeHtml(n.content);
+            return (
+              '<div class="users-row" style="display:flex; align-items:flex-start; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--border);">' +
+                '<div>' +
+                  '<div class="small" style="color:var(--muted);">' + ts + '</div>' +
+                  '<div class="admin-news-content" data-news-id="' + n.id + '">' + safeContent + '</div>' +
+                '</div>' +
+                '<div style="display:flex; gap:6px; flex-shrink:0; margin-left:12px;">' +
+                  '<button class="action-btn" onclick="editNews(' + n.id + ')">Edit</button>' +
+                  '<button class="action-btn btn-delete" onclick="deleteNewsItem(' + n.id + ')">Delete</button>' +
+                '</div>' +
+              '</div>'
+            );
+          })
+          .join('');
+      } catch (err) {
+        console.error('loadAdminNews failed', err);
+        container.innerHTML = '<div style="padding:12px;" class="small">Failed to load news: ' + err.message + '</div>';
+      }
+    }
+
+    async function createNews() {
+      const input = document.getElementById('news-input');
+      const hint = document.getElementById('news-hint');
+      if (!input || !hint) return;
+
+      const content = (input.value || '').trim();
+      if (!content) {
+        hint.textContent = 'Content cannot be empty.';
+        return;
+      }
+
+      hint.textContent = 'Publishing…';
+
+      try {
+        const res = await fetch('/admin/news', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content })
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Failed to publish news');
+        }
+
+        input.value = '';
+        hint.textContent = 'News published.';
+        loadAdminNews();
+      } catch (err) {
+        console.error('createNews failed', err);
+        hint.textContent = 'Error: ' + err.message;
+      }
+    }
+
+    async function editNews(id) {
+      const contentEl = document.querySelector('.admin-news-content[data-news-id="' + id + '"]');
+      const current = contentEl ? contentEl.textContent : '';
+      const next = prompt('Edit news:', current || '');
+      if (next === null) return;
+
+      const trimmed = next.trim();
+      if (!trimmed) return;
+
+      try {
+        const res = await fetch('/admin/news/' + id, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ content: trimmed })
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Failed to update news');
+        }
+
+        loadAdminNews();
+      } catch (err) {
+        console.error('editNews failed', err);
+        alert('Error updating news: ' + err.message);
+      }
+    }
+
+    async function deleteNewsItem(id) {
+      if (!confirm('Delete this news item?')) return;
+
+      try {
+        const res = await fetch('/admin/news/' + id, {
+          method: 'DELETE',
+          credentials: 'include'
+        });
+
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.detail || 'Failed to delete news');
+        }
+
+        loadAdminNews();
+      } catch (err) {
+        console.error('deleteNewsItem failed', err);
+        alert('Error deleting news: ' + err.message);
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      loadAdminNews();
+    });
   </script>
 </body>
 </html>

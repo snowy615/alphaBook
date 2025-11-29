@@ -477,10 +477,54 @@
       showGuest();
     }
   }
+  
+  async function loadNews() {
+    const box = $("#news-content");
+    if (!box) return; // 自定义 game 的页面是 game-info-card，没有 news-content，直接跳过
+
+    try {
+      const res = await fetch("/news?limit=20", { credentials: "include" });
+      if (!res.ok) throw new Error("HTTP " + res.status);
+
+      const items = await res.json();
+
+      if (!items.length) {
+        box.innerHTML = `
+          <div class="news-item">
+            <div class="news-text">No news yet.</div>
+          </div>
+        `;
+        return;
+      }
+
+      box.innerHTML = items
+        .map((n) => {
+          const dt = new Date(n.created_at);
+          const ts = dt.toLocaleTimeString();
+          return `
+            <div class="news-item">
+              <div class="news-time">${ts}</div>
+              <div class="news-text">${n.content}</div>
+            </div>
+          `;
+        })
+        .join("");
+    } catch (err) {
+      console.error("loadNews failed", err);
+      box.innerHTML = `
+        <div class="news-item">
+          <div class="news-text">Failed to load news.</div>
+        </div>
+      `;
+    }
+  }
+
 
   // Initialize
   connectWS();
   initAuthUI();
+  loadNews();                    
+  setInterval(loadNews, 5000);    // refresh every 5 seconds
 
   // Refresh position every 5 seconds
   setInterval(() => {
