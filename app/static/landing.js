@@ -124,24 +124,32 @@
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
     const userNameEl = $("#userName");
+    const adminLink = $("#adminLink");
 
     function showGuest() {
       isAuthed = false;
       loginBox?.classList.remove("hidden");
       userBox?.classList.add("hidden");
+      if (adminLink) adminLink.style.display = "none";
     }
 
-    function showUser(nameLike) {
+    function showUser(nameLike, isAdmin) {
       isAuthed = true;
       if (userNameEl) userNameEl.textContent = String(nameLike || "user");
       loginBox?.classList.add("hidden");
       userBox?.classList.remove("hidden");
+
+      // Show admin link only for admin users
+      if (adminLink) {
+        adminLink.style.display = isAdmin ? "inline-block" : "none";
+      }
     }
 
     try {
       const me = await fetchJSON("/me");
       const nameLike = me?.username || me?.name || me?.email || me?.id || "user";
-      showUser(nameLike);
+      const isAdmin = me?.is_admin || false;
+      showUser(nameLike, isAdmin);
     } catch {
       showGuest();
     }
