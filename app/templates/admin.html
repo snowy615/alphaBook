@@ -405,6 +405,13 @@
                 onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">
                 Delete
               </button>
+
+              <!-- 5) Resolve (set final expected value / outcome) -->
+              <button
+                class="action-btn btn-game"
+                onclick="openResolveModal({{ game.id }}, '{{ game.symbol }}', {{ game.expected_value }})">
+                Resolve
+              </button>
             </td>
           </tr>
           {% else %}
@@ -455,6 +462,57 @@
       </div>
     </dialog>
 
+    <!-- Resolve Game Modal (for setting final expected value) -->
+    <dialog id="resolve-modal" class="modal">
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Resolve Game</h3>
+          <button class="icon-close" onclick="closeResolveModal()">✕</button>
+        </div>
+        <form id="resolve-form">
+          <div class="panel-body">
+            <div style="margin-bottom: 16px;">
+              <strong>Game:</strong> <span id="resolve-game-symbol"></span>
+            </div>
+            <div style="margin-bottom: 16px; padding: 12px; background: rgba(255, 107, 107, 0.1); border-radius: 8px; border: 1px solid rgba(255, 107, 107, 0.3);">
+              <strong style="color: var(--red);">⚠️ Warning:</strong>
+              Setting the final expected value will determine all users' P&amp;L for this game.
+              This updates the expected value used in P&amp;L calculations.
+            </div>
+            <div class="field">
+              <label>Current Expected Value</label>
+              <input
+                type="text"
+                id="resolve-current-value"
+                disabled
+                style="background: #1a1f2e; color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;"
+              />
+            </div>
+            <div class="field">
+              <label>Final Expected Value (Actual Outcome)</label>
+              <input
+                type="number"
+                id="resolve-new-value"
+                step="0.01"
+                placeholder="Enter final value"
+                required
+              />
+              <div class="small" style="margin-top: 6px;">
+                Enter the actual/final value for this game. This will be used to calculate players' final P&amp;L.
+              </div>
+            </div>
+            <div class="small" id="resolve-hint" style="margin-top: 8px;"></div>
+          </div>
+          <div class="panel-foot">
+            <button type="button" class="btn ghost" onclick="closeResolveModal()">Cancel</button>
+            <button type="submit" class="btn primary" style="background: var(--brand);">
+              Update Expected Value
+            </button>
+          </div>
+        </form>
+      </div>
+    </dialog>
+
     <style>
       .modal {
         border: none;
@@ -469,6 +527,8 @@
 
     <script>
       let editingGameId = null;
+      // Track which game is being resolved
+      let resolvingGameId = null;
 
       function openGameModal(editing = false) {
         editingGameId = null;
@@ -496,6 +556,30 @@
         editingGameId = null;
       }
 
+      // Open Resolve modal for a specific game
+      function openResolveModal(id, symbol, currentValue) {
+        resolvingGameId = id;
+        const symbolEl = document.getElementById('resolve-game-symbol');
+        const currentEl = document.getElementById('resolve-current-value');
+        const newValueEl = document.getElementById('resolve-new-value');
+        const hintEl = document.getElementById('resolve-hint');
+
+        if (symbolEl) symbolEl.textContent = symbol;
+        if (currentEl) currentEl.value = '$' + Number(currentValue || 0).toFixed(2);
+        if (newValueEl) newValueEl.value = Number(currentValue || 0).toFixed(2);
+        if (hintEl) hintEl.textContent = '';
+
+        document.getElementById('resolve-modal').showModal();
+      }
+
+      // Close Resolve modal
+      function closeResolveModal() {
+        const dlg = document.getElementById('resolve-modal');
+        if (dlg && dlg.open) dlg.close();
+        resolvingGameId = null;
+      }
+
+      // Handle create / update game form submit
       document.getElementById('game-form')?.addEventListener('submit', async (e) => {
         e.preventDefault();
 
@@ -540,6 +624,59 @@
         } catch (err) {
           hint.textContent = 'Network error: ' + err.message;
           submitBtn.disabled = false;
+        }
+      });
+
+      // Handle Resolve form submit (update final expected value)
+      document.getElementById('resolve-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        if (!resolvingGameId) return;
+
+        const newValueInput = document.getElementById('resolve-new-value');
+        const hint = document.getElementById('resolve-hint');
+        const submitBtn = e.target.querySelector('button[type="submit"]');
+
+        const newValue = parseFloat(newValueInput.value);
+        if (!isFinite(newValue)) {
+          if (hint) hint.textContent = 'Please enter a valid numeric value.';
+          return;
+        }
+
+        if (!confirm(`Are you sure you want to set the final expected value to $${newValue.toFixed(2)}? This will affect all users\' P&L calculations.`)) {
+          return;
+        }
+
+        if (hint) hint.textContent = 'Updating expected value...';
+        if (submitBtn) submitBtn.disabled = true;
+
+        try {
+          const res = await fetch(`/admin/games/${resolvingGameId}/resolve`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ expected_value: newValue })
+          });
+
+          if (res.ok) {
+            if (hint) hint.textContent = 'Expected value updated! Refreshing...';
+            setTimeout(() => {
+              closeResolveModal();
+              location.reload();
+            }, 500);
+          } else {
+            let msg = 'Failed to update expected value';
+            try {
+              const data = await res.json();
+              if (data && data.detail) msg = data.detail;
+            } catch (_) {
+              // ignore JSON parse error
+            }
+            if (hint) hint.textContent = 'Error: ' + msg;
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        } catch (err) {
+          if (hint) hint.textContent = 'Network error: ' + err.message;
+          if (submitBtn) submitBtn.disabled = false;
         }
       });
 
