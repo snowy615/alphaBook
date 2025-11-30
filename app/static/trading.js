@@ -1,3 +1,6 @@
+// FIXED trading.js - Key changes marked with // FIX:
+// Replace the renderLadder function and order submission handlers
+
 (function () {
   "use strict";
 
@@ -47,28 +50,37 @@
     const wsProto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${wsProto}://${location.host}/ws/book/${SYMBOL}`);
 
-    ws.onopen = () => setMeta("connected • live");
+    ws.onopen = () => {
+      console.log(`[WS] Connected to ${SYMBOL}`);
+      setMeta("connected • live");
+    };
 
     ws.onmessage = (msg) => {
       try {
         const data = JSON.parse(msg.data);
+        console.log(`[WS] Received message for ${SYMBOL}:`, data.type); // FIX: Added logging
         if (data.type === "snapshot") {
+          console.log(`[WS] Book snapshot:`, data.book); // FIX: Added logging
           renderLadder(data.book);
           setRef(data.ref_price);
           setMeta(`updated ${new Date().toLocaleTimeString()}`);
           updatePosition();
         }
       } catch (e) {
-        console.error(e);
+        console.error('[WS] Error processing message:', e);
       }
     };
 
     ws.onclose = () => {
+      console.log(`[WS] Disconnected from ${SYMBOL}, reconnecting...`);
       setMeta("disconnected — retrying…");
       setTimeout(connectWS, 1500);
     };
 
-    ws.onerror = () => ws.close();
+    ws.onerror = (err) => {
+      console.error('[WS] Error:', err);
+      ws.close();
+    };
   }
 
   function setMeta(text) {
@@ -78,9 +90,8 @@
 
   function setRef(price) {
     const el = $(`#ref-${SYMBOL}`);
-    if (!el) return; // Element doesn't exist for custom games
+    if (!el) return;
 
-    // For custom games, compare against last mid price
     const old = IS_CUSTOM_GAME ? lastMid : parseFloat(el.dataset.v || "NaN");
 
     el.dataset.v = price;
@@ -99,54 +110,79 @@
       } else if (price < old) {
         el.classList.add("down");
       }
-      // If price === old, don't add any class
       el.classList.add("blink");
       setTimeout(() => el.classList.remove("blink"), 400);
     }
   }
 
+  // FIX: Improved renderLadder with better data handling
   function renderLadder(book) {
     const body = $(`#ladder-body-${SYMBOL}`);
-    if (!body) return;
+    if (!body) {
+      console.error('[renderLadder] Body element not found for:', SYMBOL);
+      return;
+    }
 
-    console.log('renderLadder called with book:', book); // DEBUG
+    // FIX: Ensure book is valid
+    if (!book || typeof book !== 'object') {
+      console.error('[renderLadder] Invalid book data:', book);
+      book = { bids: [], asks: [] };
+    }
+
+    console.log('[renderLadder] Processing book:', JSON.stringify(book)); // FIX: Detailed logging
 
     body.innerHTML = "";
 
-    const asks = (book.asks || []).slice(0, DEPTH).sort((a,b)=>parseFloat(a.px)-parseFloat(b.px));
-    const bids = (book.bids || []).slice(0, DEPTH).sort((a,b)=>parseFloat(b.px)-parseFloat(a.px));
+    // FIX: Safely handle asks and bids arrays
+    const rawAsks = Array.isArray(book.asks) ? book.asks : [];
+    const rawBids = Array.isArray(book.bids) ? book.bids : [];
 
-    console.log('Processed asks:', asks, 'bids:', bids); // DEBUG
+    console.log('[renderLadder] Raw asks:', rawAsks.length, 'Raw bids:', rawBids.length);
+
+    // FIX: Parse and filter valid entries
+    const asks = rawAsks
+      .map(a => ({
+        px: parseFloat(a.px || a.price || 0),
+        qty: parseFloat(a.qty || a.quantity || 0)
+      }))
+      .filter(a => a.px > 0 && a.qty > 0)
+      .slice(0, DEPTH)
+      .sort((a, b) => a.px - b.px);
+
+    const bids = rawBids
+      .map(b => ({
+        px: parseFloat(b.px || b.price || 0),
+        qty: parseFloat(b.qty || b.quantity || 0)
+      }))
+      .filter(b => b.px > 0 && b.qty > 0)
+      .slice(0, DEPTH)
+      .sort((a, b) => b.px - a.px);
+
+    console.log('[renderLadder] Processed asks:', asks.length, 'Processed bids:', bids.length);
 
     // Calculate mid price from order book
-    const bestAsk = asks[0] ? parseFloat(asks[0].px) : null;
-    const bestBid = bids[0] ? parseFloat(bids[0].px) : null;
+    const bestAsk = asks.length > 0 ? asks[0].px : null;
+    const bestBid = bids.length > 0 ? bids[0].px : null;
     const mid = (bestAsk !== null && bestBid !== null) ? (bestAsk + bestBid) / 2 : null;
+
+    console.log('[renderLadder] Best ask:', bestAsk, 'Best bid:', bestBid, 'Mid:', mid);
 
     // For custom games, update the price display with mid price
     if (IS_CUSTOM_GAME && mid !== null) {
       setRef(mid);
     }
 
-    // Asks block
+    // Asks block (reversed so lowest ask is at bottom, closest to mid)
     for (let i = asks.length - 1; i >= 0; i--) {
       const a = asks[i];
-      // Ensure valid values - use string conversion to handle both formats
-      const askPx = parseFloat(a.px || a.price || 0);
-      const askQty = parseFloat(a.qty || a.quantity || 0);
-
       const tr = document.createElement("tr");
       tr.className = "row-ask";
-
-      // Only create Buy button if we have valid price and quantity
-      const buyButton = (askPx > 0 && askQty > 0)
-        ? `<button class="trade-btn buy-btn" data-side="BUY" data-px="${askPx}" data-qty="${askQty}">Buy</button>`
-        : '';
-
       tr.innerHTML = `
-        <td class="action-cell">${buyButton}</td>
-        <td>${fmt(askQty)}</td>
-        <td>${fmt(askPx)}</td>
+        <td class="action-cell">
+          <button class="trade-btn buy-btn" data-side="BUY" data-px="${a.px}" data-qty="${a.qty}">Buy</button>
+        </td>
+        <td>${fmt(a.qty)}</td>
+        <td>${fmt(a.px)}</td>
         <td class="div"></td>
         <td></td>
         <td></td>
@@ -155,23 +191,20 @@
       body.appendChild(tr);
     }
 
-    // Mid row - Add liquidity buttons (always shown)
-    const sp = (bestAsk!=null && bestBid!=null) ? (bestAsk - bestBid) : null;
-
+    // Mid row
+    const sp = (bestAsk !== null && bestBid !== null) ? (bestAsk - bestBid) : null;
     const midtr = document.createElement("tr");
     midtr.className = "midrow";
 
-    // Create + buttons - always show them, even when order book is empty
-    // If no price available, show placeholder button that opens Place Order modal
     let addAskButton, addBidButton;
 
-    if (bestAsk != null) {
+    if (bestAsk !== null) {
       addAskButton = `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', ${bestAsk})" title="Add liquidity on ask side">+ Sell @ ${fmt(bestAsk)}</button>`;
     } else {
       addAskButton = `<button class="mid-add-btn add-ask-btn" onclick="openPlaceOrder('SELL', null)" title="Place sell order">+ Sell</button>`;
     }
 
-    if (bestBid != null) {
+    if (bestBid !== null) {
       addBidButton = `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', ${bestBid})" title="Add liquidity on bid side">+ Buy @ ${fmt(bestBid)}</button>`;
     } else {
       addBidButton = `<button class="mid-add-btn add-bid-btn" onclick="openPlaceOrder('BUY', null)" title="Place buy order">+ Buy</button>`;
@@ -182,7 +215,7 @@
         ${addAskButton}
       </td>
       <td class="mid-divider">
-        ${bestBid!=null && bestAsk!=null ? `Spread: ${fmt(sp)}` : '—'}
+        ${bestBid !== null && bestAsk !== null ? `Spread: ${fmt(sp)}` : '—'}
       </td>
       <td colspan="3" class="mid-action-right">
         ${addBidButton}
@@ -193,29 +226,23 @@
     // Bids block
     for (let i = 0; i < bids.length; i++) {
       const b = bids[i];
-      // Ensure valid values - use parseFloat to handle both formats
-      const bidPx = parseFloat(b.px || b.price || 0);
-      const bidQty = parseFloat(b.qty || b.quantity || 0);
-
       const tr = document.createElement("tr");
       tr.className = "row-bid";
-
-      // Only create Sell button if we have valid price and quantity
-      const sellButton = (bidPx > 0 && bidQty > 0)
-        ? `<button class="trade-btn sell-btn" data-side="SELL" data-px="${bidPx}" data-qty="${bidQty}">Sell</button>`
-        : '';
-
       tr.innerHTML = `
         <td class="action-cell"></td>
         <td></td>
         <td></td>
         <td class="div"></td>
-        <td>${fmt(bidPx)}</td>
-        <td>${fmt(bidQty)}</td>
-        <td class="action-cell">${sellButton}</td>
+        <td>${fmt(b.px)}</td>
+        <td>${fmt(b.qty)}</td>
+        <td class="action-cell">
+          <button class="trade-btn sell-btn" data-side="SELL" data-px="${b.px}" data-qty="${b.qty}">Sell</button>
+        </td>
       `;
       body.appendChild(tr);
     }
+
+    console.log('[renderLadder] Rendered', asks.length, 'asks and', bids.length, 'bids');
   }
 
   // Quick trade modal
@@ -248,7 +275,6 @@
       return;
     }
 
-    // Validate qtState has required fields
     if (!qtState.side) {
       qtHint.textContent = "Invalid order side. Please try again.";
       console.error("Invalid qtState:", qtState);
@@ -267,7 +293,6 @@
       return;
     }
 
-    // Max position limit validation (100 shares)
     const MAX_POSITION = 100;
     const currentPos = window.currentPosition || 0;
 
@@ -292,7 +317,7 @@
       qty: String(qtState.qty)
     };
 
-    console.log("Submitting order:", payload); // DEBUG
+    console.log("[QuickTrade] Submitting order:", payload);
 
     qtHint.textContent = "Submitting...";
     const submitBtn = $("#qt-submit");
@@ -309,7 +334,7 @@
         credentials: "include"
       });
 
-      console.log("Response status:", res.status); // DEBUG
+      console.log("[QuickTrade] Response status:", res.status);
 
       if (res.status === 401) {
         qtHint.textContent = "You need to log in to place orders.";
@@ -318,7 +343,7 @@
       }
 
       const text = await res.text();
-      console.log("Response text:", text); // DEBUG
+      console.log("[QuickTrade] Response text:", text);
 
       if (!res.ok) {
         qtHint.textContent = "Error: " + (text || res.status);
@@ -330,17 +355,24 @@
       try {
         ack = JSON.parse(text);
       } catch (e) {
-        console.error("JSON parse error:", e, text);
+        console.error("[QuickTrade] JSON parse error:", e, text);
         qtHint.textContent = "Error: Invalid server response";
         if (submitBtn) submitBtn.disabled = false;
         return;
       }
 
+      console.log("[QuickTrade] Order ACK:", ack);
+
       qtHint.textContent = `Success! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
 
-      if (ack?.snapshot) renderLadder(ack.snapshot);
+      // FIX: Ensure snapshot is rendered correctly
+      if (ack && ack.snapshot) {
+        console.log("[QuickTrade] Rendering snapshot from ACK:", ack.snapshot);
+        renderLadder(ack.snapshot);
+      }
+
       updatePosition();
-      loadMyOrders(); // Reload orders after placing order
+      loadMyOrders();
 
       setTimeout(() => {
         quickTradeDlg.close();
@@ -348,7 +380,7 @@
         if (submitBtn) submitBtn.disabled = false;
       }, 700);
     } catch (err) {
-      console.error("Order submission error:", err);
+      console.error("[QuickTrade] Order submission error:", err);
       qtHint.textContent = "Network error: " + err.message;
       if (submitBtn) submitBtn.disabled = false;
     }
@@ -360,7 +392,6 @@
       return;
     }
 
-    // Validate and normalize inputs
     const normalizedSide = (side || '').trim().toUpperCase();
     if (!normalizedSide || (normalizedSide !== 'BUY' && normalizedSide !== 'SELL')) {
       console.error('Invalid side parameter:', side, 'normalized to:', normalizedSide);
@@ -384,7 +415,7 @@
       maxQty: max
     };
 
-    console.log('openQuickTrade called with qtState:', qtState); // DEBUG
+    console.log('[openQuickTrade] State:', qtState);
 
     const titleEl = $("#qt-title");
     if (titleEl) titleEl.textContent = `Quick ${qtState.side}`;
@@ -392,12 +423,7 @@
     const sideLabel = $("#qt-side-label");
     if (sideLabel) {
       sideLabel.textContent = qtState.side;
-      const sideClass = qtState.side.toLowerCase();
-      // Clear existing classes first
-      sideLabel.className = '';
-      // Add new classes one at a time
-      sideLabel.classList.add('qt-side');
-      sideLabel.classList.add(sideClass);
+      sideLabel.className = 'qt-side ' + qtState.side.toLowerCase();
     }
 
     const symbolEl = $("#qt-symbol");
@@ -433,12 +459,12 @@
     const px = parseFloat(btn.dataset.px);
     const qty = btn.dataset.qty;
 
-    console.log('Trade button clicked:', { side, px, qty, dataset: btn.dataset }); // DEBUG
+    console.log('[TradeBtn] Clicked:', { side, px, qty, dataset: btn.dataset });
 
     if (side && side.trim() && isFinite(px) && qty) {
       openQuickTrade(side.trim(), px, qty);
     } else {
-      console.error('Invalid trade button data:', { side, px, qty });
+      console.error('[TradeBtn] Invalid data:', { side, px, qty });
     }
   });
 
@@ -465,14 +491,12 @@
     if (!dlg.open) { prefill(); dlg.showModal(); }
   });
 
-  // Function to open place order modal with pre-filled values
   window.openPlaceOrder = function(side, price) {
     if (!isAuthed) {
       alert("Please log in to place orders");
       return;
     }
 
-    // Set the side (BUY or SELL)
     const sideRadios = document.querySelectorAll('input[name="side"]');
     sideRadios.forEach(radio => {
       if (radio.value === side) {
@@ -480,30 +504,24 @@
       }
     });
 
-    // Set the price (if available, otherwise use last ref or leave empty)
     if (inpPx) {
       if (price !== null && price !== undefined) {
         inpPx.value = price.toFixed(2);
       } else if (lastRef !== null && isFinite(lastRef)) {
-        // Use last reference price if available
         inpPx.value = Number(lastRef).toFixed(2);
       } else {
-        // Leave empty for user to enter
         inpPx.value = "";
       }
     }
 
-    // Set default quantity if empty
     if (inpQty && !inpQty.value) {
       inpQty.value = "10";
     }
 
-    // Clear hint
     if (hint) {
       hint.textContent = '';
     }
 
-    // Open modal
     if (dlg && !dlg.open) {
       dlg.showModal();
     }
@@ -525,7 +543,6 @@
       return;
     }
 
-    // Max position limit validation (100 shares)
     const MAX_POSITION = 100;
     const currentPos = window.currentPosition || 0;
 
@@ -550,7 +567,7 @@
       qty: String(qtyNum)
     };
 
-    console.log("Submitting order (modal):", payload); // DEBUG
+    console.log("[OrderModal] Submitting order:", payload);
 
     hint.textContent = "Submitting…";
     try {
@@ -564,7 +581,7 @@
         credentials: "include"
       });
 
-      console.log("Response status (modal):", res.status); // DEBUG
+      console.log("[OrderModal] Response status:", res.status);
 
       if (res.status === 401) {
         hint.textContent = "You need to log in to place orders.";
@@ -573,7 +590,7 @@
       }
 
       const text = await res.text();
-      console.log("Response text (modal):", text); // DEBUG
+      console.log("[OrderModal] Response text:", text);
 
       if (!res.ok) {
         hint.textContent = "Error: " + (text || res.status);
@@ -584,21 +601,28 @@
       try {
         ack = JSON.parse(text);
       } catch (e) {
-        console.error("JSON parse error:", e, text);
+        console.error("[OrderModal] JSON parse error:", e, text);
         hint.textContent = "Error: Invalid server response";
         return;
       }
 
+      console.log("[OrderModal] Order ACK:", ack);
+
       hint.textContent = `Placed! Order ${ack.order_id}. Trades: ${ack.trades?.length || 0}`;
       inpQty.value = "";
 
-      if (ack?.snapshot) renderLadder(ack.snapshot);
+      // FIX: Ensure snapshot is rendered
+      if (ack && ack.snapshot) {
+        console.log("[OrderModal] Rendering snapshot from ACK:", ack.snapshot);
+        renderLadder(ack.snapshot);
+      }
+
       updatePosition();
-      loadMyOrders(); // Reload orders after placing order
+      loadMyOrders();
 
       setTimeout(() => dlg.close(), 700);
     } catch (err) {
-      console.error("Order submission error (modal):", err);
+      console.error("[OrderModal] Order submission error:", err);
       hint.textContent = "Network error: " + err.message;
     }
   });
@@ -617,16 +641,12 @@
 
       if (!positionCard || !posQty) return;
 
-      // Always show position card when authenticated
       positionCard.classList.remove("hidden");
 
       if (symMetrics) {
         const qty = parseFloat(symMetrics.position || 0);
-
-        // Store position globally for order validation
         window.currentPosition = qty;
 
-        // Format with + or - prefix (except for 0)
         let qtyFormatted;
         if (qty === 0) {
           qtyFormatted = "0.00";
@@ -641,7 +661,6 @@
 
         posQty.textContent = qtyFormatted;
       } else {
-        // No metrics for this symbol, show 0
         window.currentPosition = 0;
         posQty.textContent = "0.00";
         posQty.className = "position-value";
@@ -674,13 +693,12 @@
       userBox?.classList.remove("hidden");
       $("#position-summary")?.classList.remove("hidden");
 
-      // Show admin link only for admin users
       if (adminLink) {
         adminLink.style.display = isAdmin ? "inline-block" : "none";
       }
 
       updatePosition();
-      loadMyOrders(); // Load orders when user is shown
+      loadMyOrders();
     }
 
     try {
@@ -695,7 +713,7 @@
 
   async function loadNews() {
     const box = $("#news-content");
-    if (!box) return; // 自定义 game 的页面是 game-info-card，没有 news-content，直接跳过
+    if (!box) return;
 
     try {
       const res = await fetch("/news?limit=20", { credentials: "include" });
@@ -712,7 +730,6 @@
         return;
       }
 
-      // Sort by created_at (most recent first) - already sorted by server but ensure it
       const sortedItems = items.sort((a, b) => {
         return new Date(b.created_at) - new Date(a.created_at);
       });
@@ -739,7 +756,6 @@
     }
   }
 
-
   // Load my orders for this symbol
   async function loadMyOrders() {
     if (!isAuthed) {
@@ -758,20 +774,12 @@
       const res = await fetchJSON("/me/orders");
       const allOrders = Array.isArray(res) ? res : [];
 
-      // Filter orders for current symbol
       const myOrders = allOrders.filter(o => o.symbol === SYMBOL && o.status === 'OPEN');
 
-      // Debug: Log first order to see structure
-      if (myOrders.length > 0) {
-        console.log('Sample order object:', myOrders[0]);
-        console.log('Order fields:', Object.keys(myOrders[0]));
-      }
-
-      // Sort by created_at (most recent first)
       myOrders.sort((a, b) => {
         const dateA = new Date(a.created_at || 0);
         const dateB = new Date(b.created_at || 0);
-        return dateB - dateA; // Descending order (newest first)
+        return dateB - dateA;
       });
 
       const container = $("#my-orders-list");
@@ -791,48 +799,16 @@
         const sideClass = side === 'BUY' ? 'buy' : 'sell';
         const orderClass = side === 'BUY' ? 'buy-order' : 'sell-order';
 
-        // Calculate remaining quantity - check multiple possible field names
         let remaining;
-
-        // Enhanced debug logging
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
-        console.log(`Order ID: ${order.id}`);
-        console.log(`All order fields:`, order);
-        console.log(`Quantity fields check:`);
-        console.log(`  - qty: ${order.qty}`);
-        console.log(`  - remaining_qty: ${order.remaining_qty}`);
-        console.log(`  - filled_qty: ${order.filled_qty}`);
-        console.log(`  - filled: ${order.filled}`);
-        console.log(`  - remaining: ${order.remaining}`);
-        console.log(`  - unfilled: ${order.unfilled}`);
-        console.log(`  - leaves_qty: ${order.leaves_qty}`);
-
-        // Try multiple field name variations
         if (order.remaining_qty !== undefined && order.remaining_qty !== null) {
           remaining = parseFloat(order.remaining_qty);
-          console.log(`✓ Using remaining_qty: ${remaining}`);
         } else if (order.remaining !== undefined && order.remaining !== null) {
           remaining = parseFloat(order.remaining);
-          console.log(`✓ Using remaining: ${remaining}`);
-        } else if (order.unfilled !== undefined && order.unfilled !== null) {
-          remaining = parseFloat(order.unfilled);
-          console.log(`✓ Using unfilled: ${remaining}`);
-        } else if (order.leaves_qty !== undefined && order.leaves_qty !== null) {
-          remaining = parseFloat(order.leaves_qty);
-          console.log(`✓ Using leaves_qty: ${remaining}`);
         } else if (order.filled_qty !== undefined && order.filled_qty !== null) {
           remaining = parseFloat(order.qty) - parseFloat(order.filled_qty);
-          console.log(`✓ Calculating from filled_qty: ${order.qty} - ${order.filled_qty} = ${remaining}`);
-        } else if (order.filled !== undefined && order.filled !== null) {
-          remaining = parseFloat(order.qty) - parseFloat(order.filled);
-          console.log(`✓ Calculating from filled: ${order.qty} - ${order.filled} = ${remaining}`);
         } else {
           remaining = parseFloat(order.qty);
-          console.log(`⚠️ Fallback to original qty: ${remaining} (NO FILL DATA FOUND)`);
-          console.log(`⚠️ WARNING: Backend is not returning fill tracking!`);
         }
-        console.log(`Final remaining quantity: ${remaining}`);
-        console.log(`━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
 
         return `
           <div class="order-item ${orderClass}">
@@ -863,7 +839,6 @@
     }
   }
 
-  // Cancel an order (goes through /orders/{id} which enforces pause)
   window.cancelMyOrder = async function(orderId) {
     const btn = document.querySelector(`button[data-order-id="${orderId}"]`);
     if (btn) {
@@ -878,16 +853,13 @@
       });
 
       if (!res.ok) {
-        // Try to read backend error detail (e.g. paused message)
         let msg = 'Failed to cancel order';
         try {
           const data = await res.json();
           if (data && data.detail) {
             msg = data.detail;
           }
-        } catch (_) {
-          // ignore parse errors, keep default msg
-        }
+        } catch (_) {}
 
         alert(msg);
 
@@ -898,21 +870,16 @@
         return;
       }
 
-      // ✅ Only here means cancel succeeded
-
-      // Reload orders
       await loadMyOrders();
-
-      // Update position
       updatePosition();
 
-      // Refresh the order book by fetching latest snapshot
+      // FIX: Refresh the order book after cancel
       try {
         const bookData = await fetchJSON(`/book/${SYMBOL}`);
         if (bookData) {
+          console.log('[Cancel] Refreshing book:', bookData);
           renderLadder(bookData);
 
-          // For custom games, update the reference price from the new book
           if (IS_CUSTOM_GAME) {
             const bids = bookData.bids || [];
             const asks = bookData.asks || [];
@@ -922,7 +889,6 @@
               const mid = (bestBid + bestAsk) / 2;
               setRef(mid);
             } else {
-              // No more orders - clear the price
               const refEl = $(`#ref-${SYMBOL}`);
               if (refEl) refEl.textContent = "--";
             }
@@ -944,17 +910,17 @@
   };
 
   // Initialize
+  console.log(`[Init] Starting for symbol: ${SYMBOL}, IS_CUSTOM_GAME: ${IS_CUSTOM_GAME}`);
   connectWS();
   initAuthUI();
   loadNews();
-  setInterval(loadNews, 5000);    // refresh every 5 seconds
+  setInterval(loadNews, 5000);
 
-  // Load orders immediately and refresh periodically
   loadMyOrders();
   setInterval(() => {
     if (isAuthed) {
       loadMyOrders();
       updatePosition();
     }
-  }, 3000); // refresh every 3 seconds
+  }, 3000);
 })();
