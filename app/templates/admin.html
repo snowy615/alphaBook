@@ -356,6 +356,251 @@
     </table>
   </div>
 
+    <!-- Add this tab to admin.html after the games tab -->
+
+<!-- Visibility Tab -->
+  <div id="visibility-tab" class="tab-content">
+    <div class="card" style="margin-bottom: 24px;">
+      <h2>📌 Landing Page Visibility</h2>
+      <p class="small" style="color: var(--muted); margin-bottom: 20px;">
+        Control which equities and games appear on the landing page for users.
+        Hidden items can still be accessed directly via URL.
+      </p>
+
+      <!-- Default Equities -->
+      <div style="margin-bottom: 32px;">
+        <h3 style="margin-bottom: 12px; font-size: 18px;">Default Equities</h3>
+        <div id="equity-visibility-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+          <!-- Will be populated by JavaScript -->
+        </div>
+      </div>
+
+      <!-- Custom Games -->
+      <div>
+        <h3 style="margin-bottom: 12px; font-size: 18px;">Custom Games</h3>
+        <div id="game-visibility-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px;">
+          <!-- Will be populated by JavaScript -->
+        </div>
+        <div id="no-games-msg" class="small" style="color: var(--muted); padding: 20px; text-align: center; display: none;">
+          No custom games created yet
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+  .visibility-item {
+    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    transition: all 0.2s ease;
+  }
+
+  .visibility-item:hover {
+    background: rgba(255, 255, 255, 0.04);
+  }
+
+  .visibility-item.hidden-item {
+    opacity: 0.5;
+    border-color: rgba(255, 107, 107, 0.3);
+  }
+
+  .visibility-symbol {
+    font-weight: 700;
+    font-size: 16px;
+    letter-spacing: 0.5px;
+  }
+
+  .visibility-toggle {
+    position: relative;
+    width: 50px;
+    height: 26px;
+    background: rgba(255, 107, 107, 0.3);
+    border-radius: 13px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+
+  .visibility-toggle.active {
+    background: rgba(46, 204, 113, 0.3);
+  }
+
+  .visibility-toggle-slider {
+    position: absolute;
+    top: 3px;
+    left: 3px;
+    width: 20px;
+    height: 20px;
+    background: white;
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+  }
+
+  .visibility-toggle.active .visibility-toggle-slider {
+    left: 27px;
+  }
+
+  .visibility-status {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    font-weight: 600;
+    margin-right: 8px;
+  }
+
+  .visibility-status.visible {
+    color: var(--green);
+  }
+
+  .visibility-status.hidden {
+    color: var(--red);
+  }
+  </style>
+
+  <script>
+  const DEFAULT_EQUITIES = ['AAPL', 'MSFT', 'NVDA', 'AMZN', 'GOOGL', 'META', 'TSLA'];
+
+  async function loadVisibilitySettings() {
+    try {
+      // Load equity visibility
+      const equityRes = await fetch('/admin/equities/visibility', {
+        credentials: 'include'
+      });
+
+      if (equityRes.ok) {
+        const data = await equityRes.json();
+        renderEquityVisibility(data.equities || {});
+      }
+
+      // Load games with visibility
+      const gamesRes = await fetch('/admin/games/visibility', {
+        credentials: 'include'
+      });
+
+      if (gamesRes.ok) {
+        const games = await gamesRes.json();
+        renderGameVisibility(games.games || []);
+      }
+    } catch (err) {
+      console.error('Error loading visibility settings:', err);
+    }
+  }
+
+  function renderEquityVisibility(visibilities) {
+    const container = document.getElementById('equity-visibility-grid');
+    if (!container) return;
+
+    container.innerHTML = DEFAULT_EQUITIES.map(symbol => {
+      const isVisible = visibilities[symbol] !== false; // Default to visible
+      return `
+        <div class="visibility-item ${isVisible ? '' : 'hidden-item'}">
+          <div>
+            <div class="visibility-symbol">${symbol}</div>
+            <div class="visibility-status ${isVisible ? 'visible' : 'hidden'}">
+              ${isVisible ? 'Visible' : 'Hidden'}
+            </div>
+          </div>
+          <div class="visibility-toggle ${isVisible ? 'active' : ''}"
+               onclick="toggleEquityVisibility('${symbol}', ${isVisible})">
+            <div class="visibility-toggle-slider"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function renderGameVisibility(games) {
+    const container = document.getElementById('game-visibility-grid');
+    const noGamesMsg = document.getElementById('no-games-msg');
+
+    if (!container) return;
+
+    if (games.length === 0) {
+      container.innerHTML = '';
+      if (noGamesMsg) noGamesMsg.style.display = 'block';
+      return;
+    }
+
+    if (noGamesMsg) noGamesMsg.style.display = 'none';
+
+    container.innerHTML = games.map(game => {
+      const isVisible = game.is_visible !== false;
+      return `
+        <div class="visibility-item ${isVisible ? '' : 'hidden-item'}">
+          <div>
+            <div class="visibility-symbol">${game.symbol}</div>
+            <div class="small" style="color: var(--muted); margin-top: 2px;">${game.name}</div>
+            <div class="visibility-status ${isVisible ? 'visible' : 'hidden'}">
+              ${isVisible ? 'Visible' : 'Hidden'}
+            </div>
+          </div>
+          <div class="visibility-toggle ${isVisible ? 'active' : ''}"
+               onclick="toggleGameVisibility(${game.id}, '${game.symbol}', ${isVisible})">
+            <div class="visibility-toggle-slider"></div>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function toggleEquityVisibility(symbol, currentlyVisible) {
+    const newVisibility = !currentlyVisible;
+
+    try {
+      const res = await fetch(`/admin/equities/${symbol}/visibility`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ is_visible: newVisibility })
+      });
+
+      if (res.ok) {
+        loadVisibilitySettings();
+      } else {
+        const data = await res.json();
+        alert('Error: ' + (data.detail || 'Failed to update visibility'));
+      }
+    } catch (err) {
+      alert('Network error: ' + err.message);
+    }
+  }
+
+  async function toggleGameVisibility(gameId, symbol, currentlyVisible) {
+    const newVisibility = !currentlyVisible;
+
+    try {
+      const res = await fetch(`/admin/games/${gameId}/visibility`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ is_visible: newVisibility })
+      });
+
+      if (res.ok) {
+        loadVisibilitySettings();
+      } else {
+        const data = await res.json();
+        alert('Error: ' + (data.detail || 'Failed to update visibility'));
+      }
+    } catch (err) {
+      alert('Network error: ' + err.message);
+    }
+  }
+
+  // Load visibility settings when the tab is shown
+  document.addEventListener('DOMContentLoaded', () => {
+    // Load immediately if visibility tab exists
+    if (document.getElementById('visibility-tab')) {
+      loadVisibilitySettings();
+    }
+  });
+</script>
+
   <!-- Game Modal -->
   <dialog id="game-modal" class="modal">
     <div class="panel">

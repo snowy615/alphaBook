@@ -45,6 +45,7 @@ class CustomGame(SQLModel, table=True):
     instructions: str  # Instructions shown to users
     expected_value: float  # True value used for P&L calculation (hidden from users)
     is_active: bool = Field(default=True)
+    is_visible: bool = Field(default=True)  # NEW: Controls visibility on landing page
     created_by: int = Field(foreign_key="user.id")
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
@@ -52,5 +53,12 @@ class CustomGame(SQLModel, table=True):
 class MarketNews(SQLModel, table=True):
     """Simple market news item that admins can publish."""
     id: Optional[int] = Field(default=None, primary_key=True)
-    content: str  # text 
+    content: str  # text
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+class EquityVisibility(SQLModel, table=True):
+    """Track which default equities are visible on landing page"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    symbol: str = Field(index=True, unique=True)  # e.g., "AAPL", "MSFT"
+    is_visible: bool = Field(default=True)
+    updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
