@@ -62,3 +62,12 @@ class EquityVisibility(SQLModel, table=True):
     symbol: str = Field(index=True, unique=True)  # e.g., "AAPL", "MSFT"
     is_visible: bool = Field(default=True)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+class TradingPause(SQLModel, table=True):
+    """Global trading pause state - only one row should exist"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    is_paused: bool = Field(default=False)
+    paused_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    paused_at: Optional[dt.datetime] = Field(default=None)
+    reason: Optional[str] = Field(default=None)
+    updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)

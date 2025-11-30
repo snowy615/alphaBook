@@ -3,12 +3,13 @@ from fastapi.responses import HTMLResponse
 from sqlmodel import Session, select, func
 from app.db import get_session
 from app.auth import current_user
-from app.models import User, Order, Trade, CustomGame, MarketNews
+from app.models import User, Order, Trade, CustomGame, MarketNews, TradingPause
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
 from decimal import Decimal
+
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -198,6 +199,62 @@ async def admin_dashboard(
         "games": games
     })
 
+
+@router.get("/admin/trading/status")
+async def get_trading_status(
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Get current trading pause status"""
+    pause_state = session.exec(select(TradingPause)).first()
+
+    if not pause_state:
+        # Create default state if doesn't exist
+        pause_state = TradingPause(is_paused=False)
+        session.add(pause_state)
+        session.commit()
+        session.refresh(pause_state)
+
+    return {
+        "is_paused": pause_state.is_paused,
+        "paused_at": pause_state.paused_at.isoformat() if pause_state.paused_at else None,
+        "reason": pause_state.reason
+    }
+
+
+@router.post("/admin/trading/toggle")
+async def toggle_trading(
+        admin: User = Depends(require_admin),
+        session: Session = Depends(get_session)
+):
+    """Toggle trading pause state"""
+    pause_state = session.exec(select(TradingPause)).first()
+
+    if not pause_state:
+        # Create new pause state
+        pause_state = TradingPause(
+            is_paused=True,
+            paused_by=admin.id,
+            paused_at=dt.datetime.utcnow(),
+            reason="Trading paused by admin"
+        )
+        session.add(pause_state)
+    else:
+        # Toggle the state
+        pause_state.is_paused = not pause_state.is_paused
+        pause_state.paused_by = admin.id if pause_state.is_paused else None
+        pause_state.paused_at = dt.datetime.utcnow() if pause_state.is_paused else None
+        pause_state.reason = "Trading paused by admin" if pause_state.is_paused else None
+        pause_state.updated_at = dt.datetime.utcnow()
+
+    session.commit()
+    session.refresh(pause_state)
+
+    return {
+        "ok": True,
+        "is_paused": pause_state.is_paused,
+        "message": "Trading paused" if pause_state.is_paused else "Trading resumed"
+    }
 
 # Custom Game Management
 class GameCreate(BaseModel):
