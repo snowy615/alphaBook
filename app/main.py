@@ -5,19 +5,25 @@ from decimal import Decimal
 from typing import Dict, Set, List
 import datetime as dt
 
+# Load env vars explicitly
+from dotenv import load_dotenv
+load_dotenv()
+
 from pydantic import BaseModel
+
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from sqlmodel import Session, select
 
 from app.order_book import OrderBook, Order as BookOrder
 from app.schemas import OrderIn, Ack, PriceOut
 from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
-from app.db import init_db, get_session
+from app.db import init_firestore
+from app import db as db_module
+from google.cloud.firestore import FieldFilter
 from app.auth import router as auth_router, current_user
-from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame
+from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame, MarketNews # explicit import
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
@@ -38,7 +44,7 @@ positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
 )
 
 class NewsOut(BaseModel):
-    id: int
+    id: str # ObjectId string
     content: str
     created_at: dt.datetime
 
@@ -46,17 +52,19 @@ class NewsOut(BaseModel):
         from_attributes = True
 
 @app.get("/news", response_model=List[NewsOut])
-def get_news(limit: int = 20, session: Session = Depends(get_session)):
-    from app.models import MarketNews
-    items = session.exec(
-        select(MarketNews).order_by(MarketNews.created_at.desc()).limit(limit)
-    ).all()
+async def get_news(limit: int = 20):
+    # Firestore fetch
+    news_ref = db_module.db.collection("market_news").order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
+    docs = await news_ref.get()
+    items = []
+    for d in docs:
+        data = d.to_dict()
+        # id is not in data usually if we dont put it there
+        items.append(NewsOut(id=d.id, **data))
     return items
 
 @app.on_event("startup")
 async def _startup():
-    from app.auth import hash_pw
-    from sqlmodel import Session
     import time as time_module
     import traceback
 
@@ -64,55 +72,52 @@ async def _startup():
     print("🚀 AlphaBook Starting Up...")
     print("=" * 60)
 
-    # Initialize database and create tables
+    # Initialize database
     try:
-        print("🔄 Initializing database...")
-        init_db()
-        print("✅ Database tables created/verified")
-
-        # Give the database a moment to be ready
+        print("🔄 Initializing Firestore...")
+        init_firestore()
+        print("✅ Firestore initialized")
         time_module.sleep(0.5)
-
     except Exception as e:
         print(f"❌ FATAL: Database initialization error: {e}")
         traceback.print_exc()
-        raise  # Stop startup if database fails
+        raise
 
     # Create admin user if doesn't exist
-    max_retries = 3
-    for attempt in range(1, max_retries + 1):
-        try:
-            from app.db import engine
-            print(f"🔄 Setting up admin user (attempt {attempt}/{max_retries})...")
+    try:
+        print(f"🔄 Setting up admin user...")
+        # Check if admin exists
+        # In this new flow, we might want to ensure 'admin' user exists in Firestore.
+        # But we relied on 'username' query before.
+        users_ref = db_module.db.collection("users")
+        
+        q = users_ref.where(filter=FieldFilter("username", "==", "admin")).limit(1)
+        docs = await q.get()
+        
+        if not docs:
+            # We need a UID for the admin. Let's make one up or use a constant.
+            admin_uid = "admin_user_id"
+            admin_user = User(
+                id=admin_uid,
+                username="admin",
+                password_hash="firebase_managed", 
+                balance=10000.0,
+                is_admin=True,
+                is_blacklisted=False,
+                firebase_uid=admin_uid
+            )
+            await users_ref.document(admin_uid).set(admin_user.model_dump(exclude={"id"}))
+            print("✅ Admin user created: username='admin'")
+        else:
+            # Verify admin status
+            d = docs[0]
+            if not d.get("is_admin"):
+                await d.reference.update({"is_admin": True})
+            print(f"✅ Admin user verified: admin")
 
-            with Session(engine) as session:
-                admin = session.exec(select(User).where(User.username == "admin")).first()
-                if not admin:
-                    admin = User(
-                        username="admin",
-                        password_hash=hash_pw("alphabook"),
-                        balance=10000.0,
-                        is_admin=True,
-                        is_blacklisted=False
-                    )
-                    session.add(admin)
-                    session.commit()
-                    print("✅ Admin user created: username='admin', password='alphabook'")
-                else:
-                    if not admin.is_admin:
-                        admin.is_admin = True
-                        session.add(admin)
-                        session.commit()
-                    print(f"✅ Admin user verified: {admin.username}")
-            break  # Success, exit retry loop
+    except Exception as e:
+        print(f"⚠️ Admin user setup error: {e}")
 
-        except Exception as e:
-            print(f"⚠️ Admin user setup error (attempt {attempt}/{max_retries}): {e}")
-            if attempt == max_retries:
-                print("❌ FATAL: Could not set up admin user after retries")
-                traceback.print_exc()
-                raise
-            time_module.sleep(1)
 
     # Start market data engine
     print("🔄 Starting market data engine...")
@@ -153,7 +158,7 @@ def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["avg"] = Decimal("0") if q == 0 else price
 
 
-def _metrics_for(user_id: int):
+def _metrics_for(user_id: str):
     from app.market_data import get_last
     out = {}
     for sym, p in positions[user_id].items():
@@ -175,16 +180,17 @@ def _metrics_for(user_id: int):
 
 # ---- Pages ----
 @app.get("/", include_in_schema=False)
-def home(request: Request, session: Session = Depends(get_session)):
+async def home(request: Request):
     from app.models import CustomGame
 
-    # Only show visible & active custom games on the landing page
-    games = session.exec(
-        select(CustomGame).where(
-            CustomGame.is_active == True,
-            CustomGame.is_visible == True,
-        )
-    ).all()
+    # Firestore: CustomGame
+    games_ref = db_module.db.collection("custom_games")
+    # Compound query might need index. For now just filtering in python if small, or simple queries.
+    # Firestore allows .where().where()
+    q = games_ref.where(filter=FieldFilter("is_active", "==", True)).where(filter=FieldFilter("is_visible", "==", True))
+    docs = await q.get()
+    
+    games = [CustomGame(id=d.id, **d.to_dict()) for d in docs]
 
     symbols: List[str] = []
     game_data = {}
@@ -211,19 +217,25 @@ def home(request: Request, session: Session = Depends(get_session)):
 
 
 @app.get("/trade/{symbol}", include_in_schema=False)
-def trade_page(symbol: str, request: Request, session: Session = Depends(get_session)):
+async def trade_page(symbol: str, request: Request):
     """Individual trading page for a specific custom game symbol"""
     from app.models import CustomGame
 
     symbol = symbol.upper()
-
-    game = session.exec(
-        select(CustomGame).where(
-            CustomGame.symbol == symbol,
-            CustomGame.is_active == True,
-            CustomGame.is_visible == True,
-        )
-    ).first()
+    
+    
+    # Firestore
+    games_ref = db_module.db.collection("custom_games")
+    q = games_ref.where(filter=FieldFilter("symbol", "==", symbol)).limit(1)
+    docs = await q.get()
+    
+    game = None
+    if docs:
+        d = docs[0]
+        # Check active/visible manually or add to query if we have composite index
+        g_data = d.to_dict()
+        if g_data.get("is_active") and g_data.get("is_visible"):
+             game = CustomGame(id=d.id, **g_data)
 
     if not game:
         raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
@@ -250,18 +262,16 @@ def trade_page(symbol: str, request: Request, session: Session = Depends(get_ses
 
 # ---- Utils ----
 @app.get("/symbols")
-def get_symbols(session: Session = Depends(get_session)):
+async def get_symbols():
     """Get all available symbols (only visible custom games)."""
     from app.models import CustomGame
 
-    games = session.exec(
-        select(CustomGame).where(
-            CustomGame.is_active == True,
-            CustomGame.is_visible == True,
-        )
-    ).all()
-
-    symbols = [g.symbol for g in games]
+    # Firestore
+    games_ref = db.collection("custom_games")
+    q = games_ref.where("is_active", "==", True).where("is_visible", "==", True)
+    docs = await q.get()
+    
+    symbols = [d.get("symbol") for d in docs]
     return {"symbols": symbols}
 
 
@@ -289,37 +299,37 @@ def me_metrics(user: User = Depends(current_user)):
 
 # ---------- OPEN ORDERS ----------
 @app.get("/me/orders", include_in_schema=False)
-def me_orders(user: User = Depends(current_user), session: Session = Depends(get_session)):
+async def me_orders(user: User = Depends(current_user)):
     """Return OPEN orders for this user from the database."""
-    stmt = select(DBOrder).where(
-        DBOrder.user_id == user.id,
-        DBOrder.status == "OPEN"
-    ).order_by(DBOrder.created_at.desc())
-
-    orders = session.exec(stmt).all()
+    # Note: user.id is ObjectId, so we cast to str if needed or check how it's stored
+    # In User model id is standard _id. In Order model user_id is indexed str (from `app/models.py`)
+    
+    orders_ref = db.collection("orders")
+    # Filter by user_id and status
+    q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore.Query.DESCENDING)
+    docs = await q.get()
 
     rows = []
-    for o in orders:
-        qty = Decimal(o.qty)
-        filled = Decimal(o.filled_qty)
+    for d in docs:
+        o_data = d.to_dict()
+        # Ensure we handle fields correctly
         rows.append({
-            "id": o.order_id,
-            "symbol": o.symbol,
-            "side": o.side,
-            "price": float(o.price),
-            "qty": float(qty),
-            "filled_qty": float(filled),
-            "status": o.status,
-            "created_at": o.created_at.isoformat(),
+            "id": o_data.get("order_id"),
+            "symbol": o_data.get("symbol"),
+            "side": o_data.get("side"),
+            "price": float(o_data.get("price")),
+            "qty": float(o_data.get("qty")),
+            "filled_qty": float(o_data.get("filled_qty", 0)),
+            "status": o_data.get("status"),
+            "created_at": o_data.get("created_at").isoformat() if o_data.get("created_at") else "",
         })
 
     return rows
 
 @app.delete("/orders/{order_id}", include_in_schema=False)
-def cancel_order(
+async def cancel_order(
         order_id: str,
-        user: User = Depends(current_user),
-        session: Session = Depends(get_session)
+        user: User = Depends(current_user)
 ):
     """
     Cancel one of the user's orders from both memory and database.
@@ -327,64 +337,68 @@ def cancel_order(
     When the related CustomGame is paused, cancellation is NOT allowed.
     """
     # Find in database
-    stmt = select(DBOrder).where(
-        DBOrder.order_id == order_id,
-        DBOrder.user_id == user.id,
-        DBOrder.status == "OPEN"
-    )
-    db_order = session.exec(stmt).first()
+    # Find in database
+    orders_ref = db.collection("orders")
+    # Need to find the document with order_id field
+    q = orders_ref.where("order_id", "==", order_id).where("user_id", "==", str(user.id)).where("status", "==", "OPEN").limit(1)
+    docs = await q.get()
 
-    if not db_order:
+    if not docs:
         raise HTTPException(status_code=404, detail="Order not found")
+    
+    db_order_doc = docs[0]
+    db_order_data = db_order_doc.to_dict()
 
-    symbol = db_order.symbol.upper()
+    symbol = db_order_data.get("symbol").upper()
 
-    # Check if this symbol is a custom game and whether it is paused
-    game = session.exec(
-        select(CustomGame).where(CustomGame.symbol == symbol)
-    ).first()
-
-    # If there is a related custom game and it is paused, block cancellation
-    if game and game.is_paused:
-        raise HTTPException(
-            status_code=403,
-            detail="Trading for this game is currently paused; orders cannot be cancelled."
-        )
+    # Check game paused
+    games_ref = db.collection("custom_games")
+    q_game = games_ref.where("symbol", "==", symbol).limit(1)
+    g_docs = await q_game.get()
+    
+    if g_docs:
+        g_data = g_docs[0].to_dict()
+        if g_data.get("is_paused"):
+            raise HTTPException(
+                status_code=403,
+                detail="Trading for this game is currently paused; orders cannot be cancelled."
+            )
 
     # Cancel in memory book
     book = books[symbol]
     book.cancel(order_id, user_id=str(user.id))
 
     # Update database
-    db_order.status = "CANCELED"
-    db_order.updated_at = dt.datetime.utcnow()
-    session.add(db_order)
-    session.commit()
+    await db_order_doc.reference.update({
+        "status": "CANCELED",
+        "updated_at": dt.datetime.utcnow()
+    })
 
     return {"ok": True, "status": "CANCELED"}
 
 @app.post("/orders", response_model=Ack)
 async def submit_order(
         order_in: OrderIn,
-        user: User = Depends(current_user),
-        session: Session = Depends(get_session)
+        user: User = Depends(current_user)
 ):
     symbol = order_in.symbol.upper()
 
-    # Only allow trading on defined custom games, and enforce visibility/pause flags
-    from app.models import CustomGame
-    cg = session.exec(
-        select(CustomGame).where(CustomGame.symbol == symbol)
-    ).first()
+    # Only allow trading on defined custom games
+    games_ref = db.collection("custom_games")
+    q = games_ref.where("symbol", "==", symbol).limit(1)
+    docs = await q.get()
 
-    if not cg:
-        raise HTTPException(status_code=404, detail="Symbol is not tradable.")
+    if not docs:
+         raise HTTPException(status_code=404, detail="Symbol is not tradable.")
+    
+    cg_data = docs[0].to_dict()
+    # cg = CustomGame(id=docs[0].id, **cg_data) # Optional wrapper
 
-    if not cg.is_active:
+    if not cg_data.get("is_active"):
         raise HTTPException(status_code=403, detail="This game is not active.")
-    if not cg.is_visible:
+    if not cg_data.get("is_visible"):
         raise HTTPException(status_code=403, detail="This game is hidden by the administrator.")
-    if cg.is_paused:
+    if cg_data.get("is_paused"):
         raise HTTPException(status_code=403, detail="Trading for this game is currently paused.")
 
     book = books[symbol]
@@ -395,18 +409,19 @@ async def submit_order(
     # Create database record FIRST
     db_order = DBOrder(
         order_id=order_id,
-        user_id=user.id,
+        user_id=str(user.id),
         symbol=symbol,
         side=order_in.side,
-        price=order_in.price,
-        qty=order_in.qty,
+        price=str(order_in.price), # Cast to str
+        qty=str(order_in.qty), # Cast to str
         filled_qty="0",
         status="OPEN",
         created_at=dt.datetime.utcnow()
     )
-    session.add(db_order)
-    session.commit()
-    session.refresh(db_order)
+    # Use order_id as Document ID for easy lookup? Or auto-id?
+    # Using auto-id is safer for collisions if uuid fails (unlikely), but using order_id as key is faster lookup.
+    # Let's use order_id as doc id.
+    await db.collection("orders").document(order_id).set(db_order.model_dump(exclude={"id"}))
 
     # Create in-memory order
     order = BookOrder(
@@ -426,11 +441,16 @@ async def submit_order(
 
     # Record trades in database
     total_filled = Decimal("0")
+    
+    # Batch write for trades?
+    batch = db.batch()
+    
     for tr in fills:
         px, q = tr["price"], tr["qty"]
-        buyer_id, seller_id = int(tr["buyer_id"]), int(tr["seller_id"])
+        buyer_id, seller_id = str(tr["buyer_id"]), str(tr["seller_id"])
 
         # Save trade to database
+        trade_id = str(uuid.uuid4())
         trade = DBTrade(
             symbol=symbol,
             buyer_id=buyer_id,
@@ -441,21 +461,30 @@ async def submit_order(
             sell_order_id=order_id if order_in.side == "SELL" else "",
             created_at=dt.datetime.utcnow()
         )
-        session.add(trade)
+        trade_ref = db.collection("trades").document(trade_id)
+        batch.set(trade_ref, trade.model_dump(exclude={"id"}))
 
         # Update positions
+        # Ensure positions exist
+        if buyer_id not in positions: positions[buyer_id] = defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
+        if seller_id not in positions: positions[seller_id] = defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
+        
         _apply_buy(positions[buyer_id][symbol], px, q)
         _apply_sell(positions[seller_id][symbol], px, q)
 
         total_filled += q
 
+    await batch.commit()
+
     # Update order status in database
-    db_order.filled_qty = str(total_filled)
+    update_data = {
+        "filled_qty": str(total_filled),
+        "updated_at": dt.datetime.utcnow()
+    }
     if total_filled >= Decimal(order_in.qty):
-        db_order.status = "FILLED"
-    db_order.updated_at = dt.datetime.utcnow()
-    session.add(db_order)
-    session.commit()
+        update_data["status"] = "FILLED"
+    
+    await db.collection("orders").document(order_id).update(update_data)
 
     # Update mid hint for ref price
     try:
@@ -520,6 +549,10 @@ async def _broadcast(symbol: str, payload: dict):
 
 
 # ---- Auth routes ----
+# ---- Auth routes ----
 app.include_router(auth_router)
 app.include_router(me_router)
 app.include_router(admin.router)
+
+from app import files
+app.include_router(files.router)

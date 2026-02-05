@@ -1,52 +1,56 @@
-# app/db.py
 import os
-from sqlmodel import SQLModel, create_engine, Session
+import logging
+from google.cloud import firestore
+import firebase_admin
+from firebase_admin import credentials, initialize_app, storage
 
-# Railway provides DATABASE_URL, but SQLModel needs postgresql:// not postgres://
-DB_URL = os.getenv("DATABASE_URL", "sqlite:///./mini.db")
-if DB_URL.startswith("postgres://"):
-    DB_URL = DB_URL.replace("postgres://", "postgresql://", 1)
+# Global Firestore client
+db: firestore.AsyncClient = None
+bucket = None
 
-# Remove check_same_thread for PostgreSQL compatibility
-connect_args = {"check_same_thread": False} if "sqlite" in DB_URL else {}
-
-# Add connection pooling for PostgreSQL
-if "postgresql" in DB_URL:
-    engine = create_engine(
-        DB_URL,
-        connect_args=connect_args,
-        pool_pre_ping=True,  # Verify connections before using them
-        pool_size=10,  # Number of connections to maintain
-        max_overflow=20,  # Additional connections that can be created
-        echo=False  # Set to True for SQL debugging
-    )
-else:
-    engine = create_engine(DB_URL, connect_args=connect_args)
-
-
-def init_db():
-    """Create all database tables. If RESET_DB=1, drop existing tables first."""
-    import os
-
-    # Check if we should reset the database
-    should_reset = os.getenv("RESET_DB", "0").strip().lower() in ("1", "true", "yes")
-
-    if should_reset:
-        print("⚠️ RESET_DB=1: Dropping all existing tables...")
-        try:
-            SQLModel.metadata.drop_all(engine)
-            print("✅ All tables dropped")
-        except Exception as e:
-            print(f"⚠️ Error dropping tables (might not exist): {e}")
-
+def init_firestore():
+    """base connection to Firestore"""
+    global db, bucket
+    
+    # Initialize Firebase Admin
+    # It attempts to use GOOGLE_APPLICATION_CREDENTIALS automatically
+    cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    
     try:
-        SQLModel.metadata.create_all(engine)
-        print("✅ Database tables created/verified")
+        if not len(firebase_admin._apps):
+            if cred_path and os.path.exists(cred_path):
+                cred = credentials.Certificate(cred_path)
+                initialize_app(cred, {
+                    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
+                })
+            else:
+                # Use default credentials (good for Cloud Run / GKE)
+                initialize_app(options={
+                    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
+                })
+            
+        logging.info("Firebase Admin initialized successfully.")
+        
+        # Initialize Async Firestore Client
+        # This will also use GOOGLE_APPLICATION_CREDENTIALS
+        project_id = os.getenv("FIREBASE_PROJECT_ID")
+        if project_id:
+             db = firestore.AsyncClient(project=project_id)
+        else:
+             db = firestore.AsyncClient()
+             
+        logging.info(f"Firestore AsyncClient initialized. Project: {db.project}")
+
+        # Initialize Storage Bucket
+        bucket = storage.bucket()
+        logging.info(f"Storage bucket initialized: {bucket.name}")
+
     except Exception as e:
-        print(f"❌ Error creating tables: {e}")
+        logging.error(f"Failed to initialize Firebase/Firestore: {e}")
+        # Re-raise to stop startup if critical
         raise
 
-
-def get_session():
-    with Session(engine) as session:
-        yield session
+async def close_firestore():
+    global db
+    if db:
+        db.close()

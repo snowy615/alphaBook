@@ -1,61 +1,56 @@
 from typing import Optional
 import datetime as dt
-from sqlmodel import SQLModel, Field
+from pydantic import BaseModel, Field
 
-class User(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    username: str = Field(index=True, unique=True)
-    password_hash: str
+class User(BaseModel):
+    id: Optional[str] = None # Firestore Document ID
+    username: str
+    password_hash: Optional[str] = None 
     balance: float = Field(default=10000.0)
     is_admin: bool = Field(default=False)
     is_blacklisted: bool = Field(default=False)
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+    firebase_uid: Optional[str] = None
 
-class Order(SQLModel, table=True):
-    """Database model for orders - tracks who submitted what and when."""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    order_id: str = Field(index=True, unique=True)  # UUID from order book
-    user_id: int = Field(foreign_key="user.id", index=True)
-    symbol: str = Field(index=True)
+class Order(BaseModel):
+    id: Optional[str] = None
+    order_id: str  # UUID from order book
+    user_id: str 
+    symbol: str
     side: str  # "BUY" or "SELL"
     price: str  # Store as string to preserve precision
     qty: str  # Original quantity as string
-    filled_qty: str = Field(default="0")  # How much has been filled
-    status: str = Field(default="OPEN")  # OPEN, FILLED, CANCELED
-    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow, index=True)
+    filled_qty: str = Field(default="0")
+    status: str = Field(default="OPEN")
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
-class Trade(SQLModel, table=True):
-    """Database model for executed trades."""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    symbol: str = Field(index=True)
-    buyer_id: int = Field(foreign_key="user.id", index=True)
-    seller_id: int = Field(foreign_key="user.id", index=True)
-    price: str  # Execution price as string
-    qty: str  # Filled quantity as string
-    buy_order_id: str = Field(index=True)  # Reference to buyer's order
-    sell_order_id: str = Field(index=True)  # Reference to seller's order
-    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow, index=True)
+class Trade(BaseModel):
+    id: Optional[str] = None
+    symbol: str
+    buyer_id: str
+    seller_id: str
+    price: str
+    qty: str
+    buy_order_id: str
+    sell_order_id: str
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
-class CustomGame(SQLModel, table=True):
-    """Custom trading games created by admins"""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    symbol: str = Field(index=True, unique=True)  # e.g., "GAME1", "GAME2"
-    name: str  # Display name, e.g., "Will it rain tomorrow?"
-    instructions: str  # Instructions shown to users
-    expected_value: float  # True value used for P&L calculation (hidden from users)
+class CustomGame(BaseModel):
+    id: Optional[str] = None
+    symbol: str
+    name: str 
+    instructions: str
+    expected_value: float
     is_active: bool = Field(default=True)
-    # NEW: whether this game is visible in the lobby / symbol list
     is_visible: bool = Field(default=True)
-    # NEW: whether trading is paused for this game
     is_paused: bool = Field(default=False)
-    created_by: int = Field(foreign_key="user.id")
+    created_by: str
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     updated_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
-
-class MarketNews(SQLModel, table=True):
-    """Simple market news item that admins can publish."""
-    id: Optional[int] = Field(default=None, primary_key=True)
-    content: str  # text 
+class MarketNews(BaseModel):
+    id: Optional[str] = None
+    content: str 
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+

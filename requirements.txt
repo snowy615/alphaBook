@@ -1,9 +1,8 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.0
 pydantic==2.9.2
-sqlmodel==0.0.16
-psycopg2-binary
-passlib[bcrypt]==1.7.4
+google-cloud-firestore>=2.11.1
+firebase-admin==6.4.0
 python-jose[cryptography]==3.3.0
 Jinja2==3.1.4
 python-multipart

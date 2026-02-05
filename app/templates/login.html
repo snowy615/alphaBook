@@ -21,13 +21,77 @@
   <div class="card">
     <h2>Login</h2>
     {% if error %}<div class="err">{{error}}</div>{% endif %}
-    <form method="post" action="/login">
-      <label>Username</label>
-      <input name="username" required />
-      <label>Password</label>
-      <input name="password" type="password" required />
-      <button type="submit">Sign in</button>
-    </form>
+    <div id="auth-container">
+      <form id="login-form">
+        <label>Email</label>
+        <input name="email" type="email" required placeholder="name@example.com" />
+        <label>Password</label>
+        <input name="password" type="password" required />
+        <button type="submit">Sign in</button>
+      </form>
+      <p style="margin-top: 1rem;"><a href="/signup">Need an account? Sign up</a></p>
+    </div>
+
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
+      import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+
+      async function init() {
+        try {
+          const res = await fetch("/auth/config");
+          const firebaseConfig = await res.json();
+          if (!firebaseConfig.apiKey) {
+            console.error("Firebase config missing");
+            alert("System Error: Firebase configuration not found.");
+            return;
+          }
+          
+          const app = initializeApp(firebaseConfig);
+          const auth = getAuth(app);
+
+          const form = document.getElementById('login-form');
+          form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const email = form.email.value;
+            const password = form.password.value;
+            const btn = form.querySelector('button');
+            btn.disabled = true;
+            btn.innerText = "Signing in...";
+
+            try {
+              const userCredential = await signInWithEmailAndPassword(auth, email, password);
+              const token = await userCredential.user.getIdToken();
+
+              // Send token to backend
+              const formData = new FormData();
+              formData.append('id_token', token);
+              
+              const loginRes = await fetch("/auth/firebase", {
+                method: "POST",
+                body: formData
+              });
+
+              if (loginRes.ok) {
+                window.location.href = "/";
+              } else {
+                const err = await loginRes.json();
+                alert("Login failed: " + (err.message || err.detail || "Unknown error"));
+                btn.disabled = false;
+                btn.innerText = "Sign in";
+              }
+            } catch (error) {
+              console.error(error);
+              alert("Login Error: " + error.message);
+              btn.disabled = false;
+              btn.innerText = "Sign in";
+            }
+          });
+        } catch (e) {
+          console.error("Auth init error", e);
+        }
+      }
+      init();
+    </script>
     <div class="muted">No account? <a href="/signup">Create one</a></div>
   </div>
 </body>

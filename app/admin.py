@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from sqlmodel import Session, select, func
-from app.db import get_session
+from app.db import db
+from google.cloud import firestore
+from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
 from app.models import User, Order, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
@@ -9,6 +10,7 @@ from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
 from decimal import Decimal
+from typing import List
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -22,7 +24,7 @@ def require_admin(user: User = Depends(current_user)):
     return user
 
 
-def calculate_user_pnl(user_id: int, session: Session) -> float:
+async def calculate_user_pnl(user_id: str) -> float:
     """Calculate P&L for a user considering expected values for custom games"""
     from app.market_data import get_ref_price
     import logging
@@ -30,16 +32,22 @@ def calculate_user_pnl(user_id: int, session: Session) -> float:
     log = logging.getLogger("admin")
 
     # Get all trades for this user
-    trades = session.exec(
-        select(Trade).where(
-            (Trade.buyer_id == user_id) | (Trade.seller_id == user_id)
-        )
-    ).all()
+    trades_ref = db.collection("trades")
+    filter_buy = FieldFilter("buyer_id", "==", user_id)
+    filter_sell = FieldFilter("seller_id", "==", user_id)
+    q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell]))
+    docs = await q.get()
+    
+    trades = [Trade(id=d.id, **d.to_dict()) for d in docs]
 
     log.info(f"Calculating P&L for user {user_id}, found {len(trades)} trades")
 
     # Get all custom games with their expected values
-    games = session.exec(select(CustomGame)).all()
+    games_ref = db.collection("custom_games")
+    # Assuming small number of games, fetching all
+    g_docs = await games_ref.get()
+    games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
+    
     game_expected_values = {game.symbol: float(game.expected_value) for game in games}
 
     log.info(f"Game expected values: {game_expected_values}")
@@ -146,33 +154,40 @@ def calculate_user_pnl(user_id: int, session: Session) -> float:
 @router.get("/admin", response_class=HTMLResponse)
 async def admin_dashboard(
         request: Request,
-        user: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        user: User = Depends(require_admin)
 ):
     """Admin dashboard page"""
     # Get all users
-    users = session.exec(select(User)).all()
+    users_ref = db.collection("users")
+    u_docs = await users_ref.get()
+    users = [User(id=d.id, **d.to_dict()) for d in u_docs]
 
     # Calculate stats for each user
     user_stats = []
+    
+    # Pre-fetch all trades and orders might be better if strict, but expensive.
+    # For now, looping (slow for many users but ok for toy app).
     for u in users:
+        uid = str(u.id)
         # Count orders
-        orders_count = session.exec(
-            select(func.count(Order.id)).where(Order.user_id == u.id)
-        ).one()
+        orders_ref = db.collection("orders")
+        o_q = orders_ref.where("user_id", "==", uid).count()
+        o_agg = await o_q.get()
+        orders_count = o_agg[0][0].value
 
         # Count trades
-        trades_count = session.exec(
-            select(func.count(Trade.id)).where(
-                (Trade.buyer_id == u.id) | (Trade.seller_id == u.id)
-            )
-        ).one()
+        trades_ref = db.collection("trades")
+        filter_buy = FieldFilter("buyer_id", "==", uid)
+        filter_sell = FieldFilter("seller_id", "==", uid)
+        t_q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell])).count()
+        t_agg = await t_q.get()
+        trades_count = t_agg[0][0].value
 
         # Calculate P&L using expected values for games
-        pnl = calculate_user_pnl(u.id, session)
+        pnl = await calculate_user_pnl(uid)
 
         user_stats.append({
-            "id": u.id,
+            "id": uid,
             "username": u.username,
             "balance": u.balance,
             "pnl": pnl,
@@ -187,7 +202,10 @@ async def admin_dashboard(
     leaderboard = sorted(user_stats, key=lambda x: x["pnl"], reverse=True)
 
     # Get custom games
-    games = session.exec(select(CustomGame).where(CustomGame.is_active == True)).all()
+    games_ref = db.collection("custom_games")
+    g_q = games_ref.where("is_active", "==", True)
+    g_docs = await g_q.get()
+    games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
 
     return templates.TemplateResponse("admin.html", {
         "request": request,
@@ -218,8 +236,7 @@ class NewsUpdate(BaseModel):
 @router.post("/admin/games")
 async def create_game(
         game: GameCreate,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        admin: User = Depends(require_admin)
 ):
     """Create a new custom game"""
     # Validate symbol format
@@ -228,22 +245,27 @@ async def create_game(
         raise HTTPException(status_code=400, detail="Symbol must start with 'GAME'")
 
     # Check if symbol already exists
-    existing = session.exec(select(CustomGame).where(CustomGame.symbol == symbol)).first()
-    if existing:
+    games_ref = db.collection("custom_games")
+    q = games_ref.where("symbol", "==", symbol).limit(1)
+    docs = await q.get()
+    
+    if docs:
         raise HTTPException(status_code=400, detail=f"Game with symbol {symbol} already exists")
 
+    game_id = f"game_{symbol.lower()}"
     new_game = CustomGame(
+        id=game_id,
         symbol=symbol,
         name=game.name,
         instructions=game.instructions,
         expected_value=game.expected_value,
         is_active=True,
-        created_by=admin.id
+        created_by=str(admin.id),
+        created_at=dt.datetime.utcnow(),
+        updated_at=dt.datetime.utcnow()
     )
 
-    session.add(new_game)
-    session.commit()
-    session.refresh(new_game)
+    await db.collection("custom_games").document(game_id).set(new_game.model_dump(exclude={"id"}))
 
     # Add to order books
     from app.state import books
@@ -251,7 +273,7 @@ async def create_game(
     books[symbol] = OrderBook()
 
     return {"ok": True, "game": {
-        "id": new_game.id,
+        "id": str(new_game.id),
         "symbol": new_game.symbol,
         "name": new_game.name,
         "instructions": new_game.instructions,
@@ -261,115 +283,110 @@ async def create_game(
 
 @router.put("/admin/games/{game_id}")
 async def update_game(
-        game_id: int,
+        game_id: str,
         game: GameCreate,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        admin: User = Depends(require_admin)
 ):
     """Update a custom game"""
-    db_game = session.get(CustomGame, game_id)
-    if not db_game:
+    # game_id is the document ID
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    db_game.name = game.name
-    db_game.instructions = game.instructions
-    db_game.expected_value = game.expected_value
-    db_game.updated_at = dt.datetime.utcnow()
+    update_data = {
+        "name": game.name,
+        "instructions": game.instructions,
+        "expected_value": game.expected_value,
+        "updated_at": dt.datetime.utcnow()
+    }
 
-    session.add(db_game)
-    session.commit()
+    await doc_ref.update(update_data)
 
     return {"ok": True, "message": "Game updated"}
 
 @router.delete("/admin/games/{game_id}")
 async def delete_game(
-        game_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        game_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Deactivate a custom game"""
-    db_game = session.get(CustomGame, game_id)
-    if not db_game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    db_game.is_active = False
-    db_game.updated_at = dt.datetime.utcnow()
-
-    session.add(db_game)
-    session.commit()
+    await doc_ref.update({
+        "is_active": False,
+        "updated_at": dt.datetime.utcnow()
+    })
 
     return {"ok": True, "message": "Game deactivated"}
 
 @router.post("/admin/games/{game_id}/show")
 async def show_game(
-        game_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        game_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Mark a custom game as visible in the lobby and /symbols."""
-    game = session.get(CustomGame, game_id)
-    if not game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    game.is_visible = True
-    session.add(game)
-    session.commit()
-    session.refresh(game)
-    return {"ok": True, "id": game.id, "is_visible": game.is_visible}
+    await doc_ref.update({"is_visible": True})
+    return {"ok": True, "id": game_id, "is_visible": True}
 
 
 @router.post("/admin/games/{game_id}/hide")
 async def hide_game(
-        game_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        game_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Hide a custom game so users cannot see it in the lobby or /symbols."""
-    game = session.get(CustomGame, game_id)
-    if not game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    game.is_visible = False
-    session.add(game)
-    session.commit()
-    session.refresh(game)
-    return {"ok": True, "id": game.id, "is_visible": game.is_visible}
+    await doc_ref.update({"is_visible": False})
+    return {"ok": True, "id": game_id, "is_visible": False}
 
 
 @router.post("/admin/games/{game_id}/pause")
 async def pause_game(
-        game_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        game_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Pause trading for a custom game."""
-    game = session.get(CustomGame, game_id)
-    if not game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    game.is_paused = True
-    session.add(game)
-    session.commit()
-    session.refresh(game)
-    return {"ok": True, "id": game.id, "is_paused": game.is_paused}
+    await doc_ref.update({"is_paused": True})
+    return {"ok": True, "id": game_id, "is_paused": True}
 
 
 @router.post("/admin/games/{game_id}/resume")
 async def resume_game(
-        game_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        game_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Resume trading for a custom game."""
-    game = session.get(CustomGame, game_id)
-    if not game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
-    game.is_paused = False
-    session.add(game)
-    session.commit()
-    session.refresh(game)
-    return {"ok": True, "id": game.id, "is_paused": game.is_paused}
+    await doc_ref.update({"is_paused": False})
+    return {"ok": True, "id": game_id, "is_paused": False}
 
 
 class ResolveGame(BaseModel):
@@ -378,23 +395,26 @@ class ResolveGame(BaseModel):
 
 @router.post("/admin/games/{game_id}/resolve")
 async def resolve_game(
-        game_id: int,
+        game_id: str,
         resolve_data: ResolveGame,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        admin: User = Depends(require_admin)
 ):
     """Update the expected value for a custom game (used for final P&L calculation)"""
-    db_game = session.get(CustomGame, game_id)
-    if not db_game:
+    doc_ref = db.collection("custom_games").document(game_id)
+    doc = await doc_ref.get()
+
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
+        
+    db_game_data = doc.to_dict()
 
     # Update the expected value
-    old_value = db_game.expected_value
-    db_game.expected_value = resolve_data.expected_value
-    db_game.updated_at = dt.datetime.utcnow()
-
-    session.add(db_game)
-    session.commit()
+    old_value = db_game_data.get("expected_value", 0.0)
+    
+    await doc_ref.update({
+        "expected_value": resolve_data.expected_value,
+        "updated_at": dt.datetime.utcnow()
+    })
 
     return {
         "ok": True,
@@ -406,100 +426,118 @@ async def resolve_game(
 
 @router.post("/admin/users/{user_id}/blacklist")
 async def blacklist_user(
-        user_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        user_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Blacklist a user"""
-    user = session.get(User, user_id)
-    if not user:
+    doc_ref = db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="User not found")
+    
+    u_data = doc.to_dict()
+    if u_data.get("is_admin"):
+         raise HTTPException(status_code=400, detail="Cannot blacklist admin users")
 
-    if user.is_admin:
-        raise HTTPException(status_code=400, detail="Cannot blacklist admin users")
+    await doc_ref.update({"is_blacklisted": True})
 
-    user.is_blacklisted = True
-    session.add(user)
-    session.commit()
-
-    return {"ok": True, "message": f"User {user.username} blacklisted"}
+    return {"ok": True, "message": f"User {u_data.get('username')} blacklisted"}
 
 
 @router.post("/admin/users/{user_id}/unblacklist")
 async def unblacklist_user(
-        user_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        user_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Remove blacklist from a user"""
-    user = session.get(User, user_id)
-    if not user:
+    doc_ref = db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="User not found")
 
-    user.is_blacklisted = False
-    session.add(user)
-    session.commit()
-
-    return {"ok": True, "message": f"User {user.username} unblacklisted"}
+    await doc_ref.update({"is_blacklisted": False})
+    
+    u_data = doc.to_dict()
+    return {"ok": True, "message": f"User {u_data.get('username')} unblacklisted"}
 
 
 @router.delete("/admin/users/{user_id}")
 async def delete_user(
-        user_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        user_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Delete a user and all their data"""
-    user = session.get(User, user_id)
-    if not user:
+    doc_ref = db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="User not found")
-
-    if user.is_admin:
+        
+    u_data = doc.to_dict()
+    if u_data.get("is_admin"):
         raise HTTPException(status_code=400, detail="Cannot delete admin users")
 
     # Delete user's orders
-    orders = session.exec(select(Order).where(Order.user_id == user_id)).all()
-    for order in orders:
-        session.delete(order)
+    orders_ref = db.collection("orders")
+    o_docs = await orders_ref.where("user_id", "==", user_id).get()
+    for d in o_docs:
+        await d.reference.delete()
 
-    # Delete user's trades
-    trades = session.exec(
-        select(Trade).where((Trade.buyer_id == user_id) | (Trade.seller_id == user_id))
-    ).all()
-    for trade in trades:
-        session.delete(trade)
+    # Delete user's trades (simpler to query separately for buyer/seller or just iterate if not too many)
+    # A cleaner way is complex OR query or two queries.
+    trades_ref = db.collection("trades")
+    t_docs_1 = await trades_ref.where("buyer_id", "==", user_id).get()
+    t_docs_2 = await trades_ref.where("seller_id", "==", user_id).get()
+    
+    # Use a set of IDs to avoid double delete if user bought from themselves (unlikely but possible logic)
+    t_ids = set()
+    for d in t_docs_1 + t_docs_2:
+        if d.id not in t_ids:
+            await d.reference.delete()
+            t_ids.add(d.id)
 
     # Delete user
-    session.delete(user)
-    session.commit()
+    await doc_ref.delete()
 
-    return {"ok": True, "message": f"User {user.username} deleted"}
+    return {"ok": True, "message": f"User {u_data.get('username')} deleted"}
 
 
 @router.post("/admin/reset-all")
 async def reset_all_users(
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session)
+        admin: User = Depends(require_admin)
 ):
     """Reset all users to initial state"""
     # Reset all user balances except admins
-    users = session.exec(select(User).where(User.is_admin == False)).all()
-
-    for user in users:
-        user.balance = 10000.0
-        session.add(user)
+    users_ref = db.collection("users")
+    # Firestore doesn't support "not equal" easily combined with updates without iterating
+    # We'll select all and filter in app, or use != query if index exists
+    
+    # Simple iteration for safety
+    docs = await users_ref.get()
+    batch = db.batch()
+    
+    for d in docs:
+        u = d.to_dict()
+        if not u.get("is_admin"):
+             batch.update(d.reference, {"balance": 10000.0})
+    
+    await batch.commit()
 
     # Delete all trades
-    trades = session.exec(select(Trade)).all()
-    for trade in trades:
-        session.delete(trade)
+    # To delete all validly we must list and delete chunks
+    async def delete_all_in_collection(coll_name, batch_size=50):
+        coll_ref = db.collection(coll_name)
+        while True:
+            docs = await coll_ref.limit(batch_size).get()
+            if not docs:
+                break
+            for d in docs:
+                await d.reference.delete()
 
-    # Delete all orders
-    orders = session.exec(select(Order)).all()
-    for order in orders:
-        session.delete(order)
-
-    session.commit()
+    await delete_all_in_collection("trades")
+    await delete_all_in_collection("orders")
 
     # Clear in-memory order book
     from app.order_book import clear_all_orders
@@ -511,18 +549,22 @@ async def reset_all_users(
 @router.post("/admin/news")
 async def admin_create_news(
         payload: NewsCreate,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session),
+        admin: User = Depends(require_admin)
 ):
     """Admin add news"""
-    item = MarketNews(content=payload.content)
-    session.add(item)
-    session.commit()
-    session.refresh(item)
+    news_id = str(uuid.uuid4())
+    item = MarketNews(
+        id=news_id,
+        content=payload.content,
+        created_at=dt.datetime.utcnow()
+    )
+    
+    await db.collection("market_news").document(news_id).set(item.model_dump(exclude={"id"}))
+    
     return {
         "ok": True,
         "news": {
-            "id": item.id,
+            "id": news_id,
             "content": item.content,
             "created_at": item.created_at.isoformat(),
         },
@@ -531,42 +573,46 @@ async def admin_create_news(
 
 @router.put("/admin/news/{news_id}")
 async def admin_update_news(
-        news_id: int,
+        news_id: str,
         payload: NewsUpdate,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session),
+        admin: User = Depends(require_admin)
 ):
     """Admin edit existing news"""
-    item = session.get(MarketNews, news_id)
-    if not item:
+    doc_ref = db.collection("market_news").document(news_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="News not found")
 
-    item.content = payload.content
-    session.add(item)
-    session.commit()
-    session.refresh(item)
+    await doc_ref.update({
+        "content": payload.content,
+        # "updated_at": dt.datetime.utcnow() 
+    })
+    
+    # Fetch updated if needed, or just return payload
+    item_data = doc.to_dict()
 
     return {
         "ok": True,
         "news": {
-            "id": item.id,
-            "content": item.content,
-            "created_at": item.created_at.isoformat(),
+            "id": news_id,
+            "content": payload.content,
+            "created_at": item_data.get("created_at").isoformat() if item_data.get("created_at") else "",
         },
     }
 
 
 @router.delete("/admin/news/{news_id}")
 async def admin_delete_news(
-        news_id: int,
-        admin: User = Depends(require_admin),
-        session: Session = Depends(get_session),
+        news_id: str,
+        admin: User = Depends(require_admin)
 ):
     """Admin delete news"""
-    item = session.get(MarketNews, news_id)
-    if not item:
+    doc_ref = db.collection("market_news").document(news_id)
+    doc = await doc_ref.get()
+    
+    if not doc.exists:
         raise HTTPException(status_code=404, detail="News not found")
 
-    session.delete(item)
-    session.commit()
+    await doc_ref.delete()
     return {"ok": True}

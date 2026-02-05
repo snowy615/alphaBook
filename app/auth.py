@@ -7,10 +7,10 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
-from passlib.context import CryptContext
-from sqlmodel import select, Session
+from firebase_admin import auth as fb_auth
 
-from app.db import get_session
+# Import Firestore client
+from app.db import db
 from app.models import User
 
 # ----- config -----
@@ -20,9 +20,6 @@ ALGORITHM = "HS256"
 COOKIE_NAME = "session"
 COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
-# Use PBKDF2-SHA256 to avoid bcrypt platform issues & 72-byte limit
-pwd = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
-
 # Cookie + Bearer support
 http_bearer = HTTPBearer(auto_error=False)
 
@@ -30,31 +27,46 @@ http_bearer = HTTPBearer(auto_error=False)
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 
+@router.get("/auth/config")
+def auth_config():
+    return {
+        "apiKey": os.getenv("FIREBASE_API_KEY", ""),
+        "authDomain": os.getenv("FIREBASE_AUTH_DOMAIN", ""),
+        "projectId": os.getenv("FIREBASE_PROJECT_ID", ""),
+        "storageBucket": os.getenv("FIREBASE_STORAGE_BUCKET", ""),
+        "messagingSenderId": os.getenv("FIREBASE_MESSAGING_SENDER_ID", ""),
+        "appId": os.getenv("FIREBASE_APP_ID", ""),
+    }
+
 # ----- helpers -----
-def hash_pw(p: str) -> str:
-    return pwd.hash(p)
+# Removed hash_pw / verify_pw as we use Firebase Auth
 
-def verify_pw(p: str, h: str) -> bool:
-    return pwd.verify(p, h)
-
-def create_token(user_id: int, max_age: int = COOKIE_MAX_AGE) -> str:
+def create_token(user_id: str, max_age: int = COOKIE_MAX_AGE) -> str:
+    # user_id is the Firestore Document ID string
     exp = dt.datetime.utcnow() + dt.timedelta(seconds=max_age)
-    # python-jose accepts datetime for "exp"
-    return jwt.encode({"sub": str(user_id), "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode({"sub": user_id, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_user_from_token(token: str, session: Session) -> Optional[User]:
+async def get_user_from_token(token: str) -> Optional[User]:
     try:
         data = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        uid = int(data.get("sub", "0"))
+        uid = data.get("sub")
+        if not uid: return None
     except JWTError as e:
         log.warning("JWT decode failed: %s", e)
         return None
-    return session.get(User, uid)
+    
+    # Firestore get
+    doc_ref = db.collection("users").document(uid)
+    doc = await doc_ref.get()
+    
+    if doc.exists:
+        u_data = doc.to_dict()
+        return User(id=doc.id, **u_data)
+    return None
 
 def _make_redirect_with_cookie(request: Request, token: str, url: str = "/") -> RedirectResponse:
-    # Use 303 for POST -> GET redirect to avoid form resubmission
+    # Use 303 for POST -> GET redirect
     resp = RedirectResponse(url=url, status_code=303)
-    # Only mark Secure over HTTPS; SameSite=Lax is perfect for same-origin app
     secure = (request.url.scheme == "https")
     resp.set_cookie(
         COOKIE_NAME,
@@ -70,7 +82,6 @@ def _make_redirect_with_cookie(request: Request, token: str, url: str = "/") -> 
 async def current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials = Depends(http_bearer),
-    session: Session = Depends(get_session),
 ) -> User:
     # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
@@ -79,7 +90,8 @@ async def current_user(
         token = creds.credentials
     if not token:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-    user = get_user_from_token(token, session)
+        
+    user = await get_user_from_token(token)
     if not user:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
@@ -94,63 +106,88 @@ async def current_user(
 def signup_form(request: Request):
     return templates.TemplateResponse("signup.html", {"request": request, "error": None})
 
-@router.post("/signup", include_in_schema=False)
-def signup_submit(
-    request: Request,
-    username: str = Form(...),
-    password: str = Form(...),
-    session: Session = Depends(get_session),
-):
+@router.post("/auth/firebase", include_in_schema=False)
+async def auth_firebase(request: Request, id_token: str = Form(...), username: str = Form(None)):
+    """
+    Unified endpoint to handle Firebase login/signup.
+    Receives an ID Token from the client.
+    Verifies it with Firebase Admin.
+    Finds or creates a User in Firestore.
+    Sets a session cookie.
+    """
     try:
-        existing = session.exec(select(User).where(User.username == username)).first()
-        if existing:
-            return templates.TemplateResponse(
-                "signup.html", {"request": request, "error": "Username already exists"}
+        decoded_token = fb_auth.verify_id_token(id_token)
+        firebase_uid = decoded_token['uid']
+        email = decoded_token.get('email', '')
+        
+        # Check if user exists by firebase_uid
+        # We need to query because we don't know the internal ID yet (unless we use firebase_uid as internal ID)
+        # Using firebase_uid as Document ID is simpler and cleaner.
+        
+        doc_ref = db.collection("users").document(firebase_uid)
+        doc = await doc_ref.get()
+        
+        user = None
+        created_new = False
+        
+        if doc.exists:
+            user = User(id=doc.id, **doc.to_dict())
+        else:
+            # First time logic (Signup)
+            if not username:
+                # Fallback: use email part or random
+                username = email.split('@')[0] if email else f"user_{firebase_uid[:6]}"
+            
+            # Check username uniqueness
+            # Firestore query for username
+            q = db.collection("users").where("username", "==", username).limit(1)
+            existing_docs = await q.get()
+            if existing_docs:
+                 return JSONResponse({"status": "error", "message": "Username already taken"}, status_code=400)
+
+            user = User(
+                id=firebase_uid, # Use firebase_uid as Firestore ID
+                username=username,
+                firebase_uid=firebase_uid, # explicit field too
+                balance=10000.0,
+                is_admin=False,
+                is_blacklisted=False
             )
-        user = User(
-            username=username,
-            password_hash=hash_pw(password),
-            balance=10000.0,
-            is_admin=False,
-            is_blacklisted=False
+            # Create user
+            # exclude id from dump if we rely on doc id, but pydantic model includes it.
+            # to_dict helper?
+            user_dict = user.model_dump(exclude={"id"})
+            # convert datetime to simple timestamp/server timestamp if needed, but firestore handles datetime ok-ish
+            # Explicitly set document ID to firebase_uid
+            await db.collection("users").document(firebase_uid).set(user_dict)
+            log.info(f"Created new user: {username} ({firebase_uid})")
+            created_new = True
+        
+        # Create session
+        token = create_token(user.id) # user.id is firebase_uid
+        
+        response = JSONResponse({"status": "ok", "redirect": "/"})
+        secure = (request.url.scheme == "https")
+        response.set_cookie(
+            COOKIE_NAME,
+            token,
+            httponly=True,
+            secure=secure,
+            samesite="lax",
+            max_age=COOKIE_MAX_AGE,
+            path="/",
         )
-        session.add(user); session.commit(); session.refresh(user)
-        token = create_token(user.id)
-        return _make_redirect_with_cookie(request, token, url="/")
+        return response
+
     except Exception as e:
-        log.exception("Signup failed")
-        return templates.TemplateResponse(
-            "signup.html", {"request": request, "error": f"Signup failed: {e}"}
-        )
+        log.exception("Firebase auth failed")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=401)
+
 
 @router.get("/login", include_in_schema=False)
 def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
 
-
-@router.post("/login", include_in_schema=False)
-def login_submit(
-        request: Request,
-        username: str = Form(...),
-        password: str = Form(...),
-        session: Session = Depends(get_session),
-):
-    try:
-        user = session.exec(select(User).where(User.username == username)).first()
-        if not user or not verify_pw(password, user.password_hash):
-            return templates.TemplateResponse(
-                "login.html", {"request": request, "error": "Invalid credentials"}
-            )
-        token = create_token(user.id)
-
-        # Redirect admins to admin panel
-        redirect_url = "/admin" if user.is_admin else "/"
-        return _make_redirect_with_cookie(request, token, url=redirect_url)
-    except Exception as e:
-        log.exception("Login failed")
-        return templates.TemplateResponse(
-            "login.html", {"request": request, "error": f"Login failed: {e}"}
-        )
 
 @router.post("/logout", include_in_schema=False)
 def logout_post():
@@ -158,38 +195,24 @@ def logout_post():
     resp.delete_cookie(COOKIE_NAME, path="/")
     return resp
 
-# Convenience GET for logout (e.g., simple <a href="/logout">)
+# Convenience GET for logout
 @router.get("/logout", include_in_schema=False)
 def logout_get():
     resp = RedirectResponse(url="/", status_code=303)
     resp.delete_cookie(COOKIE_NAME, path="/")
     return resp
 
-# ----- JSON helpers (great for /docs) -----
-@router.post("/login/json")
-def login_json(
-    username: str = Form(...),
-    password: str = Form(...),
-    session: Session = Depends(get_session),
-):
-    user = session.exec(select(User).where(User.username == username)).first()
-    if not user or not verify_pw(password, user.password_hash):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_token(user.id)
-    return {"access_token": token, "token_type": "bearer"}
-
+# ----- JSON helpers -----
 @router.get("/session/token")
-def session_token(user: User = Depends(current_user)):
-    return {"access_token": create_token(user.id), "token_type": "bearer"}
+async def session_token(user: User = Depends(current_user)):
+    return {"access_token": create_token(str(user.id)), "token_type": "bearer"}
 
-# ----- small JSON identity endpoints used by the frontend -----
 @router.get("/whoami", include_in_schema=False)
-def whoami(user: User = Depends(current_user)):
-    return JSONResponse({"id": user.id, "username": user.username})
+async def whoami(user: User = Depends(current_user)):
+    return JSONResponse({"id": str(user.id), "username": user.username})
 
-# Alias the simple /me endpoint the UI polls to flip header buttons
 @router.get("/me", include_in_schema=False)
-def me(user: User = Depends(current_user)):
+async def me(user: User = Depends(current_user)):
     return JSONResponse({
         "username": user.username,
         "is_admin": user.is_admin

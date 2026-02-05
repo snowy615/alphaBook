@@ -4,30 +4,13 @@ from typing import Any, Dict, List, Optional
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlmodel import Session, select
-
-from app.db import get_session
+from app.db import db
+from google.cloud import firestore
 from app.auth import current_user
+from app.models import User, Trade as DBTrade, Order as DBOrder
 
 # In-memory state helpers
 from app.state import list_user_orders, cancel_order_by_id
-
-# DB models
-try:
-    from app.models import Trade as _FillModel
-except Exception:
-    try:
-        from app.models import Fill as _FillModel
-    except Exception:
-        try:
-            from app.models import Execution as _FillModel
-        except Exception:
-            _FillModel = None
-
-try:
-    from app.models import Order as _OrderModel
-except Exception:
-    _OrderModel = None
 
 router = APIRouter(prefix="", tags=["me"])
 
@@ -37,35 +20,36 @@ def _now_ms() -> int:
 
 
 @router.get("/me")
-def me(user=Depends(current_user)):
+async def me(user: User = Depends(current_user)):
     """Simple identity endpoint used by the header/login UI."""
     name = getattr(user, "username", None) or getattr(user, "name", None) or getattr(user, "email", None)
-    return {"id": user.id, "username": name or f"user-{user.id}"}
+    return {"id": str(user.id), "username": name or f"user-{user.id}"}
 
 
 @router.get("/me/summary")
-def me_summary(
-        user=Depends(current_user),
-        session: Session = Depends(get_session),
+async def me_summary(
+        user: User = Depends(current_user)
 ):
     """Calculate positions and P&L from Trade table."""
     from app.market_data import get_ref_price
 
-    if _FillModel is None:
-        return {
-            "positions": [],
-            "totals": {
-                "qty": 0.0, "notional": 0.0, "avg_cost": None, "delta": 0.0,
-                "pnl_open": 0.0, "pnl_day": 0.0, "cash": 10000.0, "equity": 10000.0,
-            },
-        }
-
     # Fetch all trades for this user
-    stmt = select(_FillModel).where(
-        (_FillModel.buyer_id == user.id) | (_FillModel.seller_id == user.id)
-    ).order_by(_FillModel.created_at)
+    uid = str(user.id)
+    
+    # Firestore query
+    # Need OR query for buyer_id == uid OR seller_id == uid
+    # Firestore supports Filter since recent versions
+    from google.cloud.firestore import FieldFilter, Or
 
-    trades = session.exec(stmt).all()
+    trades_ref = db.collection("trades")
+    # Filter(FieldPath("param"), "==", value)
+    filter_buy = FieldFilter("buyer_id", "==", uid)
+    filter_sell = FieldFilter("seller_id", "==", uid)
+    
+    q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell])).order_by("created_at")
+    docs = await q.get()
+    
+    trades = [DBTrade(id=d.id, **d.to_dict()) for d in docs]
 
     # Build positions from trades
     positions = {}
@@ -85,7 +69,7 @@ def me_summary(
         pos = positions[symbol]
 
         # User is the buyer - going long
-        if trade.buyer_id == user.id:
+        if trade.buyer_id == uid:
             if pos["qty"] >= 0:
                 # Opening or adding to long
                 pos["total_cost"] += price * qty
@@ -106,7 +90,7 @@ def me_summary(
                     pos["total_cost"] = Decimal("0")
 
         # User is the seller - going short
-        if trade.seller_id == user.id:
+        if trade.seller_id == uid:
             if pos["qty"] <= 0:
                 # Opening or adding to short
                 pos["total_cost"] += price * qty
@@ -179,21 +163,23 @@ def me_summary(
 
 
 @router.get("/me/pnl")
-def me_pnl(
-        user=Depends(current_user),
-        session: Session = Depends(get_session),
+async def me_pnl(
+        user: User = Depends(current_user)
 ):
     """Return a time series for the P&L chart."""
+    from google.cloud.firestore import FieldFilter, Or
+    
     pts: List[Dict[str, float]] = []
+    uid = str(user.id)
 
-    if _FillModel is None:
-        return {"points": pts}
-
-    stmt = select(_FillModel).where(
-        (_FillModel.buyer_id == user.id) | (_FillModel.seller_id == user.id)
-    ).order_by(_FillModel.created_at)
-
-    trades = session.exec(stmt).all()
+    trades_ref = db.collection("trades")
+    filter_buy = FieldFilter("buyer_id", "==", uid)
+    filter_sell = FieldFilter("seller_id", "==", uid)
+    
+    q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell])).order_by("created_at")
+    docs = await q.get()
+    
+    trades = [DBTrade(id=d.id, **d.to_dict()) for d in docs]
 
     # Track positions to calculate realized P&L over time
     positions: Dict[str, Dict[str, Decimal]] = {}
@@ -210,7 +196,7 @@ def me_pnl(
         pos = positions[symbol]
         realized_this_trade = Decimal("0")
 
-        if trade.buyer_id == user.id:
+        if trade.buyer_id == uid:
             # User is buying
             if pos["qty"] < 0:
                 # Covering short
@@ -231,7 +217,7 @@ def me_pnl(
                 pos["total_cost"] += price * qty
                 pos["qty"] += qty
 
-        if trade.seller_id == user.id:
+        if trade.seller_id == uid:
             # User is selling
             if pos["qty"] > 0:
                 # Closing long
@@ -289,21 +275,16 @@ def _normalize_open_orders(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 @router.get("/me/orders", include_in_schema=False)
-def my_open_orders(
-        user=Depends(current_user),
-        session: Session = Depends(get_session)
+async def my_open_orders(
+        user: User = Depends(current_user)
 ) -> List[Dict[str, Any]]:
     """List open orders from database."""
-    if _OrderModel is None:
-        return []
+    orders_ref = db.collection("orders")
+    q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore.Query.DESCENDING)
+    docs = await q.get()
 
-    stmt = select(_OrderModel).where(
-        _OrderModel.user_id == user.id,
-        _OrderModel.status == "OPEN"
-    ).order_by(_OrderModel.created_at.desc())
-
-    orders = session.exec(stmt).all()
-
+    orders = [DBOrder(id=d.id, **d.to_dict()) for d in docs]
+    
     rows = []
     for o in orders:
         qty = Decimal(o.qty)
@@ -322,61 +303,54 @@ def my_open_orders(
     return _normalize_open_orders(rows)
 
 
-def _cancel_any(order_id: str, user, session: Session) -> Dict[str, Any]:
+async def _cancel_any(order_id: str, user) -> Dict[str, Any]:
     """Cancel order from both memory and database."""
 
     # First, check if order exists in database and belongs to user
-    if _OrderModel:
-        stmt = select(_OrderModel).where(
-            _OrderModel.order_id == order_id,
-            _OrderModel.user_id == user.id,
-            _OrderModel.status == "OPEN"
-        )
-        db_order = session.exec(stmt).first()
+    orders_ref = db.collection("orders")
+    q = orders_ref.where("order_id", "==", order_id).where("user_id", "==", str(user.id)).where("status", "==", "OPEN").limit(1)
+    docs = await q.get()
 
-        if not db_order:
-            raise HTTPException(status_code=404, detail="Order not found or already closed")
-
-        # Try to cancel from in-memory book (may not exist if partially filled)
-        try:
-            cancel_order_by_id(order_id, str(user.id))
-        except Exception:
-            # Order might not be in memory anymore, that's ok
+    if not docs:
+        # Fallback: try memory only (if not in DB for some reason, though it should be)
+         try:
+            ok = cancel_order_by_id(order_id, str(user.id))
+            if ok:
+                return {"ok": True, "status": "CANCELED"}
+         except Exception:
             pass
+         raise HTTPException(status_code=404, detail="Order not found or already closed")
 
-        # Always update database status
-        db_order.status = "CANCELED"
-        db_order.updated_at = dt.datetime.utcnow()
-        session.add(db_order)
-        session.commit()
+    db_order_doc = docs[0]
 
-        return {"ok": True, "status": "CANCELED"}
-
-    # Fallback: try memory only
+    # Try to cancel from in-memory book (may not exist if partially filled)
     try:
-        ok = cancel_order_by_id(order_id, str(user.id))
-        if ok:
-            return {"ok": True, "status": "CANCELED"}
+        cancel_order_by_id(order_id, str(user.id))
     except Exception:
+        # Order might not be in memory anymore, that's ok
         pass
 
-    raise HTTPException(status_code=404, detail="Order not found")
+    # Always update database status
+    await db_order_doc.reference.update({
+        "status": "CANCELED",
+        "updated_at": dt.datetime.utcnow()
+    })
+
+    return {"ok": True, "status": "CANCELED"}
 
 @router.post("/me/orders/{order_id}/cancel", include_in_schema=False)
-def cancel_my_order_post(
+async def cancel_my_order_post(
         order_id: str,
-        user=Depends(current_user),
-        session: Session = Depends(get_session),
+        user: User = Depends(current_user)
 ):
     """Cancel order (POST)."""
-    return _cancel_any(order_id, user, session)
+    return await _cancel_any(order_id, user)
 
 
 @router.delete("/orders/{order_id}", include_in_schema=False)
-def cancel_my_order_delete(
+async def cancel_my_order_delete(
         order_id: str,
-        user=Depends(current_user),
-        session: Session = Depends(get_session),
+        user: User = Depends(current_user)
 ):
     """Cancel order (DELETE)."""
-    return _cancel_any(order_id, user, session)
+    return await _cancel_any(order_id, user)
