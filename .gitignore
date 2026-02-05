@@ -4,6 +4,7 @@ __pycache__/
 *.so
 .env
 .env.example
+service-account.json
 *.db
 venv/
 env/
