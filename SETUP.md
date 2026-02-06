@@ -109,3 +109,17 @@ python -m uvicorn app.main:app --reload
 5.  **File Upload**:
     - Build a simple form or use generic API tool to POST to `/files/upload` with a file and Authorization header (session cookie is handled by browser, but for external test you need auth).
     - Easier: Just check that "Storage bucket initialized" appears in the server logs on validation startup.
+
+## 6. Deployment (Render / Heroku)
+
+Since `service-account.json` is gitignored, you must provide credentials via an environment variable in your production environment.
+
+1.  **Encode your service account key**:
+    Copy the contents of `service-account.json`.
+    
+2.  **Set Environment Variable**:
+    In your deployment dashboard (e.g., Render Environment Variables), add:
+    - Key: `FIREBASE_CREDENTIALS_JSON`
+    - Value: Paste the entire JSON content of your service account key.
+
+The application will prioritize this environment variable over the local file.

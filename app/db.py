@@ -15,26 +15,47 @@ def init_firestore():
     # Initialize Firebase Admin
     # It attempts to use GOOGLE_APPLICATION_CREDENTIALS automatically
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+    cred_json = os.getenv("FIREBASE_CREDENTIALS_JSON")
     
+    # We need to capture the credentials object to pass to AsyncClient explicitly
+    # if we are not relying on GOOGLE_APPLICATION_CREDENTIALS env var.
+    client_creds = None
+
     try:
         if not len(firebase_admin._apps):
-            if cred_path and os.path.exists(cred_path):
+            if cred_json:
+                import json
+                cred_dict = json.loads(cred_json)
+                cred = credentials.Certificate(cred_dict)
+                initialize_app(cred, {
+                    'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
+                })
+                client_creds = cred.get_credential()
+            elif cred_path and os.path.exists(cred_path):
                 cred = credentials.Certificate(cred_path)
                 initialize_app(cred, {
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
                 })
+                client_creds = cred.get_credential()
             else:
                 # Use default credentials (good for Cloud Run / GKE)
                 initialize_app(options={
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
                 })
+        else:
+            # If already initialized (e.g. reload), try to get creds from app? 
+            # Simplified: assuming we rely on what we just did or env vars.
+            pass
             
         logging.info("Firebase Admin initialized successfully.")
         
         # Initialize Async Firestore Client
         # This will also use GOOGLE_APPLICATION_CREDENTIALS
         project_id = os.getenv("FIREBASE_PROJECT_ID")
-        if project_id:
+        
+        if client_creds:
+             db = firestore.AsyncClient(project=project_id, credentials=client_creds)
+        elif project_id:
              db = firestore.AsyncClient(project=project_id)
         else:
              db = firestore.AsyncClient()
