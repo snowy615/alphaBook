@@ -9,8 +9,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import jwt, JWTError
 from firebase_admin import auth as fb_auth
 
-# Import Firestore client
-from app.db import db
+# Import Firestore module
+from app import db as db_module
 from app.models import User
 
 # ----- config -----
@@ -56,7 +56,7 @@ async def get_user_from_token(token: str) -> Optional[User]:
         return None
     
     # Firestore get
-    doc_ref = db.collection("users").document(uid)
+    doc_ref = db_module.db.collection("users").document(uid)
     doc = await doc_ref.get()
     
     if doc.exists:
@@ -124,7 +124,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         # We need to query because we don't know the internal ID yet (unless we use firebase_uid as internal ID)
         # Using firebase_uid as Document ID is simpler and cleaner.
         
-        doc_ref = db.collection("users").document(firebase_uid)
+        doc_ref = db_module.db.collection("users").document(firebase_uid)
         doc = await doc_ref.get()
         
         user = None
@@ -140,7 +140,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             
             # Check username uniqueness
             # Firestore query for username
-            q = db.collection("users").where("username", "==", username).limit(1)
+            q = db_module.db.collection("users").where("username", "==", username).limit(1)
             existing_docs = await q.get()
             if existing_docs:
                  return JSONResponse({"status": "error", "message": "Username already taken"}, status_code=400)
@@ -159,7 +159,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             user_dict = user.model_dump(exclude={"id"})
             # convert datetime to simple timestamp/server timestamp if needed, but firestore handles datetime ok-ish
             # Explicitly set document ID to firebase_uid
-            await db.collection("users").document(firebase_uid).set(user_dict)
+            await db_module.db.collection("users").document(firebase_uid).set(user_dict)
             log.info(f"Created new user: {username} ({firebase_uid})")
             created_new = True
         

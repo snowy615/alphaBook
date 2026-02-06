@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException
-from app.db import db
+from app import db as db_module
 from google.cloud import firestore
 from app.auth import current_user
 from app.models import User, Trade as DBTrade, Order as DBOrder
@@ -41,7 +41,7 @@ async def me_summary(
     # Firestore supports Filter since recent versions
     from google.cloud.firestore import FieldFilter, Or
 
-    trades_ref = db.collection("trades")
+    trades_ref = db_module.db.collection("trades")
     # Filter(FieldPath("param"), "==", value)
     filter_buy = FieldFilter("buyer_id", "==", uid)
     filter_sell = FieldFilter("seller_id", "==", uid)
@@ -172,7 +172,7 @@ async def me_pnl(
     pts: List[Dict[str, float]] = []
     uid = str(user.id)
 
-    trades_ref = db.collection("trades")
+    trades_ref = db_module.db.collection("trades")
     filter_buy = FieldFilter("buyer_id", "==", uid)
     filter_sell = FieldFilter("seller_id", "==", uid)
     
@@ -279,7 +279,7 @@ async def my_open_orders(
         user: User = Depends(current_user)
 ) -> List[Dict[str, Any]]:
     """List open orders from database."""
-    orders_ref = db.collection("orders")
+    orders_ref = db_module.db.collection("orders")
     q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore.Query.DESCENDING)
     docs = await q.get()
 
@@ -307,7 +307,7 @@ async def _cancel_any(order_id: str, user) -> Dict[str, Any]:
     """Cancel order from both memory and database."""
 
     # First, check if order exists in database and belongs to user
-    orders_ref = db.collection("orders")
+    orders_ref = db_module.db.collection("orders")
     q = orders_ref.where("order_id", "==", order_id).where("user_id", "==", str(user.id)).where("status", "==", "OPEN").limit(1)
     docs = await q.get()
 

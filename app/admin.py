@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse
-from app.db import db
+from app import db as db_module
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
@@ -32,7 +32,7 @@ async def calculate_user_pnl(user_id: str) -> float:
     log = logging.getLogger("admin")
 
     # Get all trades for this user
-    trades_ref = db.collection("trades")
+    trades_ref = db_module.db.collection("trades")
     filter_buy = FieldFilter("buyer_id", "==", user_id)
     filter_sell = FieldFilter("seller_id", "==", user_id)
     q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell]))
@@ -43,7 +43,7 @@ async def calculate_user_pnl(user_id: str) -> float:
     log.info(f"Calculating P&L for user {user_id}, found {len(trades)} trades")
 
     # Get all custom games with their expected values
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     # Assuming small number of games, fetching all
     g_docs = await games_ref.get()
     games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
@@ -158,7 +158,7 @@ async def admin_dashboard(
 ):
     """Admin dashboard page"""
     # Get all users
-    users_ref = db.collection("users")
+    users_ref = db_module.db.collection("users")
     u_docs = await users_ref.get()
     users = [User(id=d.id, **d.to_dict()) for d in u_docs]
 
@@ -170,13 +170,13 @@ async def admin_dashboard(
     for u in users:
         uid = str(u.id)
         # Count orders
-        orders_ref = db.collection("orders")
+        orders_ref = db_module.db.collection("orders")
         o_q = orders_ref.where("user_id", "==", uid).count()
         o_agg = await o_q.get()
         orders_count = o_agg[0][0].value
 
         # Count trades
-        trades_ref = db.collection("trades")
+        trades_ref = db_module.db.collection("trades")
         filter_buy = FieldFilter("buyer_id", "==", uid)
         filter_sell = FieldFilter("seller_id", "==", uid)
         t_q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell])).count()
@@ -202,7 +202,7 @@ async def admin_dashboard(
     leaderboard = sorted(user_stats, key=lambda x: x["pnl"], reverse=True)
 
     # Get custom games
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     g_q = games_ref.where("is_active", "==", True)
     g_docs = await g_q.get()
     games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
@@ -245,7 +245,7 @@ async def create_game(
         raise HTTPException(status_code=400, detail="Symbol must start with 'GAME'")
 
     # Check if symbol already exists
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     q = games_ref.where("symbol", "==", symbol).limit(1)
     docs = await q.get()
     
@@ -265,7 +265,7 @@ async def create_game(
         updated_at=dt.datetime.utcnow()
     )
 
-    await db.collection("custom_games").document(game_id).set(new_game.model_dump(exclude={"id"}))
+    await db_module.db.collection("custom_games").document(game_id).set(new_game.model_dump(exclude={"id"}))
 
     # Add to order books
     from app.state import books
@@ -289,7 +289,7 @@ async def update_game(
 ):
     """Update a custom game"""
     # game_id is the document ID
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -312,7 +312,7 @@ async def delete_game(
         admin: User = Depends(require_admin)
 ):
     """Deactivate a custom game"""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -331,7 +331,7 @@ async def show_game(
         admin: User = Depends(require_admin)
 ):
     """Mark a custom game as visible in the lobby and /symbols."""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
 
     if not doc.exists:
@@ -347,7 +347,7 @@ async def hide_game(
         admin: User = Depends(require_admin)
 ):
     """Hide a custom game so users cannot see it in the lobby or /symbols."""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
 
     if not doc.exists:
@@ -363,7 +363,7 @@ async def pause_game(
         admin: User = Depends(require_admin)
 ):
     """Pause trading for a custom game."""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
 
     if not doc.exists:
@@ -379,7 +379,7 @@ async def resume_game(
         admin: User = Depends(require_admin)
 ):
     """Resume trading for a custom game."""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
 
     if not doc.exists:
@@ -400,7 +400,7 @@ async def resolve_game(
         admin: User = Depends(require_admin)
 ):
     """Update the expected value for a custom game (used for final P&L calculation)"""
-    doc_ref = db.collection("custom_games").document(game_id)
+    doc_ref = db_module.db.collection("custom_games").document(game_id)
     doc = await doc_ref.get()
 
     if not doc.exists:
@@ -430,7 +430,7 @@ async def blacklist_user(
         admin: User = Depends(require_admin)
 ):
     """Blacklist a user"""
-    doc_ref = db.collection("users").document(user_id)
+    doc_ref = db_module.db.collection("users").document(user_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -451,7 +451,7 @@ async def unblacklist_user(
         admin: User = Depends(require_admin)
 ):
     """Remove blacklist from a user"""
-    doc_ref = db.collection("users").document(user_id)
+    doc_ref = db_module.db.collection("users").document(user_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -469,7 +469,7 @@ async def delete_user(
         admin: User = Depends(require_admin)
 ):
     """Delete a user and all their data"""
-    doc_ref = db.collection("users").document(user_id)
+    doc_ref = db_module.db.collection("users").document(user_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -480,14 +480,14 @@ async def delete_user(
         raise HTTPException(status_code=400, detail="Cannot delete admin users")
 
     # Delete user's orders
-    orders_ref = db.collection("orders")
+    orders_ref = db_module.db.collection("orders")
     o_docs = await orders_ref.where("user_id", "==", user_id).get()
     for d in o_docs:
         await d.reference.delete()
 
     # Delete user's trades (simpler to query separately for buyer/seller or just iterate if not too many)
     # A cleaner way is complex OR query or two queries.
-    trades_ref = db.collection("trades")
+    trades_ref = db_module.db.collection("trades")
     t_docs_1 = await trades_ref.where("buyer_id", "==", user_id).get()
     t_docs_2 = await trades_ref.where("seller_id", "==", user_id).get()
     
@@ -510,13 +510,13 @@ async def reset_all_users(
 ):
     """Reset all users to initial state"""
     # Reset all user balances except admins
-    users_ref = db.collection("users")
+    users_ref = db_module.db.collection("users")
     # Firestore doesn't support "not equal" easily combined with updates without iterating
     # We'll select all and filter in app, or use != query if index exists
     
     # Simple iteration for safety
     docs = await users_ref.get()
-    batch = db.batch()
+    batch = db_module.db.batch()
     
     for d in docs:
         u = d.to_dict()
@@ -528,7 +528,7 @@ async def reset_all_users(
     # Delete all trades
     # To delete all validly we must list and delete chunks
     async def delete_all_in_collection(coll_name, batch_size=50):
-        coll_ref = db.collection(coll_name)
+        coll_ref = db_module.db.collection(coll_name)
         while True:
             docs = await coll_ref.limit(batch_size).get()
             if not docs:
@@ -559,7 +559,7 @@ async def admin_create_news(
         created_at=dt.datetime.utcnow()
     )
     
-    await db.collection("market_news").document(news_id).set(item.model_dump(exclude={"id"}))
+    await db_module.db.collection("market_news").document(news_id).set(item.model_dump(exclude={"id"}))
     
     return {
         "ok": True,
@@ -578,7 +578,7 @@ async def admin_update_news(
         admin: User = Depends(require_admin)
 ):
     """Admin edit existing news"""
-    doc_ref = db.collection("market_news").document(news_id)
+    doc_ref = db_module.db.collection("market_news").document(news_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
@@ -608,7 +608,7 @@ async def admin_delete_news(
         admin: User = Depends(require_admin)
 ):
     """Admin delete news"""
-    doc_ref = db.collection("market_news").document(news_id)
+    doc_ref = db_module.db.collection("market_news").document(news_id)
     doc = await doc_ref.get()
     
     if not doc.exists:
