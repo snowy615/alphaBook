@@ -66,10 +66,16 @@ async def get_user_from_token(token: str) -> Optional[User]:
         return User(id=doc.id, **u_data)
     return None
 
+def _is_https(request: Request) -> bool:
+    """Check if the original client connection is HTTPS (handles proxies)."""
+    # Cloud Run/Firebase Hosting sets X-Forwarded-Proto
+    proto = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return proto == "https"
+
 def _make_redirect_with_cookie(request: Request, token: str, url: str = "/") -> RedirectResponse:
     # Use 303 for POST -> GET redirect
     resp = RedirectResponse(url=url, status_code=303)
-    secure = (request.url.scheme == "https")
+    secure = _is_https(request)
     resp.set_cookie(
         COOKIE_NAME,
         token,
@@ -174,7 +180,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         token = create_token(user.id) # user.id is firebase_uid
         
         response = JSONResponse({"status": "ok", "redirect": "/"})
-        secure = (request.url.scheme == "https")
+        secure = _is_https(request)
         response.set_cookie(
             COOKIE_NAME,
             token,
