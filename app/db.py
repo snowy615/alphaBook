@@ -28,6 +28,9 @@ def init_firestore():
                 print("DEBUG: init_firestore - using FIREBASE_CREDENTIALS_JSON")
                 import json
                 cred_dict = json.loads(cred_json)
+                # Fix escaped newlines in private_key (common when passed via env vars)
+                if "private_key" in cred_dict and "\\n" in cred_dict["private_key"]:
+                    cred_dict["private_key"] = cred_dict["private_key"].replace("\\n", "\n")
                 cred = credentials.Certificate(cred_dict)
                 initialize_app(cred, {
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
@@ -48,8 +51,6 @@ def init_firestore():
                 })
         else:
             print("DEBUG: init_firestore - app already initialized")
-            # If already initialized (e.g. reload), try to get creds from app? 
-            # Simplified: assuming we rely on what we just did or env vars.
             pass
             
         logging.info("Firebase Admin initialized successfully.")
