@@ -77,7 +77,8 @@ async def _startup():
         print("🔄 Initializing Firestore...")
         init_firestore()
         print("✅ Firestore initialized")
-        time_module.sleep(0.5)
+        print("✅ Firestore initialized")
+        # time_module.sleep(0.5) # Removed blocking sleep
     except Exception as e:
         print(f"❌ FATAL: Database initialization error: {e}")
         traceback.print_exc()
@@ -267,7 +268,7 @@ async def get_symbols():
     from app.models import CustomGame
 
     # Firestore
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     q = games_ref.where("is_active", "==", True).where("is_visible", "==", True)
     docs = await q.get()
     
@@ -304,7 +305,7 @@ async def me_orders(user: User = Depends(current_user)):
     # Note: user.id is ObjectId, so we cast to str if needed or check how it's stored
     # In User model id is standard _id. In Order model user_id is indexed str (from `app/models.py`)
     
-    orders_ref = db.collection("orders")
+    orders_ref = db_module.db.collection("orders")
     # Filter by user_id and status
     q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore.Query.DESCENDING)
     docs = await q.get()
@@ -338,7 +339,7 @@ async def cancel_order(
     """
     # Find in database
     # Find in database
-    orders_ref = db.collection("orders")
+    orders_ref = db_module.db.collection("orders")
     # Need to find the document with order_id field
     q = orders_ref.where("order_id", "==", order_id).where("user_id", "==", str(user.id)).where("status", "==", "OPEN").limit(1)
     docs = await q.get()
@@ -352,7 +353,7 @@ async def cancel_order(
     symbol = db_order_data.get("symbol").upper()
 
     # Check game paused
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     q_game = games_ref.where("symbol", "==", symbol).limit(1)
     g_docs = await q_game.get()
     
@@ -381,12 +382,15 @@ async def submit_order(
         order_in: OrderIn,
         user: User = Depends(current_user)
 ):
+    print(f"DEBUG: submit_order start. Sym={order_in.symbol} Side={order_in.side} Ux={user.username}")
     symbol = order_in.symbol.upper()
 
     # Only allow trading on defined custom games
-    games_ref = db.collection("custom_games")
+    games_ref = db_module.db.collection("custom_games")
     q = games_ref.where("symbol", "==", symbol).limit(1)
+    print("DEBUG: Checking custom games...")
     docs = await q.get()
+    print(f"DEBUG: Found {len(docs)} games")
 
     if not docs:
          raise HTTPException(status_code=404, detail="Symbol is not tradable.")
@@ -421,7 +425,7 @@ async def submit_order(
     # Use order_id as Document ID for easy lookup? Or auto-id?
     # Using auto-id is safer for collisions if uuid fails (unlikely), but using order_id as key is faster lookup.
     # Let's use order_id as doc id.
-    await db.collection("orders").document(order_id).set(db_order.model_dump(exclude={"id"}))
+    await db_module.db.collection("orders").document(order_id).set(db_order.model_dump(exclude={"id"}))
 
     # Create in-memory order
     order = BookOrder(
@@ -435,15 +439,20 @@ async def submit_order(
     )
 
     # Match in order book
+    print("DEBUG: Acquiring lock...")
     async with lock:
+        print("DEBUG: Lock acquired. Adding order...")
         fills = book.add(order)
+        print("DEBUG: Order added. Snapshotting...")
         snap = book.snapshot(depth=TOP_DEPTH)
+    print("DEBUG: Lock released. Fills:", len(fills))
 
     # Record trades in database
     total_filled = Decimal("0")
     
     # Batch write for trades?
-    batch = db.batch()
+    print("DEBUG: Starting batch...")
+    batch = db_module.db.batch()
     
     for tr in fills:
         px, q = tr["price"], tr["qty"]
@@ -461,7 +470,7 @@ async def submit_order(
             sell_order_id=order_id if order_in.side == "SELL" else "",
             created_at=dt.datetime.utcnow()
         )
-        trade_ref = db.collection("trades").document(trade_id)
+        trade_ref = db_module.db.collection("trades").document(trade_id)
         batch.set(trade_ref, trade.model_dump(exclude={"id"}))
 
         # Update positions
@@ -474,7 +483,9 @@ async def submit_order(
 
         total_filled += q
 
+    print("DEBUG: Committing batch...")
     await batch.commit()
+    print("DEBUG: Batch committed.")
 
     # Update order status in database
     update_data = {
@@ -484,7 +495,7 @@ async def submit_order(
     if total_filled >= Decimal(order_in.qty):
         update_data["status"] = "FILLED"
     
-    await db.collection("orders").document(order_id).update(update_data)
+    await db_module.db.collection("orders").document(order_id).update(update_data)
 
     # Update mid hint for ref price
     try:
@@ -504,7 +515,8 @@ async def submit_order(
         "book": snap,
         "ref_price": get_ref_price(symbol),
     })
-
+    
+    print("DEBUG: submitting ACK")
     return Ack(
         order_id=order.id,
         trades=[{

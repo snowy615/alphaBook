@@ -56,8 +56,10 @@ async def get_user_from_token(token: str) -> Optional[User]:
         return None
     
     # Firestore get
+    print(f"DEBUG: fetching user doc {uid}")
     doc_ref = db_module.db.collection("users").document(uid)
     doc = await doc_ref.get()
+    print(f"DEBUG: fetched user doc {uid} exists={doc.exists}")
     
     if doc.exists:
         u_data = doc.to_dict()
@@ -83,22 +85,27 @@ async def current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials = Depends(http_bearer),
 ) -> User:
+    print(f"DEBUG: current_user check for {request.url.path}")
     # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     # 2) Bearer
     if not token and creds and creds.scheme.lower() == "bearer":
         token = creds.credentials
     if not token:
+        print("DEBUG: current_user no token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
         
+    print("DEBUG: current_user calling get_user_from_token")
     user = await get_user_from_token(token)
     if not user:
+        print("DEBUG: current_user user not found")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     # Check if user is blacklisted
     if user.is_blacklisted:
         raise HTTPException(status_code=403, detail="Account has been suspended")
 
+    print(f"DEBUG: current_user success: {user.username}")
     return user
 
 # ----- HTML forms -----

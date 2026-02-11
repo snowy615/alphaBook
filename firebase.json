@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "app/static",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "rewrites": [
+      {
+        "source": "**",
+        "run": {
+          "serviceId": "alphabook-api",
+          "region": "us-central1"
+        }
+      }
+    ]
+  }
+}

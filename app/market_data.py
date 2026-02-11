@@ -196,6 +196,12 @@ async def _bootstrap_symbol(sym: str):
                      sym, px, _official_info[sym]["source"], _official_info[sym]["provider_ts"], fetched_at)
             return
         key_present = bool(_av_key())
+        if not key_present:
+            # If no key, we are in synthetic mode. No need to spam logs.
+            # We'll just sleep and retry (which will fail/return None, triggering synth fallback in main loop)
+             await asyncio.sleep(backoff)
+             return
+
         if err == "throttle":
             wait = 15 + random.uniform(0, 3)
             log.info("[RETRY] %s attempt=%d err=throttle wait=%.1fs key_present=%s",
