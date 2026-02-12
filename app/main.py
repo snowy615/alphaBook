@@ -21,6 +21,7 @@ from app.schemas import OrderIn, Ack, PriceOut
 from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
 from app.db import init_firestore
 from app import db as db_module
+from google.cloud import firestore as firestore_module
 from google.cloud.firestore import FieldFilter
 from app.auth import router as auth_router, current_user
 from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame, MarketNews # explicit import
@@ -54,7 +55,7 @@ class NewsOut(BaseModel):
 @app.get("/news", response_model=List[NewsOut])
 async def get_news(limit: int = 20):
     # Firestore fetch
-    news_ref = db_module.db.collection("market_news").order_by("created_at", direction=firestore.Query.DESCENDING).limit(limit)
+    news_ref = db_module.db.collection("market_news").order_by("created_at", direction=firestore_module.Query.DESCENDING).limit(limit)
     docs = await news_ref.get()
     items = []
     for d in docs:
@@ -124,6 +125,41 @@ async def _startup():
     print("🔄 Starting market data engine...")
     asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
     print("✅ Market data engine started")
+
+    # Reload open orders from Firestore into in-memory order book
+    try:
+        print("🔄 Reloading open orders from Firestore...")
+        open_orders_q = db_module.db.collection("orders").where("status", "==", "OPEN")
+        open_order_docs = await open_orders_q.get()
+        loaded_count = 0
+        for doc in open_order_docs:
+            o = doc.to_dict()
+            symbol = o.get("symbol", "")
+            if not symbol:
+                continue
+            remaining_qty = Decimal(o.get("qty", "0")) - Decimal(o.get("filled_qty", "0"))
+            if remaining_qty <= 0:
+                continue
+            book = books[symbol]
+            order = BookOrder(
+                id=o.get("order_id", doc.id),
+                user_id=o.get("user_id", ""),
+                side=o.get("side", "BUY"),
+                price=Decimal(o.get("price", "0")),
+                qty=remaining_qty,
+                orig_qty=Decimal(o.get("qty", "0")),
+            )
+            # Insert directly into the book (don't match — just restore resting orders)
+            if order.side == "BUY":
+                from collections import deque
+                book.bids.setdefault(order.price, deque()).append(order)
+            else:
+                from collections import deque
+                book.asks.setdefault(order.price, deque()).append(order)
+            loaded_count += 1
+        print(f"✅ Reloaded {loaded_count} open orders into memory")
+    except Exception as e:
+        print(f"⚠️ Failed to reload open orders: {e}")
 
     print("=" * 60)
     print("✅ AlphaBook Started Successfully!")
@@ -307,7 +343,7 @@ async def me_orders(user: User = Depends(current_user)):
     
     orders_ref = db_module.db.collection("orders")
     # Filter by user_id and status
-    q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore.Query.DESCENDING)
+    q = orders_ref.where("user_id", "==", str(user.id)).where("status", "==", "OPEN").order_by("created_at", direction=firestore_module.Query.DESCENDING)
     docs = await q.get()
 
     rows = []
