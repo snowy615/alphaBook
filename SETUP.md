@@ -110,16 +110,50 @@ python -m uvicorn app.main:app --reload
     - Build a simple form or use generic API tool to POST to `/files/upload` with a file and Authorization header (session cookie is handled by browser, but for external test you need auth).
     - Easier: Just check that "Storage bucket initialized" appears in the server logs on validation startup.
 
-## 6. Deployment (Render / Heroku)
+## 6. Deployment (Cloud Run + Firebase Hosting)
 
-Since `service-account.json` is gitignored, you must provide credentials via an environment variable in your production environment.
+AlphaBook uses **Google Cloud Run** for the backend and **Firebase Hosting** as a frontend proxy.
 
-1.  **Encode your service account key**:
-    Copy the contents of `service-account.json`.
-    
-2.  **Set Environment Variable**:
-    In your deployment dashboard (e.g., Render Environment Variables), add:
-    - Key: `FIREBASE_CREDENTIALS_JSON`
-    - Value: Paste the entire JSON content of your service account key.
+### Prerequisites
+-   [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) (`gcloud`)
+-   [Firebase CLI](https://firebase.google.com/docs/cli) (`firebase`)
+-   A Google Cloud Project with Billing enabled.
 
-The application will prioritize this environment variable over the local file.
+### Deploy Backend (Cloud Run)
+
+```bash
+gcloud run deploy alphabook-api \
+  --source . \
+  --region us-central1 \
+  --allow-unauthenticated
+```
+
+Environment variables can be set via `--env-vars-file` (YAML) or the Cloud Run console.
+
+### Deploy Frontend (Firebase Hosting)
+
+```bash
+firebase deploy --only hosting
+```
+
+The `firebase.json` rewrites all requests through Firebase Hosting to the Cloud Run backend. Firebase Hosting provides:
+- A clean URL (`https://alphabook-5ef4e.web.app`)
+- Global CDN and free SSL
+- Automatic proxying to Cloud Run
+
+> **Important:** Firebase Hosting only forwards cookies named `__session`. All other cookies are stripped. The app uses `__session` for session management.
+
+### Environment Variables in Production
+
+Since `service-account.json` is gitignored, provide credentials to Cloud Run via:
+
+1.  **Set env vars on Cloud Run** — copy values from your `.env` into the Cloud Run console under Variables & Secrets, or use a YAML env file:
+    ```bash
+    gcloud run deploy alphabook-api \
+      --source . \
+      --region us-central1 \
+      --allow-unauthenticated \
+      --env-vars-file=env_vars.yaml
+    ```
+
+2.  **Or use Secret Manager** — upload `service-account.json` to Google Secret Manager and mount it as a volume.
