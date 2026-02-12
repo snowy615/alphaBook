@@ -99,7 +99,7 @@
 
       async function init() {
         try {
-          const res = await fetch("/auth/config");
+          const res = await fetch("/auth/config", { credentials: "include" });
           const firebaseConfig = await res.json();
           if (!firebaseConfig.apiKey) {
             console.error("Firebase config missing");
@@ -138,7 +138,8 @@
 
               const loginRes = await fetch("/auth/firebase", {
                 method: "POST",
-                body: formData
+                body: formData,
+                credentials: "include"
               });
 
               if (loginRes.ok) {

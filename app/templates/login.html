@@ -1,22 +1,81 @@
 <!doctype html>
 <html>
+
 <head>
   <meta charset="utf-8" />
   <title>Login · Mini Exchange</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
-    body { background:#0b0e11; color:#e6e6e6; display:flex; align-items:center; justify-content:center; height:100vh; margin:0; }
-    .card { background:#11161d; border:1px solid #232933; border-radius:12px; padding:22px; width:320px; }
-    h2 { margin: 0 0 10px 0; }
-    label { display:block; margin:10px 0 6px; color:#9aa6b2; }
-    input { width:100%; padding:10px; border-radius:8px; border:1px solid #232933; background:#0d131a; color:#e6e6e6; }
-    button { margin-top:14px; width:100%; padding:10px; border-radius:8px; border:0; background:#0cf; color:#001018; font-weight:700; cursor:pointer; }
-    .muted { color:#8c95a3; font-size:13px; margin-top:8px; }
-    .err { color:#ff8a8a; margin-top:8px; }
-    a { color:#0cf; }
+    :root {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    }
+
+    body {
+      background: #0b0e11;
+      color: #e6e6e6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      margin: 0;
+    }
+
+    .card {
+      background: #11161d;
+      border: 1px solid #232933;
+      border-radius: 12px;
+      padding: 22px;
+      width: 320px;
+    }
+
+    h2 {
+      margin: 0 0 10px 0;
+    }
+
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      color: #9aa6b2;
+    }
+
+    input {
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #232933;
+      background: #0d131a;
+      color: #e6e6e6;
+    }
+
+    button {
+      margin-top: 14px;
+      width: 100%;
+      padding: 10px;
+      border-radius: 8px;
+      border: 0;
+      background: #0cf;
+      color: #001018;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .muted {
+      color: #8c95a3;
+      font-size: 13px;
+      margin-top: 8px;
+    }
+
+    .err {
+      color: #ff8a8a;
+      margin-top: 8px;
+    }
+
+    a {
+      color: #0cf;
+    }
   </style>
 </head>
+
 <body>
   <div class="card">
     <h2>Login</h2>
@@ -38,14 +97,14 @@
 
       async function init() {
         try {
-          const res = await fetch("/auth/config");
+          const res = await fetch("/auth/config", { credentials: "include" });
           const firebaseConfig = await res.json();
           if (!firebaseConfig.apiKey) {
             console.error("Firebase config missing");
             alert("System Error: Firebase configuration not found.");
             return;
           }
-          
+
           const app = initializeApp(firebaseConfig);
           const auth = getAuth(app);
 
@@ -62,13 +121,14 @@
               const userCredential = await signInWithEmailAndPassword(auth, email, password);
               const token = await userCredential.user.getIdToken();
 
-              // Send token to backend
+              // Send token to backend — credentials: include is REQUIRED for Set-Cookie to work
               const formData = new FormData();
               formData.append('id_token', token);
-              
+
               const loginRes = await fetch("/auth/firebase", {
                 method: "POST",
-                body: formData
+                body: formData,
+                credentials: "include"
               });
 
               if (loginRes.ok) {
@@ -95,4 +155,5 @@
     <div class="muted">No account? <a href="/signup">Create one</a></div>
   </div>
 </body>
+
 </html>

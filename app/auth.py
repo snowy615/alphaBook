@@ -17,7 +17,7 @@ from app.models import User
 log = logging.getLogger("auth")
 SECRET_KEY = os.getenv("SECRET_KEY", "devsecret_change_me")
 ALGORITHM = "HS256"
-COOKIE_NAME = "session"
+COOKIE_NAME = "__session"  # Firebase Hosting ONLY forwards cookies named __session
 COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
 
 # Cookie + Bearer support
