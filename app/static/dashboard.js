@@ -3,7 +3,6 @@
   const symbols = JSON.parse(root.dataset.symbols || "[]");
   const DEPTH = Number(root.dataset.depth || "10");
   const gridCards = document.getElementById("gridCards");
-  const wsProto = location.protocol === "https:" ? "wss" : "ws";
 
   // ------- Ladder cards -------
   function cardTemplate(s) {
@@ -33,7 +32,7 @@
     return x.toLocaleString(undefined, { minimumFractionDigits: dp, maximumFractionDigits: 6 });
   }
   const fmtQty = (q) => fmtNum(q, 0);
-  const fmtPx  = (p) => fmtNum(p, 2);
+  const fmtPx = (p) => fmtNum(p, 2);
 
   function buildLadder(bids, asks) {
     const bidMap = new Map(bids.map(l => [Number(l.px), Number(l.qty)]));
@@ -71,29 +70,24 @@
       const r = await fetch(`/reference/${sym}`);
       const j = await r.json();
       document.getElementById(`ref-${sym}`).textContent = "ref: " + fmtNum(j.price);
-    } catch {}
+    } catch { }
   }
 
-  function connectWS(sym) {
-    const ws = new WebSocket(`${wsProto}://${location.host}/ws/book/${sym}`);
-    ws.onmessage = (ev) => {
-      try {
-        const msg = JSON.parse(ev.data);
-        if (msg.type === "snapshot") {
-          updateSnapshot(sym, msg.book, msg.ref_price);
-          refreshMe(); // nudge metrics after trades
-        }
-      } catch {}
-    };
-    ws.onclose = () => setTimeout(() => connectWS(sym), 1500);
+  async function pollBook(sym) {
+    try {
+      const r = await fetch(`/book/${sym}`);
+      const book = await r.json();
+      updateSnapshot(sym, book);
+    } catch { }
   }
 
   function bootstrapBooks() {
     gridCards.innerHTML = symbols.map(cardTemplate).join("");
     symbols.forEach((sym) => {
-      connectWS(sym);
+      pollBook(sym);
       pollRef(sym);
-      setInterval(() => pollRef(sym), 1500);
+      setInterval(() => pollBook(sym), 2000);
+      setInterval(() => pollRef(sym), 2000);
     });
   }
 
@@ -120,7 +114,7 @@
           <td class="right">${fmtNum(m.position, 0)}</td>
           <td class="right">${fmtNum(m.delta, 0)}</td>
           <td class="right">${fmtNum(m.realized)}</td>
-          <td class="right ${total >= 0 ? "ok":"bad"}">${fmtNum(m.total_pnl)}</td>
+          <td class="right ${total >= 0 ? "ok" : "bad"}">${fmtNum(m.total_pnl)}</td>
         </tr>`;
     }).join("");
     authbox.innerHTML = `

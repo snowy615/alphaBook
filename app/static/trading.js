@@ -30,7 +30,7 @@
   let lastMid = null;
 
   // Toggle instructions collapse
-  window.toggleInstructions = function() {
+  window.toggleInstructions = function () {
     const content = $("#game-instructions-content");
     const icon = $("#instructions-icon");
 
@@ -45,42 +45,35 @@
     }
   };
 
-  // WebSocket connection
-  function connectWS() {
-    const wsProto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${wsProto}://${location.host}/ws/book/${SYMBOL}`);
+  // HTTP polling for order book updates (Firebase Hosting doesn't support WebSocket)
+  let pollingInterval = null;
 
-    ws.onopen = () => {
-      console.log(`[WS] Connected to ${SYMBOL}`);
-      setMeta("connected • live");
-    };
-
-    ws.onmessage = (msg) => {
-      try {
-        const data = JSON.parse(msg.data);
-        console.log(`[WS] Received message for ${SYMBOL}:`, data.type); // FIX: Added logging
-        if (data.type === "snapshot") {
-          console.log(`[WS] Book snapshot:`, data.book); // FIX: Added logging
-          renderLadder(data.book);
-          setRef(data.ref_price);
-          setMeta(`updated ${new Date().toLocaleTimeString()}`);
-          updatePosition();
-        }
-      } catch (e) {
-        console.error('[WS] Error processing message:', e);
+  async function pollBook() {
+    try {
+      const book = await fetchJSON(`/book/${SYMBOL}`);
+      if (book) {
+        renderLadder(book);
+        setMeta(`updated ${new Date().toLocaleTimeString()}`);
       }
-    };
+    } catch (e) {
+      console.error('[Poll] Error fetching book:', e);
+    }
+    try {
+      const refData = await fetchJSON(`/reference/${SYMBOL}`);
+      if (refData && refData.price !== undefined) {
+        setRef(refData.price);
+      }
+    } catch (e) {
+      // reference price is optional
+    }
+  }
 
-    ws.onclose = () => {
-      console.log(`[WS] Disconnected from ${SYMBOL}, reconnecting...`);
-      setMeta("disconnected — retrying…");
-      setTimeout(connectWS, 1500);
-    };
-
-    ws.onerror = (err) => {
-      console.error('[WS] Error:', err);
-      ws.close();
-    };
+  function startPolling() {
+    setMeta("live");
+    pollBook();
+    if (!pollingInterval) {
+      pollingInterval = setInterval(pollBook, 2000);
+    }
   }
 
   function setMeta(text) {
@@ -491,7 +484,7 @@
     if (!dlg.open) { prefill(); dlg.showModal(); }
   });
 
-  window.openPlaceOrder = function(side, price) {
+  window.openPlaceOrder = function (side, price) {
     if (!isAuthed) {
       alert("Please log in to place orders");
       return;
@@ -839,7 +832,7 @@
     }
   }
 
-  window.cancelMyOrder = async function(orderId) {
+  window.cancelMyOrder = async function (orderId) {
     const btn = document.querySelector(`button[data-order-id="${orderId}"]`);
     if (btn) {
       btn.disabled = true;
@@ -859,7 +852,7 @@
           if (data && data.detail) {
             msg = data.detail;
           }
-        } catch (_) {}
+        } catch (_) { }
 
         alert(msg);
 
@@ -911,7 +904,7 @@
 
   // Initialize
   console.log(`[Init] Starting for symbol: ${SYMBOL}, IS_CUSTOM_GAME: ${IS_CUSTOM_GAME}`);
-  connectWS();
+  startPolling();
   initAuthUI();
   loadNews();
   setInterval(loadNews, 5000);
