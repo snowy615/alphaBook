@@ -78,61 +78,31 @@ Users start with a **$10,000 simulated balance**. All prices are stored as strin
 
 ---
 
-## Quick Start (Local Development)
+## Run Locally
 
 ```bash
-# 1. Clone and setup
-git clone <repo-url> && cd alphaBook
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-
-# 2. Configure environment
-cp .env.example .env
-# Edit .env with your Firebase credentials (see SETUP.md)
-
-# 3. Run
+source venv/bin/activate
 python -m uvicorn app.main:app --reload
 ```
 
 Open [http://localhost:8000](http://localhost:8000)
 
-## Deployment
+---
 
-AlphaBook deploys to **Google Cloud Run** (backend) + **Firebase Hosting** (frontend proxy).
+## Deploy
 
-### Deploy Backend
 ```bash
+# Deploy backend to Cloud Run
 gcloud run deploy alphabook-api \
   --source . \
   --region us-central1 \
   --allow-unauthenticated
-```
 
-### Deploy Frontend
-```bash
+# Deploy frontend to Firebase Hosting
 firebase deploy --only hosting
 ```
 
 ### Live URL
+
 [https://alphabook-5ef4e.web.app](https://alphabook-5ef4e.web.app)
 
-## Architecture
-
-```
-Browser  →  Firebase Hosting (alphabook-5ef4e.web.app)
-                │  rewrites all requests
-                ▼
-            Cloud Run (alphabook-api)
-                │  runs Docker container
-                ▼
-            FastAPI App (Python)
-                │  reads/writes data
-                ▼
-            Cloud Firestore + Firebase Auth
-```
-
-> **Note:** Firebase Hosting only forwards cookies named `__session`. The app uses this cookie name for session management.
-
-## Setup
-
-See [SETUP.md](SETUP.md) for detailed Firebase configuration and environment setup.
