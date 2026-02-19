@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from app import db as db_module
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter, Or

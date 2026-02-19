@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, datetime as dt, logging
+import os, datetime as dt, logging, hashlib
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
@@ -195,6 +195,47 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
     except Exception as e:
         log.exception("Firebase auth failed")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=401)
+
+
+# ----- Direct admin login (no Firebase) -----
+ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Alphabook")
+ADMIN_UID = "admin_user_id"  # Must match the UID used in main.py startup
+
+@router.post("/auth/direct", include_in_schema=False)
+async def direct_login(request: Request, username: str = Form(...), password: str = Form(...)):
+    """Direct username/password login – used for admin access from the normal login page."""
+    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+        return JSONResponse({"status": "error", "message": "Invalid credentials"}, status_code=401)
+
+    # Ensure admin user doc exists in Firestore
+    doc_ref = db_module.db.collection("users").document(ADMIN_UID)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        from app.models import User as UserModel
+        admin_user = UserModel(
+            id=ADMIN_UID,
+            username="admin",
+            balance=10000.0,
+            is_admin=True,
+            is_blacklisted=False,
+            firebase_uid=ADMIN_UID,
+        )
+        await doc_ref.set(admin_user.model_dump(exclude={"id"}))
+
+    token = create_token(ADMIN_UID)
+    response = JSONResponse({"status": "ok", "redirect": "/"})
+    secure = _is_https(request)
+    response.set_cookie(
+        COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+        max_age=COOKIE_MAX_AGE,
+        path="/",
+    )
+    return response
 
 
 @router.get("/login", include_in_schema=False)

@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="utf-8" />
-  <title>Login · Mini Exchange</title>
+  <title>Login · AlphaBook</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
     :root {
@@ -45,6 +45,7 @@
       border: 1px solid #232933;
       background: #0d131a;
       color: #e6e6e6;
+      box-sizing: border-box;
     }
 
     button {
@@ -82,12 +83,13 @@
     {% if error %}<div class="err">{{error}}</div>{% endif %}
     <div id="auth-container">
       <form id="login-form">
-        <label>Email</label>
-        <input name="email" type="email" required placeholder="name@example.com" />
+        <label>Email or Username</label>
+        <input name="identifier" type="text" required placeholder="name@example.com or username" autofocus />
         <label>Password</label>
         <input name="password" type="password" required />
         <button type="submit">Sign in</button>
       </form>
+      <div id="login-error" class="err" style="display:none;"></div>
       <p style="margin-top: 1rem;"><a href="/signup">Need an account? Sign up</a></p>
     </div>
 
@@ -96,32 +98,77 @@
       import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
 
       async function init() {
+        let firebaseAuth = null;
+
+        // Try loading Firebase config (may fail on network issues, that's ok for direct login)
         try {
           const res = await fetch("/auth/config", { credentials: "include" });
           const firebaseConfig = await res.json();
-          if (!firebaseConfig.apiKey) {
-            console.error("Firebase config missing");
-            alert("System Error: Firebase configuration not found.");
-            return;
+          if (firebaseConfig.apiKey) {
+            const app = initializeApp(firebaseConfig);
+            firebaseAuth = getAuth(app);
           }
+        } catch (e) {
+          console.warn("Firebase config not available, only direct login will work", e);
+        }
 
-          const app = initializeApp(firebaseConfig);
-          const auth = getAuth(app);
+        const form = document.getElementById('login-form');
+        const errDiv = document.getElementById('login-error');
 
-          const form = document.getElementById('login-form');
-          form.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const email = form.email.value;
-            const password = form.password.value;
-            const btn = form.querySelector('button');
-            btn.disabled = true;
-            btn.innerText = "Signing in...";
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const identifier = form.identifier.value.trim();
+          const password = form.password.value;
+          const btn = form.querySelector('button');
+          btn.disabled = true;
+          btn.innerText = "Signing in...";
+          errDiv.style.display = "none";
+
+          const isEmail = identifier.includes("@");
+
+          if (!isEmail) {
+            // --- Direct login (username + password) ---
+            try {
+              const formData = new FormData();
+              formData.append("username", identifier);
+              formData.append("password", password);
+
+              const res = await fetch("/auth/direct", {
+                method: "POST",
+                body: formData,
+                credentials: "include"
+              });
+
+              if (res.ok) {
+                window.location.href = "/";
+                return;
+              } else {
+                const data = await res.json();
+                errDiv.textContent = data.message || "Invalid credentials";
+                errDiv.style.display = "block";
+                btn.disabled = false;
+                btn.innerText = "Sign in";
+              }
+            } catch (err) {
+              errDiv.textContent = "Network error: " + err.message;
+              errDiv.style.display = "block";
+              btn.disabled = false;
+              btn.innerText = "Sign in";
+            }
+          } else {
+            // --- Firebase email login ---
+            if (!firebaseAuth) {
+              errDiv.textContent = "Firebase not configured. Email login unavailable.";
+              errDiv.style.display = "block";
+              btn.disabled = false;
+              btn.innerText = "Sign in";
+              return;
+            }
 
             try {
-              const userCredential = await signInWithEmailAndPassword(auth, email, password);
+              const userCredential = await signInWithEmailAndPassword(firebaseAuth, identifier, password);
               const token = await userCredential.user.getIdToken();
 
-              // Send token to backend — credentials: include is REQUIRED for Set-Cookie to work
               const formData = new FormData();
               formData.append('id_token', token);
 
@@ -135,20 +182,20 @@
                 window.location.href = "/";
               } else {
                 const err = await loginRes.json();
-                alert("Login failed: " + (err.message || err.detail || "Unknown error"));
+                errDiv.textContent = err.message || err.detail || "Login failed";
+                errDiv.style.display = "block";
                 btn.disabled = false;
                 btn.innerText = "Sign in";
               }
             } catch (error) {
               console.error(error);
-              alert("Login Error: " + error.message);
+              errDiv.textContent = error.message;
+              errDiv.style.display = "block";
               btn.disabled = false;
               btn.innerText = "Sign in";
             }
-          });
-        } catch (e) {
-          console.error("Auth init error", e);
-        }
+          }
+        });
       }
       init();
     </script>
