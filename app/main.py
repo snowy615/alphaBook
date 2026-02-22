@@ -222,22 +222,43 @@ async def home(request: Request):
 
     # Firestore: CustomGame
     games_ref = db_module.db.collection("custom_games")
-    # Compound query might need index. For now just filtering in python if small, or simple queries.
-    # Firestore allows .where().where()
     q = games_ref.where(filter=FieldFilter("is_active", "==", True)).where(filter=FieldFilter("is_visible", "==", True))
     docs = await q.get()
     
     games = [CustomGame(id=d.id, **d.to_dict()) for d in docs]
 
-    symbols: List[str] = []
-    game_data = {}
+    # Build a map of symbol → raw game_type from Firestore (before Pydantic defaults)
+    raw_game_types = {}
+    for d in docs:
+        data = d.to_dict()
+        raw_game_types[data.get("symbol", "")] = data.get("game_type")  # None if not in Firestore
 
+    # Group games by game_type
+    game_groups = {"market": [], "5os": [], "other": []}
     for game in games:
-        symbols.append(game.symbol)
-        game_data[game.symbol] = {
+        gtype = raw_game_types.get(game.symbol)
+        # If no game_type stored in Firestore, infer: GAME* symbols are custom games, others are stocks
+        if not gtype:
+            gtype = "other" if game.symbol.startswith("GAME") else "market"
+        if gtype not in game_groups:
+            gtype = "other"
+        game_groups[gtype].append({
+            "symbol": game.symbol,
             "name": game.name,
             "instructions": game.instructions,
-        }
+        })
+
+    # Always include a 5Os placeholder entry
+    if not game_groups["5os"]:
+        game_groups["5os"].append({
+            "symbol": "__5OS__",
+            "name": "5Os",
+            "instructions": "",
+            "coming_soon": True,
+        })
+
+    # Flat symbols list still needed for /trade routes & price fetching
+    symbols = [game.symbol for game in games]
 
     return templates.TemplateResponse(
         "index.html",
@@ -246,11 +267,54 @@ async def home(request: Request):
             "app_name": "AlphaBook",
             "symbols": symbols,
             "symbols_json": json.dumps(symbols),
-            "game_data_json": json.dumps(game_data),
+            "game_groups_json": json.dumps(game_groups),
             "depth": TOP_DEPTH,
         },
     )
 
+
+@app.get("/market", include_in_schema=False)
+async def market_page(request: Request):
+    """Market Simulation page showing all stocks with order books."""
+    from app.models import CustomGame
+
+    games_ref = db_module.db.collection("custom_games")
+    q = games_ref.where(filter=FieldFilter("is_active", "==", True)).where(filter=FieldFilter("is_visible", "==", True))
+    docs = await q.get()
+
+    games = [CustomGame(id=d.id, **d.to_dict()) for d in docs]
+
+    # Build raw game_type map
+    raw_game_types = {}
+    for d in docs:
+        data = d.to_dict()
+        raw_game_types[data.get("symbol", "")] = data.get("game_type")
+
+    # Filter to market-type games only (not GAME* custom games)
+    market_games = []
+    for game in games:
+        gtype = raw_game_types.get(game.symbol)
+        if not gtype:
+            gtype = "other" if game.symbol.startswith("GAME") else "market"
+        if gtype == "market":
+            market_games.append({
+                "symbol": game.symbol,
+                "name": game.name,
+            })
+
+    symbols = [g["symbol"] for g in market_games]
+
+    return templates.TemplateResponse(
+        "market.html",
+        {
+            "request": request,
+            "app_name": "AlphaBook",
+            "symbols": symbols,
+            "symbols_json": json.dumps(symbols),
+            "market_games_json": json.dumps(market_games),
+            "depth": TOP_DEPTH,
+        },
+    )
 
 
 @app.get("/trade/{symbol}", include_in_schema=False)

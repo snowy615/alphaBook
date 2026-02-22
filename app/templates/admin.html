@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -179,12 +180,27 @@
       text-align: center;
     }
 
-    .rank-1 { color: #FFD700; }
-    .rank-2 { color: #C0C0C0; }
-    .rank-3 { color: #CD7F32; }
+    .rank-1 {
+      color: #FFD700;
+    }
 
-    .pnl-positive { color: var(--green); font-weight: 600; }
-    .pnl-negative { color: var(--red); font-weight: 600; }
+    .rank-2 {
+      color: #C0C0C0;
+    }
+
+    .rank-3 {
+      color: #CD7F32;
+    }
+
+    .pnl-positive {
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .pnl-negative {
+      color: var(--red);
+      font-weight: 600;
+    }
 
     .danger-zone {
       background: rgba(255, 107, 107, 0.1);
@@ -205,6 +221,7 @@
     }
   </style>
 </head>
+
 <body>
   <nav class="navbar">
     <div class="container nav-content">
@@ -218,7 +235,8 @@
         <a href="/">Trading</a>
         <span>{{ user.username }}</span>
         <form method="post" action="/logout" style="display:inline; margin-left: 10px;">
-          <button type="submit" style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600;">Quit</button>
+          <button type="submit"
+            style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600;">Quit</button>
         </form>
       </div>
     </div>
@@ -299,12 +317,12 @@
             <td>{{ u.created_at.strftime('%Y-%m-%d') }}</td>
             <td>
               {% if not u.is_admin %}
-                {% if u.is_blacklisted %}
-                <button class="action-btn btn-unblacklist" onclick="unblacklistUser({{ u.id }})">Unban</button>
-                {% else %}
-                <button class="action-btn btn-blacklist" onclick="blacklistUser({{ u.id }})">Ban</button>
-                {% endif %}
-                <button class="action-btn btn-delete" onclick="deleteUser({{ u.id }}, '{{ u.username }}')">Delete</button>
+              {% if u.is_blacklisted %}
+              <button class="action-btn btn-unblacklist" onclick="unblacklistUser({{ u.id }})">Unban</button>
+              {% else %}
+              <button class="action-btn btn-blacklist" onclick="blacklistUser({{ u.id }})">Ban</button>
+              {% endif %}
+              <button class="action-btn btn-delete" onclick="deleteUser({{ u.id }}, '{{ u.username }}')">Delete</button>
               {% endif %}
             </td>
           </tr>
@@ -345,64 +363,53 @@
             <!-- Visible column -->
             <td>
               {% if game.is_visible %}
-                <span class="badge badge-active">Shown</span>
+              <span class="badge badge-active">Shown</span>
               {% else %}
-                <span class="badge">Hidden</span>
+              <span class="badge">Hidden</span>
               {% endif %}
             </td>
 
             <!-- Status column: paused or live -->
             <td>
               {% if game.is_paused %}
-                <span class="badge badge-blacklisted">Paused</span>
+              <span class="badge badge-blacklisted">Paused</span>
               {% else %}
-                <span class="badge badge-active">Live</span>
+              <span class="badge badge-active">Live</span>
               {% endif %}
             </td>
 
             <td>{{ game.created_at.strftime('%Y-%m-%d') }}</td>
             <td>
               <!-- 1) Edit -->
-              <button
-                class="action-btn btn-game"
+              <button class="action-btn btn-game"
                 onclick="editGame({{ game.id }}, '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">
                 Edit
               </button>
 
               <!-- 2) Pause / Resume -->
               {% if game.is_paused %}
-                <button
-                  class="action-btn btn-game"
-                  onclick="resumeGame({{ game.id }}, '{{ game.symbol }}')">
-                  Resume
-                </button>
+              <button class="action-btn btn-game" onclick="resumeGame({{ game.id }}, '{{ game.symbol }}')">
+                Resume
+              </button>
               {% else %}
-                <button
-                  class="action-btn btn-game"
-                  onclick="pauseGame({{ game.id }}, '{{ game.symbol }}')">
-                  Pause
-                </button>
+              <button class="action-btn btn-game" onclick="pauseGame({{ game.id }}, '{{ game.symbol }}')">
+                Pause
+              </button>
               {% endif %}
 
               <!-- 3) Show / Hide -->
               {% if game.is_visible %}
-                <button
-                  class="action-btn btn-game"
-                  onclick="hideGame({{ game.id }}, '{{ game.symbol }}')">
-                  Hide
-                </button>
+              <button class="action-btn btn-game" onclick="hideGame({{ game.id }}, '{{ game.symbol }}')">
+                Hide
+              </button>
               {% else %}
-                <button
-                  class="action-btn btn-game"
-                  onclick="showGame({{ game.id }}, '{{ game.symbol }}')">
-                  Show
-                </button>
+              <button class="action-btn btn-game" onclick="showGame({{ game.id }}, '{{ game.symbol }}')">
+                Show
+              </button>
               {% endif %}
 
               <!-- 4) Delete -->
-              <button
-                class="action-btn btn-game"
-                onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">
                 Delete
               </button>
             </td>
@@ -439,11 +446,21 @@
               <label>Instructions (displayed to users)</label>
               <textarea id="game-instructions" rows="4"
                 placeholder="Trade YES if you think it will rain, NO if you think it won't. Market resolves at 8 PM tonight."
-                required style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; font-family: inherit;"></textarea>
+                required
+                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; font-family: inherit;"></textarea>
             </div>
             <div class="field">
               <label>Expected Value (hidden from users, used for P&L)</label>
               <input type="number" id="game-expected" step="0.01" placeholder="100.00" required />
+            </div>
+            <div class="field">
+              <label>Game Type</label>
+              <select id="game-type"
+                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;">
+                <option value="market">Market Simulation</option>
+                <option value="5os">5Os</option>
+                <option value="other">Other</option>
+              </select>
             </div>
             <div class="small" id="game-hint"></div>
           </div>
@@ -522,7 +539,8 @@
               symbol,
               name,
               instructions,
-              expected_value: expectedValue
+              expected_value: expectedValue,
+              game_type: document.getElementById('game-type').value
             })
           });
 
@@ -697,19 +715,16 @@
       <div class="card">
         <h2>Market News</h2>
         <p class="small" style="color: var(--muted); margin-bottom: 16px;">
-          Admin can publish short messages here. Users will see them on the trading page in the <strong>Market Updates</strong> panel.
+          Admin can publish short messages here. Users will see them on the trading page in the <strong>Market
+            Updates</strong> panel.
         </p>
 
         <!-- Create news -->
         <div style="margin-bottom: 24px;">
           <label for="news-input" class="small" style="display:block; margin-bottom:4px;">New message</label>
           <div style="display:flex; gap:8px;">
-            <input
-              id="news-input"
-              type="text"
-              placeholder="Type market news here..."
-              style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#050814; color:#fff;"
-            />
+            <input id="news-input" type="text" placeholder="Type market news here..."
+              style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#050814; color:#fff;" />
             <button class="btn primary" type="button" onclick="createNews()">Publish</button>
           </div>
           <div id="news-hint" class="small" style="margin-top:6px; color: var(--muted);"></div>
@@ -881,14 +896,14 @@
             const safeContent = escapeHtml(n.content);
             return (
               '<div class="users-row" style="display:flex; align-items:flex-start; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--border);">' +
-                '<div>' +
-                  '<div class="small" style="color:var(--muted);">' + ts + '</div>' +
-                  '<div class="admin-news-content" data-news-id="' + n.id + '">' + safeContent + '</div>' +
-                '</div>' +
-                '<div style="display:flex; gap:6px; flex-shrink:0; margin-left:12px;">' +
-                  '<button class="action-btn" onclick="editNews(' + n.id + ')">Edit</button>' +
-                  '<button class="action-btn btn-delete" onclick="deleteNewsItem(' + n.id + ')">Delete</button>' +
-                '</div>' +
+              '<div>' +
+              '<div class="small" style="color:var(--muted);">' + ts + '</div>' +
+              '<div class="admin-news-content" data-news-id="' + n.id + '">' + safeContent + '</div>' +
+              '</div>' +
+              '<div style="display:flex; gap:6px; flex-shrink:0; margin-left:12px;">' +
+              '<button class="action-btn" onclick="editNews(' + n.id + ')">Edit</button>' +
+              '<button class="action-btn btn-delete" onclick="deleteNewsItem(' + n.id + ')">Delete</button>' +
+              '</div>' +
               '</div>'
             );
           })
@@ -999,4 +1014,5 @@
     });
   </script>
 </body>
+
 </html>

@@ -223,6 +223,7 @@ class GameCreate(BaseModel):
     name: str
     instructions: str
     expected_value: float
+    game_type: str = "market"  # "market", "5os", "other"
 
 
 class NewsCreate(BaseModel):
@@ -253,12 +254,17 @@ async def create_game(
         raise HTTPException(status_code=400, detail=f"Game with symbol {symbol} already exists")
 
     game_id = f"game_{symbol.lower()}"
+    # Validate game_type
+    valid_types = ("market", "5os", "other")
+    gtype = game.game_type if game.game_type in valid_types else "other"
+
     new_game = CustomGame(
         id=game_id,
         symbol=symbol,
         name=game.name,
         instructions=game.instructions,
         expected_value=game.expected_value,
+        game_type=gtype,
         is_active=True,
         created_by=str(admin.id),
         created_at=dt.datetime.utcnow(),

@@ -42,6 +42,7 @@ class CustomGame(BaseModel):
     name: str 
     instructions: str
     expected_value: float
+    game_type: str = Field(default="market")  # "market", "5os", "other"
     is_active: bool = Field(default=True)
     is_visible: bool = Field(default=True)
     is_paused: bool = Field(default=False)

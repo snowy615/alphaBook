@@ -1,16 +1,7 @@
 (function () {
   "use strict";
 
-  // Utility helpers
   const $ = (sel, root = document) => root.querySelector(sel);
-  const fmt = (n) => {
-    if (n === null || n === undefined) return "--";
-    const v = +n;
-    if (!isFinite(v)) return "--";
-    if (Math.abs(v) >= 1000) return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
-    return v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 });
-  };
-
   const fetchJSON = async (url, init) => {
     const r = await fetch(url, { credentials: "include", ...init });
     if (!r.ok) throw new Error(String(r.status));
@@ -19,107 +10,86 @@
   };
 
   let isAuthed = false;
-  const prices = {};
 
-  // Build equity cards
-  function buildEquityCards() {
-    const grid = $("#equityGrid");
+  // ---- Build flat game grid ----
+  function buildGameGrid() {
+    const grid = $("#gameGrid");
     if (!grid) return;
-
     grid.innerHTML = "";
 
-    const SYMS = window.SYMBOLS || [];
-    const GAME_DATA = window.GAME_DATA || {};
+    const groups = window.GAME_GROUPS || {};
 
-    SYMS.forEach(sym => {
-      const isGame = sym.startsWith('GAME');
-      const displayName = isGame && GAME_DATA[sym] ? GAME_DATA[sym].name : sym;
-
-      const card = document.createElement("div");
-      card.className = "equity-card";
-      card.innerHTML = `
-        <div class="equity-icon">${sym.charAt(0)}</div>
-        <div class="equity-name">${displayName}</div>
-        <div class="equity-price" id="price-${sym}">Loading...</div>
-        <div class="equity-change" id="change-${sym}">--</div>
-      `;
-
-      card.addEventListener("click", () => {
-        if (!isAuthed) {
-          // Redirect to login if not authenticated
-          window.location.href = "/login";
-        } else {
-          // Navigate to trading page
-          window.location.href = `/trade/${sym}`;
-        }
+    // 1) Market Simulation card (always first)
+    const marketGames = groups.market || [];
+    if (marketGames.length > 0) {
+      const card = createCard({
+        icon: "📈",
+        name: "Market Simulation",
+        subtitle: `${marketGames.length} stocks`,
+        accentFrom: "#9d8cff",
+        accentTo: "#6c5ce7",
+        onClick: () => navigate("/market"),
       });
-
       grid.appendChild(card);
+    }
 
-      // Fetch initial price
-      fetchPrice(sym);
+    // 2) 5Os card (always present)
+    const fiveOsGames = groups["5os"] || [];
+    const fiveOsComingSoon = fiveOsGames.length === 0 || (fiveOsGames.length === 1 && fiveOsGames[0].coming_soon);
+    const fiveOsCard = createCard({
+      icon: "🎲",
+      name: "5Os",
+      subtitle: fiveOsComingSoon ? "Coming Soon" : `${fiveOsGames.length} games`,
+      accentFrom: "#ffb088",
+      accentTo: "#e17055",
+      comingSoon: fiveOsComingSoon,
+      onClick: fiveOsComingSoon ? null : () => navigate("/5os"),
+    });
+    grid.appendChild(fiveOsCard);
+
+    // 3) Custom games (each as its own card)
+    const otherGames = groups.other || [];
+    otherGames.forEach(game => {
+      const card = createCard({
+        icon: game.name.charAt(0).toUpperCase(),
+        name: game.name,
+        subtitle: "Custom Game",
+        accentFrom: "#88ffcc",
+        accentTo: "#00cec9",
+        onClick: () => navigate(`/trade/${game.symbol}`),
+      });
+      grid.appendChild(card);
     });
   }
 
-  async function fetchPrice(sym) {
-    try {
-      const isGame = sym.startsWith('GAME');
-      let price;
+  function createCard({ icon, name, subtitle, accentFrom, accentTo, comingSoon, onClick }) {
+    const card = document.createElement("div");
+    card.className = "equity-card" + (comingSoon ? " coming-soon-card" : "");
 
-      if (isGame) {
-        // For custom games, fetch order book and calculate mid price
-        const book = await fetchJSON(`/book/${sym}`);
-        const bids = book.bids || [];
-        const asks = book.asks || [];
+    card.innerHTML = `
+      <div class="equity-icon" style="background: radial-gradient(circle at 30% 30%, ${accentFrom}, ${accentTo});">${icon}</div>
+      <div class="equity-name">${name}</div>
+      <div class="equity-price ${comingSoon ? 'coming-soon-label' : ''}" style="font-size: 16px; ${comingSoon ? '' : 'color: var(--muted);'}">${subtitle}</div>
+    `;
 
-        if (bids.length > 0 && asks.length > 0) {
-          const bestBid = parseFloat(bids[0].px);
-          const bestAsk = parseFloat(asks[0].px);
-          price = (bestBid + bestAsk) / 2;
+    if (onClick) {
+      card.addEventListener("click", () => {
+        if (!isAuthed) {
+          window.location.href = "/login";
         } else {
-          // No orders yet, don't show a price
-          price = null;
+          onClick();
         }
-      } else {
-        // For regular equities, use reference price
-        const data = await fetchJSON(`/reference/${sym}`);
-        price = data.price;
-      }
-
-      const priceEl = $(`#price-${sym}`);
-      const changeEl = $(`#change-${sym}`);
-
-      if (priceEl) {
-        if (price !== null && price !== undefined) {
-          const oldPrice = prices[sym];
-          prices[sym] = price;
-
-          priceEl.textContent = `$${fmt(price)}`;
-
-          if (oldPrice !== undefined) {
-            const change = ((price - oldPrice) / oldPrice) * 100;
-            const changeText = (change >= 0 ? "+" : "") + change.toFixed(2) + "%";
-            changeEl.textContent = changeText;
-            changeEl.className = "equity-change " + (change >= 0 ? "positive" : "negative");
-          }
-        } else {
-          // No price available - show placeholder
-          priceEl.textContent = "—";
-          changeEl.textContent = "No orders yet";
-          changeEl.className = "equity-change";
-        }
-      }
-    } catch (e) {
-      console.error(`Error fetching price for ${sym}:`, e);
+      });
     }
+
+    return card;
   }
 
-  function updatePrices() {
-    const SYMS = window.SYMBOLS || [];
-    SYMS.forEach(sym => fetchPrice(sym));
+  function navigate(path) {
+    window.location.href = path;
   }
 
-  // Auth UI
+  // ---- Auth UI ----
   async function initAuthUI() {
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
@@ -138,8 +108,6 @@
       if (userNameEl) userNameEl.textContent = String(nameLike || "user");
       loginBox?.classList.add("hidden");
       userBox?.classList.remove("hidden");
-
-      // Show admin link only for admin users
       if (adminLink) {
         adminLink.style.display = isAdmin ? "inline-block" : "none";
       }
@@ -156,9 +124,6 @@
   }
 
   // Initialize
-  buildEquityCards();
+  buildGameGrid();
   initAuthUI();
-
-  // Update prices every 3 seconds
-  setInterval(updatePrices, 3000);
 })();

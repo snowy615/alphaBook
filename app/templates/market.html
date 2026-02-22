@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Simulation - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <div class="brand">
+            <a href="/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit;">
+                <div class="logo">
+                    <img src="/static/alphabook.png" alt="AlphaBook" class="logo-img">
+                </div>
+                <div class="titles">
+                    <h1>{{ app_name }}</h1>
+                    <div class="subtitle">← Back to Games</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <div id="loginBox" class="hidden">
+                <a href="/login" class="btn">Login</a>
+                <a href="/signup" class="btn">Sign up</a>
+            </div>
+            <div id="userBox" class="hidden">
+                <a href="/admin" id="adminLink" class="btn ghost" style="display:none;">Admin</a>
+                <span id="userName">user</span>
+                <form method="post" action="/logout" style="display:inline">
+                    <button type="submit" class="btn ghost">Logout</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="market-page-header">
+            <h2>📈 Market Simulation</h2>
+            <p>Select a stock to trade</p>
+        </div>
+        <div class="equity-grid" id="stockGrid">
+            <!-- Stock cards will be inserted here by JavaScript -->
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>{{ app_name }} • Market Simulation</p>
+    </div>
+
+    <script>
+        window.SYMBOLS = {{ symbols_json | safe }};
+        window.MARKET_GAMES = {{ market_games_json | safe }};
+    </script>
+    <script src="/static/market.js"></script>
+</body>
+
+</html>
