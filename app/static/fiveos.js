@@ -319,7 +319,7 @@
 
     // Draw charts after DOM is ready
     setTimeout(() => {
-      drawTeamPnlChart(teamRoundPnl);
+      drawTeamPnlChart(teamRoundPnl, playerPnl);
       // Store data for tab switching
       window._chartData = { mySubs, optimal, actuals };
       drawEstimateChart("q1", mySubs, optimal, actuals);
@@ -374,24 +374,49 @@
   };
   // ---- Charts ----
   const TEAM_COLORS = { A: "#6c5ce7", B: "#00cec9" };
+  const PLAYER_COLORS = ["#fd79a8", "#00b894", "#6c5ce7", "#fdcb6e", "#00cec9", "#e17055", "#a29bfe", "#55efc4"];
   let estimateChartInstance = null;
 
-  function drawTeamPnlChart(teamRoundPnl) {
+  function drawTeamPnlChart(teamRoundPnl, playerPnl) {
     const canvas = document.getElementById("teamPnlChart");
     if (!canvas || typeof Chart === "undefined") return;
 
     const labels = ["R1", "R2", "R3", "R4", "R5"];
-    const datasets = Object.entries(teamRoundPnl).map(([team, values]) => ({
-      label: `Team ${team}`,
-      data: values,
-      borderColor: TEAM_COLORS[team] || "#888",
-      backgroundColor: (TEAM_COLORS[team] || "#888") + "33",
-      fill: true,
-      tension: 0.3,
-      pointRadius: 5,
-      pointHoverRadius: 7,
-      borderWidth: 2,
-    }));
+    let datasets;
+
+    const hasTeams = Object.keys(teamRoundPnl).length > 0;
+
+    if (hasTeams) {
+      // Show team-level lines
+      datasets = Object.entries(teamRoundPnl).map(([team, values]) => ({
+        label: `Team ${team}`,
+        data: values,
+        borderColor: TEAM_COLORS[team] || "#888",
+        backgroundColor: (TEAM_COLORS[team] || "#888") + "33",
+        fill: true,
+        tension: 0.3,
+        pointRadius: 5,
+        pointHoverRadius: 7,
+        borderWidth: 2,
+      }));
+    } else {
+      // Fallback: show per-player lines
+      let i = 0;
+      datasets = Object.values(playerPnl || {}).map(p => {
+        const color = PLAYER_COLORS[i++ % PLAYER_COLORS.length];
+        return {
+          label: p.username,
+          data: p.round_pnls || [0, 0, 0, 0, 0],
+          borderColor: color,
+          backgroundColor: color + "33",
+          fill: false,
+          tension: 0.3,
+          pointRadius: 5,
+          pointHoverRadius: 7,
+          borderWidth: 2,
+        };
+      });
+    }
 
     new Chart(canvas, {
       type: "line",
