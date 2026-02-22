@@ -10,7 +10,6 @@
   const RANK_NAMES = { 1: "A", 11: "J", 12: "Q", 13: "K" };
 
   let pollTimer = null;
-  let lastStatus = "";
 
   const fetchJSON = async (url, init) => {
     const r = await fetch(url, { credentials: "include", ...init });
@@ -66,14 +65,22 @@
   }
 
   // ---- Main render ----
+  let lastStateHash = "";
+
+  function stateHash(state) {
+    // Build a lightweight fingerprint of the parts that affect the UI
+    const players = (state.players || []).map(p => p.user_id + p.team).join(",");
+    const subs = Object.keys(state.my_submissions || {}).join(",");
+    return state.status + "|" + players + "|" + subs;
+  }
+
   function render(state) {
     const area = $("#gameArea");
     if (!area) return;
 
-    // Don't re-render active round if nothing changed (preserves input focus)
-    if (state.status === lastStatus && state.status.startsWith("round_")) {
-      return;
-    }
+    const hash = stateHash(state);
+    if (hash === lastStateHash) return; // nothing changed
+    lastStateHash = hash;
 
     if (state.status === "lobby") {
       renderLobby(area, state);
@@ -334,7 +341,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      lastStatus = ""; // force re-render to show submitted state
+      lastStateHash = ""; // force re-render to show submitted state
       poll();
     } catch (e) {
       if (msg) { msg.textContent = String(e.message); msg.style.color = "#ff6b6b"; }
