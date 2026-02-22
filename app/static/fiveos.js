@@ -234,8 +234,11 @@
     const pnl = state.pnl || {};
     const playerPnl = pnl.players || {};
     const teamPnl = pnl.teams || {};
+    const teamRoundPnl = pnl.team_round_pnl || {};
     const winner = pnl.winner;
     const deck15 = state.deck_15 || [];
+    const optimal = state.optimal || {};
+    const mySubs = state.my_submissions || {};
 
     // All cards
     const allCardsHTML = deck15.map(c => renderCard(c)).join("");
@@ -284,6 +287,21 @@
         </div>
 
         <div class="results-section">
+          <h3>Team PnL Over Rounds</h3>
+          <div class="chart-container"><canvas id="teamPnlChart"></canvas></div>
+        </div>
+
+        <div class="results-section">
+          <h3>Your Estimates vs Optimal</h3>
+          <div class="chart-tabs">
+            <button class="chart-tab active" onclick="showQuestionChart('q1', this)">Q1</button>
+            <button class="chart-tab" onclick="showQuestionChart('q2', this)">Q2</button>
+            <button class="chart-tab" onclick="showQuestionChart('q3', this)">Q3</button>
+          </div>
+          <div class="chart-container"><canvas id="estimateChart"></canvas></div>
+        </div>
+
+        <div class="results-section">
           <h3>Player Leaderboard</h3>
           <div class="leaderboard">${leaderboardHTML}</div>
         </div>
@@ -291,6 +309,14 @@
         <a href="/" class="btn" style="margin-top: 24px; display: inline-block;">← Back to Home</a>
       </div>
     `;
+
+    // Draw charts after DOM is ready
+    setTimeout(() => {
+      drawTeamPnlChart(teamRoundPnl);
+      // Store data for tab switching
+      window._chartData = { mySubs, optimal, actuals };
+      drawEstimateChart("q1", mySubs, optimal, actuals);
+    }, 100);
   }
 
   window.submitAnswers = async function () {
@@ -338,6 +364,124 @@
     } catch (e) {
       alert("Error: " + e.message);
     }
+  };
+  // ---- Charts ----
+  const TEAM_COLORS = { A: "#6c5ce7", B: "#00cec9" };
+  let estimateChartInstance = null;
+
+  function drawTeamPnlChart(teamRoundPnl) {
+    const canvas = document.getElementById("teamPnlChart");
+    if (!canvas || typeof Chart === "undefined") return;
+
+    const labels = ["R1", "R2", "R3", "R4", "R5"];
+    const datasets = Object.entries(teamRoundPnl).map(([team, values]) => ({
+      label: `Team ${team}`,
+      data: values,
+      borderColor: TEAM_COLORS[team] || "#888",
+      backgroundColor: (TEAM_COLORS[team] || "#888") + "33",
+      fill: true,
+      tension: 0.3,
+      pointRadius: 5,
+      pointHoverRadius: 7,
+      borderWidth: 2,
+    }));
+
+    new Chart(canvas, {
+      type: "line",
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { labels: { color: "#c8d6e5" } },
+        },
+        scales: {
+          x: { ticks: { color: "#636e72" }, grid: { color: "#2d3436" } },
+          y: {
+            ticks: { color: "#636e72" }, grid: { color: "#2d3436" },
+            title: { display: true, text: "Cumulative PnL", color: "#636e72" }
+          },
+        },
+      },
+    });
+  }
+
+  function drawEstimateChart(qKey, mySubs, optimal, actuals) {
+    const canvas = document.getElementById("estimateChart");
+    if (!canvas || typeof Chart === "undefined") return;
+
+    if (estimateChartInstance) estimateChartInstance.destroy();
+
+    const labels = ["R1", "R2", "R3", "R4", "R5"];
+    const qLabels = { q1: "Q1: Ranks NOT in 15", q2: "Q2: Odd − Even", q3: "Q3: Sum of 15" };
+
+    const myVals = labels.map((_, i) => {
+      const sub = mySubs[String(i + 1)];
+      return sub ? sub[`est_${qKey}`] : null;
+    });
+
+    const optVals = labels.map((_, i) => {
+      const o = optimal[String(i + 1)];
+      return o ? o[qKey] : null;
+    });
+
+    const actualVal = actuals[qKey];
+
+    estimateChartInstance = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [
+          {
+            label: "Your Estimate",
+            data: myVals,
+            borderColor: "#fd79a8",
+            backgroundColor: "#fd79a833",
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            borderWidth: 2,
+            tension: 0.2,
+          },
+          {
+            label: "Optimal (Expected)",
+            data: optVals,
+            borderColor: "#00b894",
+            backgroundColor: "#00b89433",
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            borderWidth: 2,
+            borderDash: [6, 3],
+            tension: 0.2,
+          },
+          {
+            label: "Actual Value",
+            data: labels.map(() => actualVal),
+            borderColor: "#ffeaa7",
+            borderWidth: 1,
+            borderDash: [3, 3],
+            pointRadius: 0,
+            fill: false,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          title: { display: true, text: qLabels[qKey] || qKey, color: "#c8d6e5", font: { size: 14 } },
+          legend: { labels: { color: "#c8d6e5" } },
+        },
+        scales: {
+          x: { ticks: { color: "#636e72" }, grid: { color: "#2d3436" } },
+          y: { ticks: { color: "#636e72" }, grid: { color: "#2d3436" } },
+        },
+      },
+    });
+  }
+
+  window.showQuestionChart = function (qKey, btn) {
+    document.querySelectorAll(".chart-tab").forEach(t => t.classList.remove("active"));
+    if (btn) btn.classList.add("active");
+    const d = window._chartData;
+    if (d) drawEstimateChart(qKey, d.mySubs, d.optimal, d.actuals);
   };
 
   // ---- Init ----

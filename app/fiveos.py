@@ -408,12 +408,106 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         result["actuals"] = compute_actuals(game_data["deck_15"])
         result["deck_15"] = game_data["deck_15"]
         result["pnl"] = await _compute_pnl(game_id, game_data)
+        # Compute optimal estimates for this user based on their known cards
+        result["optimal"] = _compute_optimal_estimates(game_data, uid)
 
     return result
 
 
+def _compute_optimal_estimates(game_data: dict, user_id: str):
+    """Compute optimal estimates per round based on cards known to the player."""
+    deck_15 = game_data["deck_15"]
+    player_cards = game_data.get("player_cards", {})
+    common_cards = game_data.get("common_cards", {})
+    all_ranks = list(range(1, 14))
+    total_rank_sum = sum(all_ranks)  # 91
+
+    optimal = {}
+    known_cards = []  # accumulate known cards across rounds
+
+    for rnd in range(1, 6):
+        rnd_key = str(rnd)
+
+        # Add this round's private card
+        rnd_player_cards = player_cards.get(rnd_key, {})
+        if user_id in rnd_player_cards:
+            known_cards.append(rnd_player_cards[user_id])
+
+        # Add common card for odd rounds
+        if rnd % 2 == 1 and rnd_key in common_cards:
+            known_cards.append(common_cards[rnd_key])
+
+        # Deduplicate known cards (same card could appear twice)
+        known_set = set()
+        unique_known = []
+        for c in known_cards:
+            key = (c["suit"], c["rank"])
+            if key not in known_set:
+                known_set.add(key)
+                unique_known.append(c)
+
+        known_count = len(unique_known)
+        unknown_count = 15 - known_count
+        known_ranks = [c["rank"] for c in unique_known]
+        known_rank_sum = sum(known_ranks)
+
+        # Remaining pool: full deck minus known cards
+        remaining_pool = [c for c in FULL_DECK if (c["suit"], c["rank"]) not in known_set]
+        if remaining_pool:
+            avg_remaining = sum(c["rank"] for c in remaining_pool) / len(remaining_pool)
+        else:
+            avg_remaining = 7  # fallback
+
+        # Q3: sum of 15 cards = known_sum + unknown_count * avg_remaining
+        opt_q3 = known_rank_sum + unknown_count * avg_remaining
+
+        # Q2: odd-rank sum minus even-rank sum
+        known_odd = sum(r for r in known_ranks if r % 2 == 1)
+        known_even = sum(r for r in known_ranks if r % 2 == 0)
+        remaining_odd = [c["rank"] for c in remaining_pool if c["rank"] % 2 == 1]
+        remaining_even = [c["rank"] for c in remaining_pool if c["rank"] % 2 == 0]
+        avg_odd = sum(remaining_odd) / len(remaining_odd) if remaining_odd else 0
+        avg_even = sum(remaining_even) / len(remaining_even) if remaining_even else 0
+        # Expected count of odd vs even among unknown cards
+        total_remaining = len(remaining_pool)
+        if total_remaining > 0:
+            frac_odd = len(remaining_odd) / total_remaining
+        else:
+            frac_odd = 0.5
+        exp_odd_count = unknown_count * frac_odd
+        exp_even_count = unknown_count * (1 - frac_odd)
+        opt_q2 = (known_odd + exp_odd_count * avg_odd) - (known_even + exp_even_count * avg_even)
+
+        # Q1: sum of ranks NOT in the 15 cards
+        # Expected: for each rank 1-13, probability it doesn't appear in 15
+        known_ranks_set = set(known_ranks)
+        # Ranks confirmed present → contribute 0 to Q1
+        # Ranks not yet seen → may or may not appear in unknown cards
+        opt_q1 = 0
+        for rank in all_ranks:
+            if rank in known_ranks_set:
+                continue  # This rank is in the 15, contributes 0
+            # Probability none of the unknown cards have this rank
+            cards_with_rank = sum(1 for c in remaining_pool if c["rank"] == rank)
+            if total_remaining > 0 and unknown_count > 0:
+                # Approximate prob this rank is absent from unknowns
+                prob_absent_per_draw = 1 - cards_with_rank / total_remaining
+                prob_absent_all = prob_absent_per_draw ** unknown_count
+            else:
+                prob_absent_all = 1
+            opt_q1 += rank * prob_absent_all
+
+        optimal[rnd_key] = {
+            "q1": round(opt_q1, 2),
+            "q2": round(opt_q2, 2),
+            "q3": round(opt_q3, 2),
+        }
+
+    return optimal
+
+
 async def _compute_pnl(game_id: str, game_data: dict):
-    """Compute PnL for all players."""
+    """Compute PnL for all players with per-round breakdown."""
     actuals = compute_actuals(game_data["deck_15"])
     medians = game_data.get("round_medians", {})
     players = game_data.get("players", [])
@@ -423,7 +517,7 @@ async def _compute_pnl(game_id: str, game_data: dict):
     docs = await q.get()
 
     # Group submissions by user
-    user_subs = {}  # user_id -> {round: submission}
+    user_subs = {}
     for d in docs:
         s = d.to_dict()
         uid = s["user_id"]
@@ -432,43 +526,68 @@ async def _compute_pnl(game_id: str, game_data: dict):
             user_subs[uid] = {}
         user_subs[uid][rnd] = s
 
-    # Calculate PnL per player
+    # Calculate PnL per player with per-round breakdown
     player_pnl = {}
+    # Track cumulative team PnL per round for chart
+    team_round_pnl = {}  # {team: [round1_cumulative, round2_cumulative, ...]}
+
     for p in players:
         uid = p["user_id"]
         total_pnl = 0
+        round_pnls = []
         subs = user_subs.get(uid, {})
 
         for rnd in range(1, 6):
             rnd_key = str(rnd)
             sub = subs.get(rnd_key)
             rnd_medians = medians.get(rnd_key, {})
-            if not sub or not rnd_medians:
-                continue
+            rnd_pnl = 0
 
-            for qkey in ["q1", "q2", "q3"]:
-                med = rnd_medians.get(qkey, 0)
-                est = sub.get(f"est_{qkey}", 0)
-                actual = actuals[qkey]
+            if sub and rnd_medians:
+                for qkey in ["q1", "q2", "q3"]:
+                    med = rnd_medians.get(qkey, 0)
+                    est = sub.get(f"est_{qkey}", 0)
+                    actual = actuals[qkey]
 
-                # Position is implicit: est > median → long, est < median → short
-                if est > med:
-                    pnl = actual - med   # long
-                elif est < med:
-                    pnl = med - actual   # short
-                else:
-                    pnl = 0              # no position
-                fee = abs(est - med) / 3
-                total_pnl += pnl - fee
+                    # Position: est > median → long, est < median → short
+                    # est == median → random 50/50
+                    if est > med:
+                        pnl = actual - med
+                    elif est < med:
+                        pnl = med - actual
+                    else:
+                        # 50/50 random
+                        if random.random() < 0.5:
+                            pnl = actual - med
+                        else:
+                            pnl = med - actual
+                    fee = abs(est - med) / 3
+                    rnd_pnl += pnl - fee
+
+            total_pnl += rnd_pnl
+            round_pnls.append(round(total_pnl, 2))  # cumulative
 
         player_pnl[uid] = {
             "user_id": uid,
             "username": p["username"],
             "team": p.get("team", ""),
             "pnl": round(total_pnl, 2),
+            "round_pnls": round_pnls,
         }
 
-    # Team PnL
+        # Add to team cumulative
+        team = p.get("team", "")
+        if team:
+            if team not in team_round_pnl:
+                team_round_pnl[team] = [0, 0, 0, 0, 0]
+            for i in range(5):
+                team_round_pnl[team][i] += round_pnls[i] if i < len(round_pnls) else 0
+
+    # Round team values
+    for team in team_round_pnl:
+        team_round_pnl[team] = [round(v, 2) for v in team_round_pnl[team]]
+
+    # Total team PnL
     team_pnl = {}
     for uid, data in player_pnl.items():
         team = data["team"]
@@ -478,5 +597,6 @@ async def _compute_pnl(game_id: str, game_data: dict):
     return {
         "players": player_pnl,
         "teams": team_pnl,
+        "team_round_pnl": team_round_pnl,
         "winner": max(team_pnl, key=team_pnl.get) if team_pnl else None,
     }
