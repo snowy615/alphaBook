@@ -37,7 +37,8 @@
             <div class="rules-section">
                 <h3>🃏 Setup</h3>
                 <p>From a standard 52-card deck, <strong>15 cards</strong> are randomly selected. These are the
-                    <strong>final cards</strong> — they never change during the game.</p>
+                    <strong>final cards</strong> — they never change during the game.
+                </p>
                 <p>Card values: A = 1, 2–10 = face value, J = 11, Q = 12, K = 13</p>
             </div>
 
@@ -75,6 +76,25 @@
 
             <hr style="border-color: var(--border); margin: 32px 0;">
 
+            <!-- Admin: Create Game (hidden for non-admins) -->
+            <div id="adminCreate" class="hidden">
+                <div class="rules-section" style="border-color: var(--brand);">
+                    <h3>🛠️ Admin — Create Game</h3>
+                    <p>Create a new 5Os game session. Players will use the generated code to join.</p>
+                    <button onclick="createGame()" class="btn" id="createBtn" style="margin-top: 12px;">Create New
+                        Game</button>
+                    <div id="createResult" class="hidden" style="margin-top: 16px; text-align: center;">
+                        <p style="margin-bottom: 4px; color: var(--muted); font-size: 13px;">GAME CREATED — SHARE THIS
+                            CODE</p>
+                        <div id="createdCode"
+                            style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: var(--brand); margin: 8px 0;">
+                        </div>
+                        <a id="createdLink" href="#" class="btn" style="margin-top: 8px;">Go to Game Lobby →</a>
+                    </div>
+                </div>
+                <hr style="border-color: var(--border); margin: 32px 0;">
+            </div>
+
             <div class="fiveos-join">
                 <h3>Join a Game</h3>
                 <p>Enter the 6-character code from your game admin:</p>
@@ -105,11 +125,41 @@
                 document.getElementById("loginBox").classList.add("hidden");
                 document.getElementById("userBox").classList.remove("hidden");
                 document.getElementById("userName").textContent = me.username || "user";
+                // Show admin panel if admin
+                if (me.is_admin) {
+                    document.getElementById("adminCreate").classList.remove("hidden");
+                }
             } catch {
                 document.getElementById("loginBox").classList.remove("hidden");
                 document.getElementById("userBox").classList.add("hidden");
             }
         })();
+
+        async function createGame() {
+            const btn = document.getElementById("createBtn");
+            btn.disabled = true;
+            btn.textContent = "Creating...";
+            try {
+                const r = await fetch("/5os/create", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    document.getElementById("createdCode").textContent = data.join_code;
+                    document.getElementById("createdLink").href = `/5os/game/${data.game_id}`;
+                    document.getElementById("createResult").classList.remove("hidden");
+                    btn.textContent = "✅ Created!";
+                } else {
+                    btn.textContent = data.detail || "Error";
+                    setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+                }
+            } catch (e) {
+                btn.textContent = "Error";
+                setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+            }
+        }
 
         async function joinGame() {
             const code = document.getElementById("joinCode").value.trim();
