@@ -55,3 +55,28 @@ class MarketNews(BaseModel):
     content: str 
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
 
+
+class FiveOsGame(BaseModel):
+    id: Optional[str] = None
+    join_code: str = ""
+    status: str = "lobby"  # lobby, round_1..round_5, finished
+    deck_15: list = Field(default_factory=list)  # [{suit, rank}, ...]
+    common_cards: dict = Field(default_factory=dict)  # {round: {suit, rank}}
+    player_cards: dict = Field(default_factory=dict)  # {round: {user_id: {suit, rank}}}
+    round_medians: dict = Field(default_factory=dict)  # {round: {q1, q2, q3}}
+    players: list = Field(default_factory=list)  # [{user_id, username, team}]
+    created_by: str = ""
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
+
+
+class FiveOsSubmission(BaseModel):
+    id: Optional[str] = None
+    game_id: str = ""
+    round: int = 0
+    user_id: str = ""
+    est_q1: float = 0  # sum of ranks NOT in 15
+    est_q2: float = 0  # odd-rank sum minus even-rank sum
+    est_q3: float = 0  # sum of 15 cards
+    pos_q1: str = "long"  # long / short
+    pos_q2: str = "long"
+    pos_q3: str = "long"

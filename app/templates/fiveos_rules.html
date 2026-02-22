@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5Os - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <div class="brand">
+            <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+                <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+                <div class="titles">
+                    <h1>{{ app_name }}</h1>
+                    <div class="subtitle">← Back to Games</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <div id="loginBox" class="hidden"><a href="/login" class="btn">Login</a><a href="/signup" class="btn">Sign
+                    up</a></div>
+            <div id="userBox" class="hidden">
+                <span id="userName">user</span>
+                <form method="post" action="/logout" style="display:inline"><button type="submit"
+                        class="btn ghost">Logout</button></form>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="fiveos-rules">
+            <h2>🎲 5Os — Rules</h2>
+
+            <div class="rules-section">
+                <h3>🃏 Setup</h3>
+                <p>From a standard 52-card deck, <strong>15 cards</strong> are randomly selected. These are the
+                    <strong>final cards</strong> — they never change during the game.</p>
+                <p>Card values: A = 1, 2–10 = face value, J = 11, Q = 12, K = 13</p>
+            </div>
+
+            <div class="rules-section">
+                <h3>🔄 5 Rounds</h3>
+                <p>Each round, every player is shown <strong>one private card</strong> from the 15 (different players
+                    may see different cards).</p>
+                <p>In <strong>odd rounds</strong> (1, 3, 5), an additional <strong>common card</strong> is shown to
+                    everyone.</p>
+            </div>
+
+            <div class="rules-section">
+                <h3>📊 3 Questions</h3>
+                <p>At the end of each round, submit your expected values for:</p>
+                <ol>
+                    <li><strong>Q1</strong>: Sum of ranks <em>NOT</em> in the 15 cards</li>
+                    <li><strong>Q2</strong>: (Sum of odd-ranked cards) − (Sum of even-ranked cards) in the 15</li>
+                    <li><strong>Q3</strong>: Total sum of all 15 card ranks</li>
+                </ol>
+            </div>
+
+            <div class="rules-section">
+                <h3>📈 Trading</h3>
+                <p>For each question, choose <strong>Long</strong> (you think the actual value is higher than the group
+                    median) or <strong>Short</strong> (lower).</p>
+                <p><strong>Transaction fee</strong> = |your estimate − median| ÷ 3</p>
+                <p><strong>PnL per question</strong> = (actual − median) × position − fee</p>
+            </div>
+
+            <div class="rules-section">
+                <h3>🏆 Winning</h3>
+                <p>At the end of 5 rounds, total PnL is summed across all rounds and questions. The <strong>team with
+                        the highest combined PnL wins!</strong></p>
+            </div>
+
+            <hr style="border-color: var(--border); margin: 32px 0;">
+
+            <div class="fiveos-join">
+                <h3>Join a Game</h3>
+                <p>Enter the 6-character code from your game admin:</p>
+                <div class="join-form">
+                    <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                    <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
+                </div>
+                <p id="joinMsg" class="small" style="margin-top: 8px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>{{ app_name }} • 5Os Card Game</p>
+    </div>
+
+    <script>
+        // Auth UI
+        (async function () {
+            const fetchJSON = async (url, init) => {
+                const r = await fetch(url, { credentials: "include", ...init });
+                if (!r.ok) throw new Error(String(r.status));
+                return r.json();
+            };
+            try {
+                const me = await fetchJSON("/me");
+                document.getElementById("loginBox").classList.add("hidden");
+                document.getElementById("userBox").classList.remove("hidden");
+                document.getElementById("userName").textContent = me.username || "user";
+            } catch {
+                document.getElementById("loginBox").classList.remove("hidden");
+                document.getElementById("userBox").classList.add("hidden");
+            }
+        })();
+
+        async function joinGame() {
+            const code = document.getElementById("joinCode").value.trim();
+            const msg = document.getElementById("joinMsg");
+            if (!code || code.length < 4) { msg.textContent = "Enter a valid code"; return; }
+            try {
+                const r = await fetch("/5os/join", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ join_code: code }),
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    window.location.href = `/5os/game/${data.game_id}`;
+                } else {
+                    msg.textContent = data.detail || "Could not join game";
+                    msg.style.color = "#ff6b6b";
+                }
+            } catch (e) {
+                msg.textContent = "Error joining game";
+                msg.style.color = "#ff6b6b";
+            }
+        }
+
+        document.getElementById("joinCode").addEventListener("keydown", e => {
+            if (e.key === "Enter") joinGame();
+        });
+    </script>
+</body>
+
+</html>

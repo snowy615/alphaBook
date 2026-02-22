@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5Os Game - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <div class="brand">
+            <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+                <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+                <div class="titles">
+                    <h1>{{ app_name }}</h1>
+                    <div class="subtitle">5Os Game</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <span id="userName">user</span>
+            <form method="post" action="/logout" style="display:inline"><button type="submit"
+                    class="btn ghost">Logout</button></form>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="gameArea">
+            <div class="fiveos-loading">Loading game...</div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>{{ app_name }} • 5Os Card Game</p>
+    </div>
+
+    <script>
+        window.GAME_ID = "{{ game_id }}";
+    </script>
+    <script src="/static/fiveos.js"></script>
+</body>
+
+</html>

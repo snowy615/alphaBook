@@ -34,16 +34,13 @@
     }
 
     // 2) 5Os card (always present)
-    const fiveOsGames = groups["5os"] || [];
-    const fiveOsComingSoon = fiveOsGames.length === 0 || (fiveOsGames.length === 1 && fiveOsGames[0].coming_soon);
     const fiveOsCard = createCard({
       icon: "🎲",
       name: "5Os",
-      subtitle: fiveOsComingSoon ? "Coming Soon" : `${fiveOsGames.length} games`,
+      subtitle: "Card Game",
       accentFrom: "#ffb088",
       accentTo: "#e17055",
-      comingSoon: fiveOsComingSoon,
-      onClick: fiveOsComingSoon ? null : () => navigate("/5os"),
+      onClick: () => navigate("/5os"),
     });
     grid.appendChild(fiveOsCard);
 
