@@ -70,9 +70,6 @@ class SubmitRequest(BaseModel):
     est_q1: float
     est_q2: float
     est_q3: float
-    pos_q1: str  # "long" or "short"
-    pos_q2: str
-    pos_q3: str
 
 
 class AssignTeamRequest(BaseModel):
@@ -236,13 +233,21 @@ async def advance_round(game_id: str, user: User = Depends(current_user)):
 
     # Generate player cards for the new round
     deck_15 = game_data["deck_15"]
+    common_cards = game_data.get("common_cards", {})
     players = game_data.get("players", [])
     player_cards = game_data.get("player_cards", {})
 
+    # Build pool excluding common cards so no player gets a common card
+    common_set = set()
+    for rnd_key, cc in common_cards.items():
+        common_set.add((cc["suit"], cc["rank"]))
+    pool = [c for c in deck_15 if (c["suit"], c["rank"]) not in common_set]
+    if not pool:
+        pool = deck_15  # fallback if all 15 are common (shouldn't happen)
+
     round_cards = {}
     for p in players:
-        # Each player gets a random card from the 15
-        card = random.choice(deck_15)
+        card = random.choice(pool)
         round_cards[p["user_id"]] = card
 
     player_cards[str(next_round)] = round_cards
@@ -314,11 +319,6 @@ async def submit_answers(game_id: str, req: SubmitRequest, user: User = Depends(
     if existing:
         raise HTTPException(status_code=400, detail="Already submitted for this round")
 
-    # Validate positions
-    for pos in [req.pos_q1, req.pos_q2, req.pos_q3]:
-        if pos not in ("long", "short"):
-            raise HTTPException(status_code=400, detail="Position must be 'long' or 'short'")
-
     submission = {
         "game_id": game_id,
         "round": current_round,
@@ -326,9 +326,6 @@ async def submit_answers(game_id: str, req: SubmitRequest, user: User = Depends(
         "est_q1": req.est_q1,
         "est_q2": req.est_q2,
         "est_q3": req.est_q3,
-        "pos_q1": req.pos_q1,
-        "pos_q2": req.pos_q2,
-        "pos_q3": req.pos_q3,
     }
 
     await db_module.db.collection("fiveos_submissions").document().set(submission)
@@ -404,7 +401,6 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         s = sd.to_dict()
         result["my_submissions"][str(s["round"])] = {
             "est_q1": s["est_q1"], "est_q2": s["est_q2"], "est_q3": s["est_q3"],
-            "pos_q1": s["pos_q1"], "pos_q2": s["pos_q2"], "pos_q3": s["pos_q3"],
         }
 
     # If game is finished, include actual values and PnL
@@ -453,11 +449,15 @@ async def _compute_pnl(game_id: str, game_data: dict):
             for qkey in ["q1", "q2", "q3"]:
                 med = rnd_medians.get(qkey, 0)
                 est = sub.get(f"est_{qkey}", 0)
-                pos = sub.get(f"pos_{qkey}", "long")
                 actual = actuals[qkey]
 
-                settlement = actual - med
-                pnl = settlement if pos == "long" else -settlement
+                # Position is implicit: est > median → long, est < median → short
+                if est > med:
+                    pnl = actual - med   # long
+                elif est < med:
+                    pnl = med - actual   # short
+                else:
+                    pnl = 0              # no position
                 fee = abs(est - med) / 3
                 total_pnl += pnl - fee
 
