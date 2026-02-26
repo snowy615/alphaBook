@@ -671,3 +671,6 @@ app.include_router(files.router)
 
 from app import fiveos
 app.include_router(fiveos.router)
+
+from app import headline
+app.include_router(headline.router)

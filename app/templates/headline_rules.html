@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ app_name }} — Headline</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <a href="/" class="logo">{{ app_name }}</a>
+        <div id="loginBox" class="hidden"><a href="/login" class="btn small ghost">Login</a></div>
+        <div id="userBox" class="hidden"><span id="userName"></span></div>
+    </div>
+
+    <div class="page-container" style="max-width: 720px;">
+        <div class="section-card">
+            <h2>📰 Headline Trading Game</h2>
+            <p style="color: var(--muted); margin-bottom: 16px;">
+                Trade a single futures contract as breaking news headlines move the market.
+                Buy low, sell high — or short the top and ride it down. Your PnL updates live!
+            </p>
+
+            <div class="rules-section">
+                <h3>📋 How It Works</h3>
+                <ol style="color: var(--text); line-height: 1.8; padding-left: 20px;">
+                    <li><strong>Admin picks a scenario</strong> (Tech IPO, Oil, Crypto) and starts the game</li>
+                    <li>Price starts at <strong>$100</strong> and moves every second via random walk</li>
+                    <li><strong>News headlines</strong> pop up at random times — they move the price!</li>
+                    <li>Adjust your position anytime: <strong>-1000</strong> (max short) to <strong>+1000</strong> (max
+                        long)</li>
+                    <li>Game lasts <strong>5 minutes</strong> — highest PnL wins! 🏆</li>
+                </ol>
+            </div>
+
+            <div class="rules-section">
+                <h3>💰 PnL Calculation</h3>
+                <p style="color: var(--text);">
+                    Your PnL is calculated in real-time based on your trades:<br>
+                    <code style="color: var(--brand);">PnL = Σ (contracts × (current_price - entry_price))</code><br>
+                    <span style="color: var(--muted); font-size: 13px;">
+                        Each time you change position, a new trade is recorded at the current price.
+                    </span>
+                </p>
+            </div>
+
+            <hr style="border-color: var(--border); margin: 32px 0;">
+
+            <!-- Admin: Create Game -->
+            <div id="adminCreate" class="hidden">
+                <div class="rules-section" style="border-color: var(--brand);">
+                    <h3>🛠️ Admin — Create Game</h3>
+                    <p>Choose a scenario template:</p>
+                    <div id="templatePicker" style="display: flex; flex-direction: column; gap: 8px; margin: 12px 0;">
+                    </div>
+                    <button onclick="createGame()" class="btn" id="createBtn" style="margin-top: 12px;">Create New
+                        Game</button>
+                    <div id="createResult" class="hidden" style="margin-top: 16px; text-align: center;">
+                        <p style="margin-bottom: 4px; color: var(--muted); font-size: 13px;">GAME CREATED — SHARE THIS
+                            CODE</p>
+                        <div id="createdCode"
+                            style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: var(--brand); margin: 8px 0;">
+                        </div>
+                        <a id="createdLink" href="#" class="btn" style="margin-top: 8px;">Go to Game Lobby →</a>
+                    </div>
+                </div>
+                <hr style="border-color: var(--border); margin: 32px 0;">
+            </div>
+
+            <div class="fiveos-join">
+                <h3>Join a Game</h3>
+                <p>Enter the 6-character code from your game admin:</p>
+                <div class="join-form">
+                    <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                    <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
+                </div>
+                <p id="joinMsg" class="small" style="margin-top: 8px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>{{ app_name }} • Headline Trading Game</p>
+    </div>
+
+    <script>
+        let selectedTemplate = "";
+
+        (async function () {
+            const fetchJSON = async (url, init) => {
+                const r = await fetch(url, { credentials: "include", ...init });
+                if (!r.ok) throw new Error(String(r.status));
+                return r.json();
+            };
+            try {
+                const me = await fetchJSON("/me");
+                document.getElementById("loginBox").classList.add("hidden");
+                document.getElementById("userBox").classList.remove("hidden");
+                document.getElementById("userName").textContent = me.username || "user";
+                if (me.is_admin) {
+                    document.getElementById("adminCreate").classList.remove("hidden");
+                    // Load templates
+                    const tmpls = await fetchJSON("/headline/templates");
+                    const picker = document.getElementById("templatePicker");
+                    for (const [key, tmpl] of Object.entries(tmpls)) {
+                        const btn = document.createElement("button");
+                        btn.className = "btn ghost small";
+                        btn.style.textAlign = "left";
+                        btn.style.padding = "12px 16px";
+                        btn.innerHTML = `<strong>${tmpl.name}</strong><br><span style="color:var(--muted);font-size:12px;">${tmpl.description}</span>`;
+                        btn.onclick = () => {
+                            picker.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+                            btn.classList.add("active");
+                            selectedTemplate = key;
+                        };
+                        picker.appendChild(btn);
+                    }
+                }
+            } catch {
+                document.getElementById("loginBox").classList.remove("hidden");
+                document.getElementById("userBox").classList.add("hidden");
+            }
+        })();
+
+        async function createGame() {
+            if (!selectedTemplate) { alert("Pick a scenario first!"); return; }
+            const btn = document.getElementById("createBtn");
+            btn.disabled = true; btn.textContent = "Creating...";
+            try {
+                const r = await fetch("/headline/create", {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ template: selectedTemplate }),
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    document.getElementById("createdCode").textContent = data.join_code;
+                    document.getElementById("createdLink").href = `/headline/game/${data.game_id}`;
+                    document.getElementById("createResult").classList.remove("hidden");
+                    btn.textContent = "✅ Created!";
+                } else {
+                    btn.textContent = data.detail || "Error";
+                    setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+                }
+            } catch (e) {
+                btn.textContent = "Error";
+                setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+            }
+        }
+
+        async function joinGame() {
+            const code = document.getElementById("joinCode").value.trim();
+            const msg = document.getElementById("joinMsg");
+            if (!code || code.length < 4) { msg.textContent = "Enter a valid code"; return; }
+            try {
+                const r = await fetch("/headline/join", {
+                    method: "POST", credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ join_code: code }),
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    window.location.href = `/headline/game/${data.game_id}`;
+                } else {
+                    msg.textContent = data.detail || "Could not join"; msg.style.color = "#ff6b6b";
+                }
+            } catch (e) {
+                msg.textContent = "Error joining"; msg.style.color = "#ff6b6b";
+            }
+        }
+
+        document.getElementById("joinCode").addEventListener("keydown", e => { if (e.key === "Enter") joinGame(); });
+    </script>
+</body>
+
+</html>

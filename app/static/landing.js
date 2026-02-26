@@ -44,6 +44,17 @@
     });
     grid.appendChild(fiveOsCard);
 
+    // 3) Headline card (always present)
+    const headlineCard = createCard({
+      icon: "📰",
+      name: "Headline",
+      subtitle: "Trading Game",
+      accentFrom: "#a29bfe",
+      accentTo: "#6c5ce7",
+      onClick: () => navigate("/headline"),
+    });
+    grid.appendChild(headlineCard);
+
     // 3) Custom games (each as its own card)
     const otherGames = groups.other || [];
     otherGames.forEach(game => {

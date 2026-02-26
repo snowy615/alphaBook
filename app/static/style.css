@@ -1612,3 +1612,260 @@ body {
 .chart-tab:hover:not(.active) {
   background: rgba(255, 255, 255, 0.05);
 }
+
+/* ---- Headline Game ---- */
+.hl-loading {
+  text-align: center;
+  padding: 60px;
+  color: var(--muted);
+}
+
+.hl-game {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.hl-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.hl-header h2 {
+  margin: 0;
+}
+
+.hl-timer {
+  font-size: 28px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 20px;
+}
+
+.hl-grid {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  gap: 20px;
+}
+
+.hl-left,
+.hl-right {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.hl-price-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+  text-align: center;
+}
+
+.hl-price-label {
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.hl-price-display {
+  font-size: 36px;
+  font-weight: 800;
+  color: var(--text);
+  margin: 4px 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-price-change {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.hl-trade-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 20px;
+}
+
+.hl-pnl-row,
+.hl-position-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.hl-pnl-label,
+.hl-pos-label {
+  font-size: 13px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.hl-pnl-value {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-pos-value {
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.hl-slider-row {
+  margin: 12px 0 8px;
+}
+
+.hl-slider-row input[type="range"] {
+  width: 100%;
+  accent-color: var(--brand);
+  height: 6px;
+  cursor: pointer;
+}
+
+.hl-slider-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.hl-trade-btns {
+  display: flex;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.hl-trade-btns .btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 8px 4px;
+  white-space: nowrap;
+}
+
+.hl-btn-short {
+  background: #d63031 !important;
+}
+
+.hl-btn-sell {
+  background: #e17055 !important;
+}
+
+.hl-btn-flat {
+  background: #636e72 !important;
+}
+
+.hl-btn-buy {
+  background: #00b894 !important;
+}
+
+.hl-btn-long {
+  background: #00cec9 !important;
+}
+
+.hl-news-section,
+.hl-lb-section {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.hl-news-section h3,
+.hl-lb-section h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+
+.hl-news-feed {
+  max-height: 280px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.hl-news-item {
+  padding: 10px 12px;
+  border-radius: 8px;
+  border-left: 3px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.hl-news-item.bullish {
+  border-left-color: #00b894;
+}
+
+.hl-news-item.bearish {
+  border-left-color: #ff6b6b;
+}
+
+.hl-news-time {
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.hl-news-caption {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+}
+
+.hl-news-detail {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 4px;
+  line-height: 1.4;
+}
+
+.hl-leaderboard {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hl-lb-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.hl-lb-first {
+  background: rgba(108, 92, 231, 0.15);
+}
+
+.hl-lb-pos {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 768px) {
+  .hl-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .hl-trade-btns {
+    flex-wrap: wrap;
+  }
+
+  .hl-trade-btns .btn {
+    flex: 1 1 30%;
+  }
+}
