@@ -110,15 +110,19 @@ def generate_join_code():
 
 
 def generate_price_path(template_key: str, duration: int = 300):
-    """Generate the full price path and news schedule for a game."""
+    """Generate the full price path and news schedule for a game.
+
+    News creates a directional bias in the random walk rather than an
+    instant jump.  E.g. impact = +0.08 → prob_up ≈ 0.74 for the next
+    min(45s, next_news).  Between active effects the walk is 50/50.
+    """
     tmpl = TEMPLATES[template_key]
     start_price = tmpl["start_price"]
     news_items = list(tmpl["news"])
     random.shuffle(news_items)
 
-    # Schedule news at random times (spread across the duration, not too early/late)
+    # Schedule news at random times (spread across the duration)
     num_news = len(news_items)
-    # Place news between 10% and 90% of the game
     earliest = int(duration * 0.10)
     latest = int(duration * 0.90)
     news_times = sorted(random.sample(range(earliest, latest), min(num_news, latest - earliest)))
@@ -132,20 +136,40 @@ def generate_price_path(template_key: str, duration: int = 300):
             "impact": news_items[i]["impact"],
         })
 
+    # Pre-compute bias windows: each news creates a bias lasting
+    # min(45 ticks, ticks_until_next_news)
+    BIAS_DURATION = 45  # seconds
+    bias_at_tick = {}  # tick → prob_up (0.5 = neutral)
+
+    for idx, ns in enumerate(news_schedule):
+        start_t = ns["time"]
+        # End = min(start + 45, next_news_time)
+        if idx + 1 < len(news_schedule):
+            end_t = min(start_t + BIAS_DURATION, news_schedule[idx + 1]["time"])
+        else:
+            end_t = min(start_t + BIAS_DURATION, duration)
+
+        # Map impact → probability of going up
+        # impact * 3 gives nice range: ±0.04→±0.12 shift, ±0.10→±0.30 shift
+        prob_up = max(0.10, min(0.90, 0.5 + ns["impact"] * 3))
+
+        for t in range(start_t, end_t):
+            bias_at_tick[t] = prob_up
+
     # Build price path tick by tick
     prices = [start_price]
     noise_std = 0.003  # base volatility per tick
 
-    # Create a set of news times for quick lookup
-    news_at_tick = {}
-    for ns in news_schedule:
-        news_at_tick[ns["time"]] = ns["impact"]
-
     price = start_price
     for t in range(1, duration + 1):
-        noise = random.gauss(0, noise_std)
-        jump = news_at_tick.get(t, 0)
-        price = price * (1 + noise + jump)
+        abs_move = abs(random.gauss(0, noise_std))
+        prob_up = bias_at_tick.get(t, 0.5)  # default 50/50
+
+        if random.random() < prob_up:
+            price = price * (1 + abs_move)
+        else:
+            price = price * (1 - abs_move)
+
         price = max(price, 1)  # floor at 1
         prices.append(round(price, 2))
 
