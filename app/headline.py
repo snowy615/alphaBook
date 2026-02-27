@@ -465,9 +465,9 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
 
     # Released news (only show news that has happened)
     released_news = [n for n in news_schedule if n["time"] <= tick]
-    # During active, hide analysis; show it only when finished
+    # During active, only show time/caption/detail; reveal everything when finished
     if status != "finished":
-        result["news"] = [{k: v for k, v in n.items() if k != "analysis"} for n in released_news]
+        result["news"] = [{"time": n["time"], "caption": n["caption"], "detail": n["detail"]} for n in released_news]
     else:
         result["news"] = released_news
         # Also include ALL news for the analysis page (even unreleased ones)

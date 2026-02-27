@@ -245,17 +245,13 @@
       const news = state.news || [];
       newsEl.innerHTML = news.length === 0
         ? '<p class="muted">No news yet... stay alert!</p>'
-        : news.slice().reverse().map(n => {
-          const str = n.strength || '';
-          const strBadge = str ? `<span class="hl-news-strength hl-str-${str}">${str.charAt(0).toUpperCase() + str.slice(1)}</span>` : '';
-          return `
-          <div class="hl-news-item ${n.impact > 0 ? 'bullish' : 'bearish'}">
-            <div class="hl-news-time">${formatTime(n.time)} ${strBadge}</div>
-            <div class="hl-news-caption">${n.impact > 0 ? '🟢' : '🔴'} ${n.caption}</div>
+        : news.slice().reverse().map(n => `
+          <div class="hl-news-item">
+            <div class="hl-news-time">${formatTime(n.time)}</div>
+            <div class="hl-news-caption">📰 ${n.caption}</div>
             <div class="hl-news-detail">${n.detail}</div>
           </div>
-        `;
-        }).join("");
+        `).join("");
     }
 
     // Update leaderboard
