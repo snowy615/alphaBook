@@ -107,13 +107,16 @@
                     const picker = document.getElementById("templatePicker");
                     for (const [key, tmpl] of Object.entries(tmpls)) {
                         const btn = document.createElement("button");
-                        btn.className = "btn ghost small";
-                        btn.style.textAlign = "left";
-                        btn.style.padding = "12px 16px";
-                        btn.innerHTML = `<strong>${tmpl.name}</strong><br><span style="color:var(--muted);font-size:12px;">${tmpl.description}</span>`;
-                        btn.onclick = () => {
-                            picker.querySelectorAll("button").forEach(b => b.classList.remove("active"));
-                            btn.classList.add("active");
+                        btn.className = "hl-tmpl-btn";
+                        btn.innerHTML = `<span class="hl-tmpl-check">○</span><div><strong>${tmpl.name}</strong><br><span style="color:var(--muted);font-size:12px;">${tmpl.description}</span></div>`;
+                        btn.onclick = (e) => {
+                            e.preventDefault();
+                            picker.querySelectorAll(".hl-tmpl-btn").forEach(b => {
+                                b.style.borderColor = "var(--border)";
+                                b.querySelector(".hl-tmpl-check").textContent = "○";
+                            });
+                            btn.style.borderColor = "#00b894";
+                            btn.querySelector(".hl-tmpl-check").textContent = "✅";
                             selectedTemplate = key;
                         };
                         picker.appendChild(btn);
