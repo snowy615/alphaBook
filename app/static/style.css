@@ -1894,3 +1894,109 @@ body {
     flex: 1 1 30%;
   }
 }
+
+/* News strength badges (active game) */
+.hl-news-strength {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  color: #0a0a0a;
+}
+
+.hl-str-strong {
+  background: #e84393;
+  color: #fff;
+}
+
+.hl-str-moderate {
+  background: #fdcb6e;
+}
+
+.hl-str-weak {
+  background: #636e72;
+  color: #ddd;
+}
+
+/* Analysis cards (finished view) */
+.hl-analysis-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.hl-analysis-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border-left: 4px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.hl-analysis-card.bullish {
+  border-left-color: #00b894;
+}
+
+.hl-analysis-card.bearish {
+  border-left-color: #ff6b6b;
+}
+
+.hl-analysis-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.hl-analysis-time {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.hl-analysis-dir {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.hl-analysis-strength {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 4px;
+  color: #0a0a0a;
+}
+
+.hl-analysis-caption {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.hl-analysis-detail {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 6px;
+  line-height: 1.5;
+}
+
+.hl-analysis-prob {
+  font-size: 12px;
+  color: var(--brand);
+  margin-bottom: 8px;
+}
+
+.hl-analysis-text {
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.6;
+  padding: 10px 12px;
+  background: rgba(108, 92, 231, 0.08);
+  border-radius: 6px;
+  border-left: 3px solid var(--brand);
+}

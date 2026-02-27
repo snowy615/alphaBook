@@ -39,7 +39,7 @@
 
   function startPolling() {
     poll();
-    pollTimer = setInterval(poll, 1000); // 1s for real-time feel
+    pollTimer = setInterval(poll, 1000);
   }
 
   // State hash for smart re-render
@@ -239,19 +239,23 @@
     // Update chart
     updatePriceChart(state.price_history || []);
 
-    // Update news feed
+    // Update news feed — show strength badge during active game
     const newsEl = $("#hl-news-feed");
     if (newsEl) {
       const news = state.news || [];
       newsEl.innerHTML = news.length === 0
         ? '<p class="muted">No news yet... stay alert!</p>'
-        : news.slice().reverse().map(n => `
+        : news.slice().reverse().map(n => {
+          const str = n.strength || '';
+          const strBadge = str ? `<span class="hl-news-strength hl-str-${str}">${str.charAt(0).toUpperCase() + str.slice(1)}</span>` : '';
+          return `
           <div class="hl-news-item ${n.impact > 0 ? 'bullish' : 'bearish'}">
-            <div class="hl-news-time">${formatTime(n.time)}</div>
+            <div class="hl-news-time">${formatTime(n.time)} ${strBadge}</div>
             <div class="hl-news-caption">${n.impact > 0 ? '🟢' : '🔴'} ${n.caption}</div>
             <div class="hl-news-detail">${n.detail}</div>
           </div>
-        `).join("");
+        `;
+        }).join("");
     }
 
     // Update leaderboard
@@ -351,13 +355,36 @@
       </div>
     `).join("");
 
-    const newsHTML = (state.news || []).map(n => `
-      <div class="hl-news-item ${n.impact > 0 ? 'bullish' : 'bearish'}">
-        <div class="hl-news-time">${formatTime(n.time)}</div>
-        <div class="hl-news-caption">${n.impact > 0 ? '🟢' : '🔴'} ${n.caption}</div>
-        <div class="hl-news-detail">${n.detail}</div>
-      </div>
-    `).join("");
+    // Build analysis section
+    const allNews = state.all_news || state.news || [];
+    const strengthLabel = { strong: "Strong", moderate: "Moderate", weak: "Weak" };
+    const strengthColor = { strong: "#e84393", moderate: "#fdcb6e", weak: "#636e72" };
+
+    const analysisHTML = allNews.map(n => {
+      const dir = n.impact > 0 ? 'Bullish' : 'Bearish';
+      const dirIcon = n.impact > 0 ? '🟢' : '🔴';
+      const dirColor = n.impact > 0 ? '#00b894' : '#ff6b6b';
+      const str = strengthLabel[n.strength] || 'Moderate';
+      const strColor = strengthColor[n.strength] || '#fdcb6e';
+      const probPct = n.prob_up ? Math.round(n.prob_up * 100) : '?';
+      const probLabel = n.impact > 0
+        ? `${probPct}% chance of going up`
+        : `${100 - probPct}% chance of going down`;
+
+      return `
+        <div class="hl-analysis-card ${n.impact > 0 ? 'bullish' : 'bearish'}">
+          <div class="hl-analysis-header">
+            <span class="hl-analysis-time">${formatTime(n.time)}</span>
+            <span class="hl-analysis-dir" style="color:${dirColor};">${dirIcon} ${dir}</span>
+            <span class="hl-analysis-strength" style="background:${strColor};">${str}</span>
+          </div>
+          <div class="hl-analysis-caption">${n.caption}</div>
+          <div class="hl-analysis-detail">${n.detail}</div>
+          <div class="hl-analysis-prob">Effect: <strong>${probLabel}</strong> for up to 45s</div>
+          <div class="hl-analysis-text">${n.analysis || ''}</div>
+        </div>
+      `;
+    }).join("");
 
     area.innerHTML = `
       <div class="fiveos-finished">
@@ -390,11 +417,14 @@
         </div>
 
         <div class="results-section">
-          <h3>📰 All Headlines</h3>
-          <div class="hl-news-feed">${newsHTML}</div>
+          <h3>📊 Event Analysis</h3>
+          <p style="color:var(--muted);font-size:13px;margin-bottom:12px;">
+            Each headline shows its direction, strength, and the probability bias it set on the price.
+          </p>
+          <div class="hl-analysis-list">${analysisHTML}</div>
         </div>
 
-        <a href="/" class="btn" style="margin-top: 24px; display: inline-block;">← Back to Home</a>
+        <a href="/headline" class="btn" style="margin-top: 24px; display: inline-block;">← New Game</a>
       </div>
     `;
 

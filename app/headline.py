@@ -23,31 +23,40 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 # ---- Templates ----
+# strength: "strong" → prob ~0.88, "moderate" → ~0.72, "weak" → ~0.58
+STRENGTH_TO_PROB = {"strong": 0.38, "moderate": 0.22, "weak": 0.08}
+
 TEMPLATES = {
     "tech_ipo": {
         "name": "Tech Stock IPO",
         "description": "A hot new tech company just went public. Trade the hype!",
         "start_price": 100,
-        "duration": 300,  # 5 minutes
+        "duration": 300,
         "news": [
-            {"caption": "Q1 Revenue Beats Expectations",
-             "detail": "The company reports 40% year-over-year revenue growth, beating analyst estimates by 15%. Gross margins expand to 72%.",
-             "impact": 0.06},
-            {"caption": "CEO Under SEC Investigation",
-             "detail": "Reports emerge that the CEO is being investigated for potential insider trading before the IPO. The board convenes an emergency meeting.",
-             "impact": -0.08},
-            {"caption": "Major Partnership Announced",
-             "detail": "The company signs a 5-year strategic partnership with a Fortune 100 company, expected to generate $2B in recurring revenue.",
-             "impact": 0.07},
-            {"caption": "Competitor Launches Rival Product",
-             "detail": "Industry giant unveils a competing product at 60% lower cost. Analysts question the company's pricing power and moat.",
-             "impact": -0.05},
-            {"caption": "Insider Lock-Up Period Ends",
-             "detail": "Early employees and VCs can now sell shares. An estimated 200M shares become eligible for sale, representing 40% of outstanding shares.",
-             "impact": -0.04},
-            {"caption": "FDA Approval for Key Product",
-             "detail": "The company's flagship medical AI product receives full FDA approval, opening a $50B addressable market.",
-             "impact": 0.09},
+            {"caption": "Q1 Revenue Beats Expectations", "detail": "The company reports 40% YoY revenue growth, beating analyst estimates by 15%. Gross margins expand to 72%.",
+             "impact": 1, "strength": "strong", "analysis": "Strong earnings beat signals robust demand and pricing power — a clear bullish catalyst for growth stocks."},
+            {"caption": "CEO Under SEC Investigation", "detail": "Reports emerge that the CEO is being investigated for potential insider trading before the IPO.",
+             "impact": -1, "strength": "strong", "analysis": "Executive legal risk creates massive uncertainty. Investors flee governance concerns, especially for a newly public company."},
+            {"caption": "Major Partnership Announced", "detail": "The company signs a 5-year strategic partnership with a Fortune 100 company for $2B in recurring revenue.",
+             "impact": 1, "strength": "moderate", "analysis": "Large enterprise deals validate the product but take time to materialize. Moderately bullish as revenue is spread over years."},
+            {"caption": "Competitor Launches Rival Product", "detail": "Industry giant unveils a competing product at 60% lower cost. Analysts question pricing power.",
+             "impact": -1, "strength": "moderate", "analysis": "Competition from a well-funded rival threatens market share, but the company may retain customers through switching costs."},
+            {"caption": "Insider Lock-Up Expiration", "detail": "200M shares from early employees and VCs become eligible for sale — 40% of outstanding shares.",
+             "impact": -1, "strength": "moderate", "analysis": "Lock-up expiry creates sell pressure. While not all insiders sell, the overhang weighs on sentiment."},
+            {"caption": "Analyst Initiates with Buy Rating", "detail": "Goldman Sachs initiates coverage with a Buy rating and $150 price target, citing strong TAM.",
+             "impact": 1, "strength": "weak", "analysis": "Analyst coverage is positive but expected for hot IPOs. Weak signal — the market already anticipated coverage."},
+            {"caption": "User Growth Slowing", "detail": "Monthly active users grew only 5% QoQ, down from 25% the prior quarter. Churn rate ticks up to 8%.",
+             "impact": -1, "strength": "moderate", "analysis": "Decelerating growth is concerning for a company priced on hypergrowth. Market re-rates growth expectations downward."},
+            {"caption": "Patent Granted for Core Technology", "detail": "The company receives a broad patent covering its core AI technology, strengthening its competitive moat.",
+             "impact": 1, "strength": "weak", "analysis": "IP protection is positive long-term but doesn't change near-term fundamentals. Weak bullish signal."},
+            {"caption": "Short Seller Report Published", "detail": "A prominent short seller publishes a 60-page report alleging inflated metrics and accounting irregularities.",
+             "impact": -1, "strength": "strong", "analysis": "Short reports from credible firms cause significant selling as investors seek to de-risk until allegations are addressed."},
+            {"caption": "Government Contract Win", "detail": "The company wins a $500M federal contract for AI infrastructure, beating out 5 competitors.",
+             "impact": 1, "strength": "strong", "analysis": "Government contracts provide stable, high-margin revenue and validate the technology. Strongly bullish."},
+            {"caption": "CFO Resignation", "detail": "The CFO announces immediate resignation citing 'personal reasons'. No successor has been named.",
+             "impact": -1, "strength": "weak", "analysis": "C-suite departures are concerning but CFO changes are common post-IPO. Mildly bearish without further context."},
+            {"caption": "Product Goes Viral on Social Media", "detail": "A demo video reaches 50M views. App downloads surge 300% overnight.",
+             "impact": 1, "strength": "moderate", "analysis": "Viral moments drive short-term user acquisition but sustainability is uncertain. Moderately bullish on momentum."},
         ],
     },
     "oil": {
@@ -56,24 +65,30 @@ TEMPLATES = {
         "start_price": 100,
         "duration": 300,
         "news": [
-            {"caption": "OPEC Announces Production Cuts",
-             "detail": "OPEC+ agrees to cut output by 2 million barrels per day starting next month. Saudi Arabia pledges additional voluntary cuts.",
-             "impact": 0.07},
-            {"caption": "US Strategic Reserve Release",
-             "detail": "The White House announces release of 50 million barrels from the Strategic Petroleum Reserve to combat rising energy costs.",
-             "impact": -0.05},
-            {"caption": "Middle East Tensions Escalate",
-             "detail": "Military conflict disrupts shipping through the Strait of Hormuz. 20% of global oil supply passes through this chokepoint.",
-             "impact": 0.08},
-            {"caption": "Renewable Energy Breakthrough",
-             "detail": "Scientists announce a major breakthrough in solid-state batteries, potentially accelerating the transition away from fossil fuels.",
-             "impact": -0.06},
-            {"caption": "China Reopening Boosts Demand",
-             "detail": "China lifts remaining COVID restrictions. Analysts project a 1.5M barrel/day increase in demand over the next quarter.",
-             "impact": 0.05},
-            {"caption": "New Pipeline Approved",
-             "detail": "A major transnational pipeline project receives final regulatory approval, expected to add 800K barrels/day of supply capacity.",
-             "impact": -0.04},
+            {"caption": "OPEC Announces Deep Production Cuts", "detail": "OPEC+ agrees to cut output by 2M barrels/day. Saudi Arabia pledges additional voluntary cuts.",
+             "impact": 1, "strength": "strong", "analysis": "Supply cuts directly reduce available barrels. OPEC's willingness to cut aggressively signals price floor defense."},
+            {"caption": "US Strategic Reserve Release", "detail": "White House announces 50M barrel release from the SPR to combat rising energy costs.",
+             "impact": -1, "strength": "moderate", "analysis": "SPR releases add temporary supply but don't change long-term fundamentals. Moderate bearish pressure."},
+            {"caption": "Strait of Hormuz Disrupted", "detail": "Military conflict disrupts shipping through the Strait of Hormuz. 20% of global oil transits this chokepoint.",
+             "impact": 1, "strength": "strong", "analysis": "Chokepoint disruptions create immediate supply fear. Historical precedent shows sharp price spikes when Hormuz is threatened."},
+            {"caption": "Battery Breakthrough Announced", "detail": "Solid-state battery breakthrough promises 1000-mile EV range at half the cost. Mass production by 2026.",
+             "impact": -1, "strength": "weak", "analysis": "Long-term demand destruction for oil, but years away from impacting consumption. Weak bearish on sentiment only."},
+            {"caption": "China Manufacturing Surges", "detail": "China PMI hits 58.7, highest in 3 years. Industrial diesel demand jumps 12% MoM.",
+             "impact": 1, "strength": "moderate", "analysis": "China is the world's largest oil importer. Strong manufacturing activity directly translates to higher crude demand."},
+            {"caption": "US Shale Production Record", "detail": "Permian Basin output reaches all-time high of 6.2M bbl/day. New drilling permits up 30%.",
+             "impact": -1, "strength": "moderate", "analysis": "Record US production offsets OPEC cuts. The supply response from shale is faster than ever, capping upside."},
+            {"caption": "Pipeline Explosion in Russia", "detail": "Major explosion damages the Druzhba pipeline, cutting 500K bbl/day of exports to Europe.",
+             "impact": 1, "strength": "moderate", "analysis": "Pipeline disruptions remove physical supply from the market. Repairs typically take weeks, extending the impact."},
+            {"caption": "Global EV Sales Hit 30% Market Share", "detail": "Electric vehicles reach 30% of global new car sales for the first time.",
+             "impact": -1, "strength": "weak", "analysis": "Long-term structural shift away from oil, but current absolute demand is still growing. Weak near-term bearish."},
+            {"caption": "Hurricane Hits Gulf of Mexico", "detail": "Category 4 hurricane shuts down 60% of Gulf production. Refineries along the coast evacuated.",
+             "impact": 1, "strength": "strong", "analysis": "Gulf shutdowns remove significant production and refining capacity simultaneously. Historically causes sharp spikes."},
+            {"caption": "Iran Nuclear Deal Revived", "detail": "Breakthrough in nuclear talks. Iran could return 1.5M bbl/day to market within 6 months.",
+             "impact": -1, "strength": "strong", "analysis": "Iranian barrels returning to market represent a major supply increase. One of the most bearish scenarios for oil."},
+            {"caption": "India Builds Strategic Reserves", "detail": "India announces plans to triple its strategic petroleum reserves, purchasing 200M barrels over 2 years.",
+             "impact": 1, "strength": "weak", "analysis": "Government stockpiling adds demand at the margin but is spread over a long period. Weakly bullish."},
+            {"caption": "OPEC Compliance Falls", "detail": "Satellite data shows OPEC members cheating on quotas. Actual production 800K bbl/day above targets.",
+             "impact": -1, "strength": "moderate", "analysis": "Quota violations undermine OPEC credibility and add unplanned supply. Moderately bearish on trust breakdown."},
         ],
     },
     "crypto": {
@@ -82,24 +97,30 @@ TEMPLATES = {
         "start_price": 100,
         "duration": 300,
         "news": [
-            {"caption": "SEC Approves Spot ETF",
-             "detail": "The Securities and Exchange Commission approves the first spot cryptocurrency ETF, opening the floodgates for institutional investment.",
-             "impact": 0.10},
-            {"caption": "Major Exchange Hacked",
-             "detail": "One of the top 3 exchanges reports a $400M security breach. Withdrawals are suspended indefinitely. Contagion fears spread.",
-             "impact": -0.09},
-            {"caption": "Payment Giant Enables Crypto",
-             "detail": "A major global payments company announces all merchants can now accept this token natively, reaching 30M+ merchant locations.",
-             "impact": 0.07},
-            {"caption": "Country Bans All Crypto Trading",
-             "detail": "A major economy announces a complete ban on cryptocurrency trading and mining, affecting 15% of global hash rate.",
-             "impact": -0.07},
-            {"caption": "Network Upgrade Successful",
-             "detail": "The highly anticipated upgrade completes without issues, reducing transaction fees by 90% and increasing throughput 10x.",
-             "impact": 0.06},
-            {"caption": "Whale Dump Detected",
-             "detail": "On-chain analysis shows a wallet holding 2% of total supply has moved all tokens to exchange wallets in the last hour.",
-             "impact": -0.05},
+            {"caption": "SEC Approves Spot ETF", "detail": "The SEC approves the first spot cryptocurrency ETF, opening floodgates for institutional investment.",
+             "impact": 1, "strength": "strong", "analysis": "ETF approval is the most anticipated catalyst in crypto. Allows pension funds and institutions to gain exposure easily."},
+            {"caption": "Major Exchange Hacked", "detail": "Top-3 exchange reports $400M security breach. Withdrawals suspended. Contagion fears spread.",
+             "impact": -1, "strength": "strong", "analysis": "Exchange hacks destroy trust in the ecosystem. Users rush to withdraw from other exchanges, creating liquidity crises."},
+            {"caption": "Payment Giant Enables Crypto", "detail": "30M+ merchant locations can now accept this token natively. Transaction volume expected to 10x.",
+             "impact": 1, "strength": "moderate", "analysis": "Real-world payment adoption is a key milestone, but merchant acceptance doesn't guarantee consumer usage."},
+            {"caption": "Major Economy Bans Trading", "detail": "A G20 country announces complete ban on cryptocurrency trading and mining. 15% of hash rate affected.",
+             "impact": -1, "strength": "strong", "analysis": "Country-level bans remove significant demand pools and mining capacity. Historically causes sharp selloffs."},
+            {"caption": "Network Upgrade Successful", "detail": "The upgrade completes flawlessly, reducing fees by 90% and increasing throughput 10x.",
+             "impact": 1, "strength": "moderate", "analysis": "Technical improvements enhance utility but are often priced in ahead of the upgrade. Moderately bullish."},
+            {"caption": "Whale Dump Detected", "detail": "On-chain analysis: wallet holding 2% of total supply moved all tokens to exchange wallets in the last hour.",
+             "impact": -1, "strength": "moderate", "analysis": "Large holders moving to exchanges signals intent to sell. Creates fear of a large market sell order."},
+            {"caption": "Central Bank Endorsement", "detail": "ECB president says the token has 'legitimate store of value properties' in a major speech.",
+             "impact": 1, "strength": "strong", "analysis": "Central bank endorsement is unprecedented. Signals potential regulatory acceptance and encourages institutional adoption."},
+            {"caption": "Stablecoin Depeg Event", "detail": "A major stablecoin breaks its $1 peg, falling to $0.92. Panic selling spreads across all crypto markets.",
+             "impact": -1, "strength": "strong", "analysis": "Stablecoin depegs create systemic risk. The Terra/Luna collapse showed how contagion spirals across all crypto assets."},
+            {"caption": "Fortune 500 Treasury Allocation", "detail": "Three Fortune 500 companies announce allocating 5% of treasury to this token as an inflation hedge.",
+             "impact": 1, "strength": "moderate", "analysis": "Corporate treasury adoption adds demand and legitimacy, but actual dollar amounts are small relative to market cap."},
+            {"caption": "Developer Activity Surges", "detail": "GitHub commits rise 200%. Over 500 new developers contributed in the last month.",
+             "impact": 1, "strength": "weak", "analysis": "Developer activity is a leading indicator of future utility, but doesn't immediately translate to price appreciation."},
+            {"caption": "Tax Crackdown Announced", "detail": "IRS announces mandatory reporting for all crypto transactions over $100. Exchanges must issue 1099s.",
+             "impact": -1, "strength": "weak", "analysis": "Tax reporting increases compliance burden but doesn't ban usage. May reduce speculative trading at the margin."},
+            {"caption": "Mining Difficulty Spikes", "detail": "Mining difficulty reaches ATH. Smaller miners forced to sell holdings to cover electricity costs.",
+             "impact": -1, "strength": "moderate", "analysis": "High difficulty squeezes miner profitability, forcing sales of held tokens. Increases sell pressure from key stakeholders."},
         ],
     },
 }
@@ -112,69 +133,68 @@ def generate_join_code():
 def generate_price_path(template_key: str, duration: int = 300):
     """Generate the full price path and news schedule for a game.
 
-    News creates a directional bias in the random walk rather than an
-    instant jump.  E.g. impact = +0.08 → prob_up ≈ 0.74 for the next
-    min(45s, next_news).  Between active effects the walk is 50/50.
+    News creates a directional bias in the random walk. Strength
+    determines how biased: strong ~0.88, moderate ~0.72, weak ~0.58.
+    Bias lasts for min(45s, time_until_next_news).
+    News times use random intervals (10-40s).
     """
     tmpl = TEMPLATES[template_key]
     start_price = tmpl["start_price"]
     news_items = list(tmpl["news"])
     random.shuffle(news_items)
 
-    # Schedule news at random times (spread across the duration)
-    num_news = len(news_items)
-    earliest = int(duration * 0.10)
-    latest = int(duration * 0.90)
-    news_times = sorted(random.sample(range(earliest, latest), min(num_news, latest - earliest)))
-
+    # Schedule news using random intervals (10-40s between each)
     news_schedule = []
-    for i, t in enumerate(news_times[:num_news]):
+    t = random.randint(15, 30)  # first news between 15-30s
+    for item in news_items:
+        if t >= duration - 10:  # stop 10s before end
+            break
+        shift = STRENGTH_TO_PROB.get(item["strength"], 0.22)
+        prob_up = 0.5 + (shift if item["impact"] > 0 else -shift)
         news_schedule.append({
             "time": t,
-            "caption": news_items[i]["caption"],
-            "detail": news_items[i]["detail"],
-            "impact": news_items[i]["impact"],
+            "caption": item["caption"],
+            "detail": item["detail"],
+            "impact": item["impact"],
+            "strength": item["strength"],
+            "prob_up": round(prob_up, 2),
+            "analysis": item.get("analysis", ""),
         })
+        t += random.randint(10, 40)
 
-    # Pre-compute bias windows: each news creates a bias lasting
-    # min(45 ticks, ticks_until_next_news)
-    BIAS_DURATION = 45  # seconds
-    bias_at_tick = {}  # tick → prob_up (0.5 = neutral)
+    # Pre-compute bias windows
+    BIAS_DURATION = 45
+    bias_at_tick = {}
 
     for idx, ns in enumerate(news_schedule):
         start_t = ns["time"]
-        # End = min(start + 45, next_news_time)
         if idx + 1 < len(news_schedule):
             end_t = min(start_t + BIAS_DURATION, news_schedule[idx + 1]["time"])
         else:
             end_t = min(start_t + BIAS_DURATION, duration)
 
-        # Map impact → probability of going up
-        # impact * 3 gives nice range: ±0.04→±0.12 shift, ±0.10→±0.30 shift
-        prob_up = max(0.10, min(0.90, 0.5 + ns["impact"] * 3))
-
-        for t in range(start_t, end_t):
-            bias_at_tick[t] = prob_up
+        for t_tick in range(start_t, end_t):
+            bias_at_tick[t_tick] = ns["prob_up"]
 
     # Build price path tick by tick
     prices = [start_price]
-    noise_std = 0.003  # base volatility per tick
+    noise_std = 0.003
 
     price = start_price
     for t in range(1, duration + 1):
         abs_move = abs(random.gauss(0, noise_std))
-        prob_up = bias_at_tick.get(t, 0.5)  # default 50/50
+        prob_up = bias_at_tick.get(t, 0.5)
 
         if random.random() < prob_up:
             price = price * (1 + abs_move)
         else:
             price = price * (1 - abs_move)
 
-        price = max(price, 1)  # floor at 1
+        price = max(price, 1)
         prices.append(round(price, 2))
 
     return {
-        "prices": prices,  # index = tick (0..duration)
+        "prices": prices,
         "news_schedule": news_schedule,
     }
 
@@ -238,13 +258,13 @@ async def create_game(req: CreateRequest, user: User = Depends(current_user)):
         "join_code": join_code,
         "template": req.template,
         "template_name": tmpl["name"],
-        "status": "lobby",  # lobby → active → finished
+        "status": "lobby",
         "duration": tmpl["duration"],
         "start_price": tmpl["start_price"],
-        "prices": [],  # generated on start
-        "news_schedule": [],  # generated on start
+        "prices": [],
+        "news_schedule": [],
         "players": [],
-        "trades": {},  # {user_id: [{delta, price, tick}]}
+        "trades": {},
         "created_by": str(user.id),
         "created_at": dt.datetime.now(dt.timezone.utc),
         "started_at": None,
@@ -296,7 +316,6 @@ async def start_game(game_id: str, user: User = Depends(current_user)):
 
     game_data = doc.to_dict()
     if game_data["status"] != "lobby":
-        # Idempotent: if already active/finished, just return success
         return {"ok": True, "status": game_data["status"]}
 
     # Auto-add admin to players if not already there
@@ -445,7 +464,14 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     result["price_history"] = prices[:tick + 1]
 
     # Released news (only show news that has happened)
-    result["news"] = [n for n in news_schedule if n["time"] <= tick]
+    released_news = [n for n in news_schedule if n["time"] <= tick]
+    # During active, hide analysis; show it only when finished
+    if status != "finished":
+        result["news"] = [{k: v for k, v in n.items() if k != "analysis"} for n in released_news]
+    else:
+        result["news"] = released_news
+        # Also include ALL news for the analysis page (even unreleased ones)
+        result["all_news"] = news_schedule
 
     # Calculate positions and PnL for all players
     leaderboard = []
