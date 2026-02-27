@@ -296,20 +296,28 @@ async def start_game(game_id: str, user: User = Depends(current_user)):
 
     game_data = doc.to_dict()
     if game_data["status"] != "lobby":
-        raise HTTPException(status_code=400, detail="Game already started")
+        # Idempotent: if already active/finished, just return success
+        return {"ok": True, "status": game_data["status"]}
+
+    # Auto-add admin to players if not already there
+    players = game_data.get("players", [])
+    admin_uid = str(user.id)
+    if admin_uid not in [p["user_id"] for p in players]:
+        players.append({"user_id": admin_uid, "username": user.username})
 
     # Generate price path
     path = generate_price_path(game_data["template"], game_data["duration"])
 
     # Initialize trades for each player
     trades = {}
-    for p in game_data.get("players", []):
+    for p in players:
         trades[p["user_id"]] = []
 
     await doc.reference.update({
         "status": "active",
         "prices": path["prices"],
         "news_schedule": path["news_schedule"],
+        "players": players,
         "trades": trades,
         "started_at": dt.datetime.utcnow(),
     })

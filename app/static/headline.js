@@ -1,83 +1,83 @@
 (function () {
-    "use strict";
+  "use strict";
 
-    const GAME_ID = window.GAME_ID;
-    const $ = (sel, root = document) => root.querySelector(sel);
-    let pollTimer = null;
-    let lastStateHash = "";
-    let priceChart = null;
+  const GAME_ID = window.GAME_ID;
+  const $ = (sel, root = document) => root.querySelector(sel);
+  let pollTimer = null;
+  let lastStateHash = "";
+  let priceChart = null;
 
-    const fetchJSON = async (url, init) => {
-        const r = await fetch(url, { credentials: "include", ...init });
-        if (!r.ok) {
-            const txt = await r.text();
-            let detail = r.status;
-            try { detail = JSON.parse(txt).detail || detail; } catch { }
-            throw new Error(detail);
-        }
-        return r.json();
-    };
-
-    // Auth
-    async function getMe() {
-        try {
-            const me = await fetchJSON("/me");
-            $("#userName").textContent = me.username || "user";
-            return me;
-        } catch { return null; }
+  const fetchJSON = async (url, init) => {
+    const r = await fetch(url, { credentials: "include", ...init });
+    if (!r.ok) {
+      const txt = await r.text();
+      let detail = r.status;
+      try { detail = JSON.parse(txt).detail || detail; } catch { }
+      throw new Error(detail);
     }
+    return r.json();
+  };
 
-    // Polling
-    async function poll() {
-        try {
-            const state = await fetchJSON(`/headline/game/${GAME_ID}/state`);
-            render(state);
-        } catch (e) {
-            console.error("Poll error:", e);
-        }
+  // Auth
+  async function getMe() {
+    try {
+      const me = await fetchJSON("/me");
+      $("#userName").textContent = me.username || "user";
+      return me;
+    } catch { return null; }
+  }
+
+  // Polling
+  async function poll() {
+    try {
+      const state = await fetchJSON(`/headline/game/${GAME_ID}/state`);
+      render(state);
+    } catch (e) {
+      console.error("Poll error:", e);
     }
+  }
 
-    function startPolling() {
-        poll();
-        pollTimer = setInterval(poll, 1000); // 1s for real-time feel
+  function startPolling() {
+    poll();
+    pollTimer = setInterval(poll, 1000); // 1s for real-time feel
+  }
+
+  // State hash for smart re-render
+  function stateHash(state) {
+    return state.status + "|" + state.tick + "|" + (state.news || []).length + "|" +
+      (state.players || []).map(p => p.user_id).join(",");
+  }
+
+  // Main render
+  function render(state) {
+    const area = $("#gameArea");
+    if (!area) return;
+
+    if (state.status === "lobby") {
+      const hash = stateHash(state);
+      if (hash === lastStateHash) return;
+      lastStateHash = hash;
+      renderLobby(area, state);
+    } else if (state.status === "active") {
+      renderActive(area, state);
+    } else if (state.status === "finished") {
+      const hash = stateHash(state);
+      if (hash === lastStateHash) return;
+      lastStateHash = hash;
+      renderFinished(area, state);
     }
+  }
 
-    // State hash for smart re-render
-    function stateHash(state) {
-        return state.status + "|" + state.tick + "|" + (state.news || []).length + "|" +
-            (state.players || []).map(p => p.user_id).join(",");
-    }
-
-    // Main render
-    function render(state) {
-        const area = $("#gameArea");
-        if (!area) return;
-
-        if (state.status === "lobby") {
-            const hash = stateHash(state);
-            if (hash === lastStateHash) return;
-            lastStateHash = hash;
-            renderLobby(area, state);
-        } else if (state.status === "active") {
-            renderActive(area, state);
-        } else if (state.status === "finished") {
-            const hash = stateHash(state);
-            if (hash === lastStateHash) return;
-            lastStateHash = hash;
-            renderFinished(area, state);
-        }
-    }
-
-    // ---- LOBBY ----
-    function renderLobby(area, state) {
-        const players = state.players || [];
-        const playerRows = players.map(p => `
+  // ---- LOBBY ----
+  function renderLobby(area, state) {
+    const players = state.players || [];
+    const playerRows = players.map(p => `
       <div class="lobby-player">
         <span class="lobby-name">${p.username}</span>
       </div>
     `).join("");
 
-        const adminPanel = state.is_admin ? `
+    const adminPanel = state.is_admin ? `
       <div class="admin-controls">
         <div class="join-code-display">
           <span class="label">Join Code</span>
@@ -89,7 +89,7 @@
       </div>
     ` : '';
 
-        area.innerHTML = `
+    area.innerHTML = `
       <div class="fiveos-lobby">
         <h2>📰 Headline — Lobby</h2>
         <p class="muted" style="margin-bottom:16px;">Scenario: <strong style="color:var(--text);">${state.template_name}</strong></p>
@@ -99,27 +99,27 @@
         ${!state.is_admin ? '<p class="muted" style="margin-top:16px;">Waiting for admin to start the game...</p>' : ''}
       </div>
     `;
-    }
+  }
 
-    // ---- ACTIVE GAME ----
-    function renderActive(area, state) {
-        const tick = state.tick || 0;
-        const duration = state.duration || 300;
-        const timeLeft = Math.max(0, duration - tick);
-        const minutes = Math.floor(timeLeft / 60);
-        const seconds = timeLeft % 60;
-        const price = state.current_price || 100;
-        const startPrice = state.start_price || 100;
-        const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
-        const priceColor = price >= startPrice ? '#00b894' : '#ff6b6b';
-        const myPos = state.my_position || 0;
-        const myPnl = state.my_pnl || 0;
-        const news = state.news || [];
-        const leaderboard = state.leaderboard || [];
+  // ---- ACTIVE GAME ----
+  function renderActive(area, state) {
+    const tick = state.tick || 0;
+    const duration = state.duration || 300;
+    const timeLeft = Math.max(0, duration - tick);
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
+    const price = state.current_price || 100;
+    const startPrice = state.start_price || 100;
+    const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
+    const priceColor = price >= startPrice ? '#00b894' : '#ff6b6b';
+    const myPos = state.my_position || 0;
+    const myPnl = state.my_pnl || 0;
+    const news = state.news || [];
+    const leaderboard = state.leaderboard || [];
 
-        // Only rebuild DOM if this is the first render
-        if (!$("#hl-price-display")) {
-            area.innerHTML = `
+    // Only rebuild DOM if this is the first render
+    if (!$("#hl-price-display")) {
+      area.innerHTML = `
         <div class="hl-game">
           <div class="hl-header">
             <h2>📰 ${state.template_name}</h2>
@@ -191,74 +191,74 @@
         </div>
       `;
 
-            // Init chart
-            initPriceChart(state.price_history || []);
-        }
-
-        // Update values
-        updateLiveData(state);
+      // Init chart
+      initPriceChart(state.price_history || []);
     }
 
-    function updateLiveData(state) {
-        const tick = state.tick || 0;
-        const duration = state.duration || 300;
-        const timeLeft = Math.max(0, duration - tick);
-        const minutes = Math.floor(timeLeft / 60);
-        const seconds = timeLeft % 60;
-        const price = state.current_price || 100;
-        const startPrice = state.start_price || 100;
-        const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
-        const priceColor = price >= startPrice ? '#00b894' : '#ff6b6b';
-        const myPos = state.my_position || 0;
-        const myPnl = state.my_pnl || 0;
+    // Update values
+    updateLiveData(state);
+  }
 
-        const timerEl = $("#hl-timer");
-        if (timerEl) timerEl.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
+  function updateLiveData(state) {
+    const tick = state.tick || 0;
+    const duration = state.duration || 300;
+    const timeLeft = Math.max(0, duration - tick);
+    const minutes = Math.floor(timeLeft / 60);
+    const seconds = timeLeft % 60;
+    const price = state.current_price || 100;
+    const startPrice = state.start_price || 100;
+    const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
+    const priceColor = price >= startPrice ? '#00b894' : '#ff6b6b';
+    const myPos = state.my_position || 0;
+    const myPnl = state.my_pnl || 0;
 
-        const priceEl = $("#hl-price-display");
-        if (priceEl) priceEl.textContent = `$${price.toFixed(2)}`;
+    const timerEl = $("#hl-timer");
+    if (timerEl) timerEl.textContent = `${minutes}:${String(seconds).padStart(2, '0')}`;
 
-        const changeEl = $("#hl-price-change");
-        if (changeEl) {
-            changeEl.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange}%`;
-            changeEl.style.color = priceColor;
-        }
+    const priceEl = $("#hl-price-display");
+    if (priceEl) priceEl.textContent = `$${price.toFixed(2)}`;
 
-        const pnlEl = $("#hl-pnl");
-        if (pnlEl) {
-            pnlEl.textContent = `${myPnl >= 0 ? '+' : ''}${myPnl.toFixed(2)}`;
-            pnlEl.style.color = myPnl >= 0 ? '#00b894' : '#ff6b6b';
-        }
+    const changeEl = $("#hl-price-change");
+    if (changeEl) {
+      changeEl.textContent = `${priceChange >= 0 ? '+' : ''}${priceChange}%`;
+      changeEl.style.color = priceColor;
+    }
 
-        const posEl = $("#hl-pos");
-        if (posEl) {
-            posEl.textContent = `${myPos > 0 ? '+' : ''}${myPos}`;
-            posEl.style.color = myPos > 0 ? '#00b894' : myPos < 0 ? '#ff6b6b' : 'var(--muted)';
-        }
+    const pnlEl = $("#hl-pnl");
+    if (pnlEl) {
+      pnlEl.textContent = `${myPnl >= 0 ? '+' : ''}${myPnl.toFixed(2)}`;
+      pnlEl.style.color = myPnl >= 0 ? '#00b894' : '#ff6b6b';
+    }
 
-        // Update chart
-        updatePriceChart(state.price_history || []);
+    const posEl = $("#hl-pos");
+    if (posEl) {
+      posEl.textContent = `${myPos > 0 ? '+' : ''}${myPos}`;
+      posEl.style.color = myPos > 0 ? '#00b894' : myPos < 0 ? '#ff6b6b' : 'var(--muted)';
+    }
 
-        // Update news feed
-        const newsEl = $("#hl-news-feed");
-        if (newsEl) {
-            const news = state.news || [];
-            newsEl.innerHTML = news.length === 0
-                ? '<p class="muted">No news yet... stay alert!</p>'
-                : news.slice().reverse().map(n => `
+    // Update chart
+    updatePriceChart(state.price_history || []);
+
+    // Update news feed
+    const newsEl = $("#hl-news-feed");
+    if (newsEl) {
+      const news = state.news || [];
+      newsEl.innerHTML = news.length === 0
+        ? '<p class="muted">No news yet... stay alert!</p>'
+        : news.slice().reverse().map(n => `
           <div class="hl-news-item ${n.impact > 0 ? 'bullish' : 'bearish'}">
             <div class="hl-news-time">${formatTime(n.time)}</div>
             <div class="hl-news-caption">${n.impact > 0 ? '🟢' : '🔴'} ${n.caption}</div>
             <div class="hl-news-detail">${n.detail}</div>
           </div>
         `).join("");
-        }
+    }
 
-        // Update leaderboard
-        const lbEl = $("#hl-leaderboard");
-        if (lbEl) {
-            const lb = state.leaderboard || [];
-            lbEl.innerHTML = lb.map((p, i) => `
+    // Update leaderboard
+    const lbEl = $("#hl-leaderboard");
+    if (lbEl) {
+      const lb = state.leaderboard || [];
+      lbEl.innerHTML = lb.map((p, i) => `
         <div class="hl-lb-row ${i === 0 ? 'hl-lb-first' : ''}">
           <span class="lb-rank">#${i + 1}</span>
           <span class="lb-name">${p.username}</span>
@@ -270,78 +270,78 @@
           </span>
         </div>
       `).join("");
-        }
+    }
+  }
+
+  function formatTime(tick) {
+    const m = Math.floor(tick / 60);
+    const s = tick % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  // ---- PRICE CHART ----
+  function initPriceChart(priceHistory) {
+    const canvas = document.getElementById("priceChart");
+    if (!canvas || typeof Chart === "undefined") return;
+
+    const labels = priceHistory.map((_, i) => i);
+    priceChart = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels,
+        datasets: [{
+          data: priceHistory,
+          borderColor: "#6c5ce7",
+          backgroundColor: "#6c5ce733",
+          fill: true,
+          tension: 0.1,
+          pointRadius: 0,
+          borderWidth: 2,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 0 },
+        plugins: { legend: { display: false } },
+        scales: {
+          x: {
+            display: false,
+          },
+          y: {
+            ticks: { color: "#636e72", callback: v => '$' + v.toFixed(0) },
+            grid: { color: "#2d3436" },
+          },
+        },
+      },
+    });
+  }
+
+  function updatePriceChart(priceHistory) {
+    if (!priceChart) {
+      initPriceChart(priceHistory);
+      return;
     }
 
-    function formatTime(tick) {
-        const m = Math.floor(tick / 60);
-        const s = tick % 60;
-        return `${m}:${String(s).padStart(2, '0')}`;
-    }
+    const lastPrice = priceHistory[priceHistory.length - 1] || 100;
+    const startPrice = priceHistory[0] || 100;
+    const color = lastPrice >= startPrice ? "#00b894" : "#ff6b6b";
 
-    // ---- PRICE CHART ----
-    function initPriceChart(priceHistory) {
-        const canvas = document.getElementById("priceChart");
-        if (!canvas || typeof Chart === "undefined") return;
+    priceChart.data.labels = priceHistory.map((_, i) => i);
+    priceChart.data.datasets[0].data = priceHistory;
+    priceChart.data.datasets[0].borderColor = color;
+    priceChart.data.datasets[0].backgroundColor = color + "33";
+    priceChart.update();
+  }
 
-        const labels = priceHistory.map((_, i) => i);
-        priceChart = new Chart(canvas, {
-            type: "line",
-            data: {
-                labels,
-                datasets: [{
-                    data: priceHistory,
-                    borderColor: "#6c5ce7",
-                    backgroundColor: "#6c5ce733",
-                    fill: true,
-                    tension: 0.1,
-                    pointRadius: 0,
-                    borderWidth: 2,
-                }],
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: { duration: 0 },
-                plugins: { legend: { display: false } },
-                scales: {
-                    x: {
-                        display: false,
-                    },
-                    y: {
-                        ticks: { color: "#636e72", callback: v => '$' + v.toFixed(0) },
-                        grid: { color: "#2d3436" },
-                    },
-                },
-            },
-        });
-    }
+  // ---- FINISHED ----
+  function renderFinished(area, state) {
+    const price = state.current_price || 100;
+    const startPrice = state.start_price || 100;
+    const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
+    const leaderboard = state.leaderboard || [];
 
-    function updatePriceChart(priceHistory) {
-        if (!priceChart) {
-            initPriceChart(priceHistory);
-            return;
-        }
-
-        const lastPrice = priceHistory[priceHistory.length - 1] || 100;
-        const startPrice = priceHistory[0] || 100;
-        const color = lastPrice >= startPrice ? "#00b894" : "#ff6b6b";
-
-        priceChart.data.labels = priceHistory.map((_, i) => i);
-        priceChart.data.datasets[0].data = priceHistory;
-        priceChart.data.datasets[0].borderColor = color;
-        priceChart.data.datasets[0].backgroundColor = color + "33";
-        priceChart.update();
-    }
-
-    // ---- FINISHED ----
-    function renderFinished(area, state) {
-        const price = state.current_price || 100;
-        const startPrice = state.start_price || 100;
-        const priceChange = ((price - startPrice) / startPrice * 100).toFixed(2);
-        const leaderboard = state.leaderboard || [];
-
-        const lbHTML = leaderboard.map((p, i) => `
+    const lbHTML = leaderboard.map((p, i) => `
       <div class="lb-row ${i === 0 ? 'lb-first' : ''}">
         <span class="lb-rank">#${i + 1}</span>
         <span class="lb-name">${p.username}</span>
@@ -351,7 +351,7 @@
       </div>
     `).join("");
 
-        const newsHTML = (state.news || []).map(n => `
+    const newsHTML = (state.news || []).map(n => `
       <div class="hl-news-item ${n.impact > 0 ? 'bullish' : 'bearish'}">
         <div class="hl-news-time">${formatTime(n.time)}</div>
         <div class="hl-news-caption">${n.impact > 0 ? '🟢' : '🔴'} ${n.caption}</div>
@@ -359,7 +359,7 @@
       </div>
     `).join("");
 
-        area.innerHTML = `
+    area.innerHTML = `
       <div class="fiveos-finished">
         <h2>🏆 Game Over!</h2>
 
@@ -398,82 +398,85 @@
       </div>
     `;
 
-        // Draw final chart
-        setTimeout(() => {
-            const canvas = document.getElementById("finalPriceChart");
-            if (!canvas || typeof Chart === "undefined") return;
-            const ph = state.price_history || [];
-            new Chart(canvas, {
-                type: "line",
-                data: {
-                    labels: ph.map((_, i) => i),
-                    datasets: [{
-                        data: ph,
-                        borderColor: ph[ph.length - 1] >= ph[0] ? "#00b894" : "#ff6b6b",
-                        backgroundColor: (ph[ph.length - 1] >= ph[0] ? "#00b894" : "#ff6b6b") + "33",
-                        fill: true, tension: 0.1, pointRadius: 0, borderWidth: 2,
-                    }],
-                },
-                options: {
-                    responsive: true,
-                    animation: { duration: 0 },
-                    plugins: { legend: { display: false } },
-                    scales: {
-                        x: { display: false },
-                        y: { ticks: { color: "#636e72", callback: v => '$' + v.toFixed(0) }, grid: { color: "#2d3436" } },
-                    },
-                },
-            });
-        }, 100);
+    // Draw final chart
+    setTimeout(() => {
+      const canvas = document.getElementById("finalPriceChart");
+      if (!canvas || typeof Chart === "undefined") return;
+      const ph = state.price_history || [];
+      new Chart(canvas, {
+        type: "line",
+        data: {
+          labels: ph.map((_, i) => i),
+          datasets: [{
+            data: ph,
+            borderColor: ph[ph.length - 1] >= ph[0] ? "#00b894" : "#ff6b6b",
+            backgroundColor: (ph[ph.length - 1] >= ph[0] ? "#00b894" : "#ff6b6b") + "33",
+            fill: true, tension: 0.1, pointRadius: 0, borderWidth: 2,
+          }],
+        },
+        options: {
+          responsive: true,
+          animation: { duration: 0 },
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { display: false },
+            y: { ticks: { color: "#636e72", callback: v => '$' + v.toFixed(0) }, grid: { color: "#2d3436" } },
+          },
+        },
+      });
+    }, 100);
+  }
+
+  // ---- Actions ----
+  window._lastPos = 0;
+  window.currentPos = function () { return window._lastPos; };
+
+  window.updateSliderLabel = function (val) {
+    const el = $("#sliderVal");
+    if (el) el.textContent = val;
+  };
+
+  window.submitTrade = async function (targetPos) {
+    targetPos = Math.max(-1000, Math.min(1000, parseInt(targetPos) || 0));
+    const msg = $("#tradeMsg");
+    try {
+      const data = await fetchJSON(`/headline/game/${GAME_ID}/trade`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ position: targetPos }),
+      });
+      window._lastPos = targetPos;
+      if (msg) { msg.textContent = `Position set to ${targetPos}`; msg.style.color = "#00b894"; }
+      // Update slider
+      const slider = $("#posSlider");
+      if (slider) slider.value = targetPos;
+      updateSliderLabel(targetPos);
+    } catch (e) {
+      if (msg) { msg.textContent = String(e.message); msg.style.color = "#ff6b6b"; }
     }
+  };
 
-    // ---- Actions ----
-    window._lastPos = 0;
-    window.currentPos = function () { return window._lastPos; };
+  window.startGame = async function () {
+    const btn = document.getElementById("startBtn");
+    if (btn) { btn.disabled = true; btn.textContent = "Starting..."; }
+    try {
+      await fetchJSON(`/headline/game/${GAME_ID}/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      lastStateHash = "";
+      poll();
+    } catch (e) {
+      console.error("Start error:", e);
+      if (btn) { btn.textContent = "Start Game →"; btn.disabled = false; }
+    }
+  };
 
-    window.updateSliderLabel = function (val) {
-        const el = $("#sliderVal");
-        if (el) el.textContent = val;
-    };
-
-    window.submitTrade = async function (targetPos) {
-        targetPos = Math.max(-1000, Math.min(1000, parseInt(targetPos) || 0));
-        const msg = $("#tradeMsg");
-        try {
-            const data = await fetchJSON(`/headline/game/${GAME_ID}/trade`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ position: targetPos }),
-            });
-            window._lastPos = targetPos;
-            if (msg) { msg.textContent = `Position set to ${targetPos}`; msg.style.color = "#00b894"; }
-            // Update slider
-            const slider = $("#posSlider");
-            if (slider) slider.value = targetPos;
-            updateSliderLabel(targetPos);
-        } catch (e) {
-            if (msg) { msg.textContent = String(e.message); msg.style.color = "#ff6b6b"; }
-        }
-    };
-
-    window.startGame = async function () {
-        try {
-            await fetchJSON(`/headline/game/${GAME_ID}/start`, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-            });
-            lastStateHash = "";
-            poll();
-        } catch (e) {
-            alert("Error: " + e.message);
-        }
-    };
-
-    // ---- Init ----
-    getMe().then(me => {
-        if (me) {
-            window._lastPos = 0;
-        }
-    });
-    startPolling();
+  // ---- Init ----
+  getMe().then(me => {
+    if (me) {
+      window._lastPos = 0;
+    }
+  });
+  startPolling();
 })();
