@@ -246,7 +246,7 @@ async def create_game(req: CreateRequest, user: User = Depends(current_user)):
         "players": [],
         "trades": {},  # {user_id: [{delta, price, tick}]}
         "created_by": str(user.id),
-        "created_at": dt.datetime.utcnow(),
+        "created_at": dt.datetime.now(dt.timezone.utc),
         "started_at": None,
     }
 
@@ -319,7 +319,7 @@ async def start_game(game_id: str, user: User = Depends(current_user)):
         "news_schedule": path["news_schedule"],
         "players": players,
         "trades": trades,
-        "started_at": dt.datetime.utcnow(),
+        "started_at": dt.datetime.now(dt.timezone.utc),
     })
 
     return {"ok": True, "status": "active"}
@@ -345,9 +345,12 @@ async def trade(game_id: str, req: TradeRequest, user: User = Depends(current_us
         raise HTTPException(status_code=403, detail="Not in this game")
 
     # Calculate current tick
-    started_at = game_data["started_at"]
-    if hasattr(started_at, 'timestamp'):
-        elapsed = (dt.datetime.utcnow() - started_at).total_seconds()
+    started_at = game_data.get("started_at")
+    if started_at:
+        now = dt.datetime.now(dt.timezone.utc)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=dt.timezone.utc)
+        elapsed = (now - started_at).total_seconds()
     else:
         elapsed = 0
     tick = min(int(elapsed), game_data["duration"])
@@ -419,8 +422,11 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     duration = game_data.get("duration", 300)
 
     # Calculate current tick
-    if started_at and hasattr(started_at, 'timestamp'):
-        elapsed = (dt.datetime.utcnow() - started_at).total_seconds()
+    if started_at:
+        now = dt.datetime.now(dt.timezone.utc)
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=dt.timezone.utc)
+        elapsed = (now - started_at).total_seconds()
     else:
         elapsed = 0
     tick = min(int(elapsed), duration)
