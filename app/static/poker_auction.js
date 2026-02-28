@@ -147,16 +147,17 @@
       if (state.my_bid !== null && state.my_bid !== undefined) {
         actionHTML = `<div class="pa-bid-submitted">✅ Your bid: <strong>$${state.my_bid}</strong></div>`;
       } else {
+        const minBid = (round - 1) * 5;
         actionHTML = `
           <div class="pa-bid-form">
             <label>Your bid for these cards:</label>
             <div style="display:flex;gap:8px;align-items:center;margin-top:6px;">
               <span style="font-size:20px;font-weight:700;color:var(--brand);">$</span>
-              <input type="number" id="bidAmount" min="0" max="${myMoney}" value="0"
+              <input type="number" id="bidAmount" min="${minBid}" max="${myMoney}" placeholder="${minBid}"
                 style="width:120px;padding:8px 12px;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:18px;text-align:center;">
               <button onclick="paSubmitBid()" class="btn" id="bidBtn">Submit Bid</button>
             </div>
-            <p class="muted small" style="margin-top:4px;">Budget: $${myMoney} • Winner pays 2nd highest bid</p>
+            <p class="muted small" style="margin-top:4px;">Min bid: $${minBid} • Budget: $${myMoney} • Winner pays 2nd highest bid</p>
             <p id="bidMsg" class="small" style="margin-top:4px;"></p>
           </div>
         `;

@@ -530,6 +530,12 @@ async def submit_bid(game_id: str, req: BidRequest, user: User = Depends(current
 
     if req.amount < 0:
         raise HTTPException(status_code=400, detail="Bid must be >= 0")
+
+    current_round = game_data.get("round", 1)
+    min_bid = (current_round - 1) * 5
+    if req.amount > 0 and req.amount < min_bid:
+        raise HTTPException(status_code=400, detail=f"Minimum bid for round {current_round} is ${min_bid}")
+
     if req.amount > team_money:
         raise HTTPException(status_code=400, detail=f"Bid exceeds your budget (${team_money})")
 
