@@ -281,40 +281,40 @@
 
   // ---- POST BIDDING ----
   function renderPostBidding(area, state) {
-    const listings = state.post_listings || [];
+    const listings = state.card_listings || [];
     const myMoney = state.my_money || 0;
     const myPostBids = state.my_post_bids || {};
     const myCards = state.my_cards || [];
 
     const listingsHTML = listings.map((l, idx) => {
-      const isOwnListing = l.team_id === state.my_team_id;
+      const isOwnCard = l.team_id === state.my_team_id;
       const myBid = myPostBids[String(idx)];
       const bidCount = (state.post_bids_counts || {})[String(idx)] || 0;
 
       let bidArea = '';
-      if (isOwnListing) {
-        bidArea = `<div class="muted small">Your listing (cost: $${l.cost})</div>`;
+      if (isOwnCard) {
+        bidArea = `<div class="muted small">Your card</div>`;
       } else if (myBid !== undefined) {
-        bidArea = `<div class="pa-bid-submitted">✅ Your bid: $${myBid}</div>`;
+        bidArea = `<div class="pa-bid-submitted" style="padding:6px 10px;margin:4px 0;">✅ $${myBid}</div>`;
       } else {
         bidArea = `
-          <div style="display:flex;gap:8px;align-items:center;">
+          <div style="display:flex;gap:6px;align-items:center;">
             <span style="font-weight:700;color:var(--brand);">$</span>
-            <input type="number" id="postBid_${idx}" min="0" max="${myMoney}" value="0"
-              style="width:100px;padding:6px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);text-align:center;">
+            <input type="number" id="postBid_${idx}" min="0" max="${myMoney}" placeholder="0"
+              style="width:80px;padding:4px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;color:var(--text);text-align:center;">
             <button onclick="paPostBid(${idx})" class="btn small">Bid</button>
           </div>
         `;
       }
 
       return `
-        <div class="pa-listing-card">
-          <div class="pa-listing-header">
-            <span class="pa-listing-seller">${l.team_name}'s Auction</span>
-            <span class="muted small">${bidCount} bid${bidCount !== 1 ? 's' : ''}</span>
+        <div class="pa-card-listing ${isOwnCard ? 'pa-own' : ''}">
+          <div class="pa-card-listing-info">
+            ${cardHTML(l.card)}
+            <span class="muted small">${l.team_name}</span>
+            ${bidCount > 0 ? `<span class="muted small">${bidCount} bid${bidCount !== 1 ? 's' : ''}</span>` : ''}
           </div>
-          <div class="pa-cards-display">${cardsHTML(l.cards, 'small')}</div>
-          ${bidArea}
+          <div class="pa-card-listing-bid">${bidArea}</div>
         </div>
       `;
     }).join("");
@@ -332,7 +332,7 @@
         </div>
 
         <p style="color:var(--muted);margin-bottom:16px;">
-          Bid on cards other teams are selling. Winner pays 2nd highest bid.
+          Bid on individual cards from other teams. Winner pays 2nd highest bid. If only 1 bid, it's free!
         </p>
 
         <div class="pa-my-section">
@@ -342,8 +342,8 @@
 
         ${listings.length > 0 ? `
           <div class="pa-listings-section">
-            <h3>Available Listings</h3>
-            ${listingsHTML}
+            <h3>Available Cards (${listings.length})</h3>
+            <div class="pa-card-listings-grid">${listingsHTML}</div>
           </div>
         ` : '<p class="muted" style="margin-top:16px;">No teams auctioned cards.</p>'}
 
@@ -356,11 +356,12 @@
   function renderFinished(area, state) {
     const teams = (state.teams || []).slice().sort((a, b) => b.money - a.money);
     const hands = state.poker_hands || {};
+    const handAwards = state.hand_awards || {};
 
     const standingsHTML = teams.map((t, i) => {
       const hand = hands[t.team_id] || {};
       const handCards = hand.cards || [];
-      const prize = hand.prize || 0;
+      const award = hand.award || 0;
       const medals = ['🥇', '🥈', '🥉'];
 
       return `
@@ -373,8 +374,8 @@
               <span class="pa-hand-cards">${handCards.map(c => cardHTML(c, 'tiny')).join('')}</span>
             </div>
           </div>
-          <div class="pa-final-prize" style="color:${prize >= 0 ? '#00b894' : '#ff6b6b'};">
-            Hand: ${prize >= 0 ? '+' : ''}$${prize}
+          <div class="pa-final-prize" style="color:${award > 0 ? '#00b894' : '#636e72'};">
+            +$${award}
           </div>
           <div class="pa-final-money">
             <strong>$${t.money}</strong>
@@ -382,6 +383,14 @@
         </div>
       `;
     }).join("");
+
+    // Hand awards reference table
+    const awardsTableHTML = Object.entries(handAwards).map(([name, amt]) => `
+      <div class="pa-award-row">
+        <span class="pa-award-hand">${name}</span>
+        <span class="pa-award-amt ${amt > 0 ? '' : 'dim'}">$${amt}</span>
+      </div>
+    `).join("");
 
     // Round history
     const historyHTML = (state.round_history || []).map(h => `
@@ -400,6 +409,11 @@
         <div class="results-section">
           <h3>Final Rankings (by Total Money)</h3>
           <div class="pa-final-standings">${standingsHTML}</div>
+        </div>
+
+        <div class="results-section">
+          <h3>🃏 Hand Awards</h3>
+          <div class="pa-awards-table">${awardsTableHTML}</div>
         </div>
 
         <div class="results-section">

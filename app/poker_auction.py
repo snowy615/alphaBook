@@ -32,7 +32,19 @@ RANK_NAMES = {1: "A", 10: "10", 11: "J", 12: "Q", 13: "K"}
 SUIT_SYMBOLS = {"hearts": "♥", "diamonds": "♦", "clubs": "♣", "spades": "♠"}
 
 ROUND_SCHEDULE = [2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 4, 2, 2]  # 13 rounds = 52 cards
-HAND_PRIZES = [2000, 1500, 1100, 700, 400, 200, 0, -500]  # rank 1-8
+# Fixed dollar awards per hand type
+HAND_AWARDS = {
+    9: 2500,   # Royal Flush
+    8: 2000,   # Straight Flush
+    7: 1500,   # Four of a Kind
+    6: 1200,   # Full House
+    5: 1000,   # Flush
+    4: 800,    # Straight
+    3: 500,    # Three of a Kind
+    2: 300,    # Two Pair
+    1: 100,    # One Pair
+    0: 0,      # High Card
+}
 
 
 def card_label(card):
@@ -399,66 +411,76 @@ async def advance(game_id: str, user: User = Depends(current_user)):
             return {"ok": True, "action": "round_result", "winner": winner_id, "paid": second_bid}
 
     elif status == "post_auction":
-        # Move to post-auction bidding phase
+        # Process sell-to-host, build per-card listings, move to bidding
         teams = game_data.get("teams", [])
-        post_listings = game_data.get("post_listings", [])
 
-        # Process sell-to-host orders
+        # Process sell-to-host orders first
         post_sells = game_data.get("post_sells", {})
         for team in teams:
             tid = team["team_id"]
             sell_indices = post_sells.get(tid, [])
             if sell_indices:
-                # Sort indices descending to avoid shift issues
                 sell_indices_sorted = sorted(sell_indices, reverse=True)
                 for idx in sell_indices_sorted:
                     if 0 <= idx < len(team["cards"]):
                         team["cards"].pop(idx)
                         team["money"] += 20
 
-        # Deduct auction listing costs
-        for listing in post_listings:
+        # Build per-card listings from auction submissions
+        raw_listings = game_data.get("post_listings", [])
+        card_listings = []  # each entry = one card
+        for listing in raw_listings:
+            cost = auction_cost(len(listing["cards"]))
+            # Deduct listing cost from seller
             for team in teams:
                 if team["team_id"] == listing["team_id"]:
-                    cost = auction_cost(len(listing["cards"]))
                     team["money"] -= cost
                     # Remove auctioned cards from team
-                    # Cards were stored as actual card objects in listing
                     for card in listing["cards"]:
                         for i, tc in enumerate(team["cards"]):
                             if tc["suit"] == card["suit"] and tc["rank"] == card["rank"]:
                                 team["cards"].pop(i)
                                 break
                     break
+            # Create individual card listings
+            for card in listing["cards"]:
+                card_listings.append({
+                    "team_id": listing["team_id"],
+                    "team_name": listing["team_name"],
+                    "card": card,
+                })
 
         await doc.reference.update({
             "status": "post_bidding",
             "teams": teams,
+            "card_listings": card_listings,
             "post_bids": {},
         })
         return {"ok": True, "action": "post_bidding"}
 
     elif status == "post_bidding":
-        # Resolve post-auction bids and move to hand evaluation
+        # Resolve per-card auctions and evaluate hands
         teams = game_data.get("teams", [])
-        post_listings = game_data.get("post_listings", [])
+        card_listings = game_data.get("card_listings", [])
         post_bids = game_data.get("post_bids", {})
 
-        # Resolve each listing
-        for idx, listing in enumerate(post_listings):
+        # Resolve each card listing
+        for idx, listing in enumerate(card_listings):
             listing_bids = post_bids.get(str(idx), {})
             if not listing_bids:
-                continue  # No bids, cards go to waste
+                listing["winner"] = None
+                listing["paid"] = 0
+                continue  # No bids, card goes to waste
 
             sorted_b = sorted(listing_bids.items(), key=lambda x: x[1], reverse=True)
             winner_id = sorted_b[0][0]
             second_price = sorted_b[1][1] if len(sorted_b) > 1 else 0
 
-            # Winner gets cards, pays second price
+            # Winner gets card, pays second price
             seller_id = listing["team_id"]
             for team in teams:
                 if team["team_id"] == winner_id:
-                    team["cards"].extend(listing["cards"])
+                    team["cards"].append(listing["card"])
                     team["money"] -= second_price
                 if team["team_id"] == seller_id:
                     team["money"] += second_price
@@ -466,38 +488,26 @@ async def advance(game_id: str, user: User = Depends(current_user)):
             listing["winner"] = winner_id
             listing["paid"] = second_price
 
-        # Evaluate poker hands
+        # Evaluate poker hands and award fixed $ per hand type
         poker_hands = {}
         for team in teams:
             hand = best_poker_hand(team["cards"])
+            hand_rank = hand["rank"]
+            award = HAND_AWARDS.get(hand_rank, 0)
+            team["money"] += award
             poker_hands[team["team_id"]] = {
                 "cards": [card_label(c) for c in hand["cards"]],
-                "rank": hand["rank"],
+                "rank": hand_rank,
                 "rank_name": hand["rank_name"],
                 "score": list(hand["score"]),
+                "award": award,
             }
-
-        # Rank hands and assign prizes
-        hand_rankings = sorted(
-            poker_hands.items(),
-            key=lambda x: (x[1]["score"][0], x[1]["score"][1]),
-            reverse=True
-        )
-
-        for i, (tid, hand_info) in enumerate(hand_rankings):
-            prize = HAND_PRIZES[i] if i < len(HAND_PRIZES) else -500
-            hand_info["prize"] = prize
-            hand_info["hand_position"] = i + 1
-            for team in teams:
-                if team["team_id"] == tid:
-                    team["money"] += prize
-                    break
 
         await doc.reference.update({
             "status": "finished",
             "teams": teams,
             "poker_hands": poker_hands,
-            "post_listings": post_listings,
+            "card_listings": card_listings,
         })
         return {"ok": True, "action": "finished"}
 
@@ -631,13 +641,13 @@ async def submit_post_bid(game_id: str, req: PostBidRequest, user: User = Depend
     if not team_id:
         raise HTTPException(status_code=403, detail="Not in this game")
 
-    post_listings = game_data.get("post_listings", [])
-    if req.listing_idx < 0 or req.listing_idx >= len(post_listings):
+    card_listings = game_data.get("card_listings", [])
+    if req.listing_idx < 0 or req.listing_idx >= len(card_listings):
         raise HTTPException(status_code=400, detail="Invalid listing index")
 
     # Can't bid on own listing
-    if post_listings[req.listing_idx]["team_id"] == team_id:
-        raise HTTPException(status_code=400, detail="Cannot bid on your own listing")
+    if card_listings[req.listing_idx]["team_id"] == team_id:
+        raise HTTPException(status_code=400, detail="Cannot bid on your own card")
 
     if req.amount < 0:
         raise HTTPException(status_code=400, detail="Bid must be >= 0")
@@ -739,16 +749,14 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         result["all_submitted"] = len(post_submitted) >= len(teams)
 
     elif status == "post_bidding":
-        post_listings = game_data.get("post_listings", [])
-        result["post_listings"] = [{
+        card_listings = game_data.get("card_listings", [])
+        result["card_listings"] = [{
             "team_id": l["team_id"],
             "team_name": l["team_name"],
-            "cards": [card_label(c) for c in l["cards"]],
-            "cost": l["cost"],
-        } for l in post_listings]
+            "card": card_label(l["card"]),
+        } for l in card_listings]
 
         post_bids = game_data.get("post_bids", {})
-        # Show which listings this team has bid on
         my_post_bids = {}
         for lidx, bids in post_bids.items():
             if my_team_id in bids:
@@ -758,15 +766,16 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
 
     elif status == "finished":
         result["poker_hands"] = game_data.get("poker_hands", {})
+        result["hand_awards"] = {HAND_RANK_NAMES[k]: v for k, v in HAND_AWARDS.items()}
         result["round_history"] = game_data.get("round_history", [])
-        post_listings = game_data.get("post_listings", [])
-        result["post_results"] = [{
+        card_listings = game_data.get("card_listings", [])
+        result["card_results"] = [{
             "team_id": l["team_id"],
             "team_name": l["team_name"],
-            "cards": [card_label(c) for c in l["cards"]],
+            "card": card_label(l["card"]),
             "winner": l.get("winner"),
             "paid": l.get("paid", 0),
-        } for l in post_listings]
+        } for l in card_listings]
 
     result["round_history"] = [
         {
