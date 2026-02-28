@@ -674,3 +674,7 @@ app.include_router(fiveos.router)
 
 from app import headline
 app.include_router(headline.router)
+
+from app import poker_auction
+app.include_router(poker_auction.router)
+

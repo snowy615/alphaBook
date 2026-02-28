@@ -2000,3 +2000,467 @@ body {
   border-radius: 6px;
   border-left: 3px solid var(--brand);
 }
+
+/* ===== POKER AUCTION ===== */
+.pa-loading {
+  text-align: center;
+  padding: 60px;
+  color: var(--muted);
+}
+
+.pa-game {
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.pa-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.pa-header h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.pa-round-info {
+  font-size: 14px;
+  color: var(--brand);
+  font-weight: 700;
+  background: rgba(108, 92, 231, 0.15);
+  padding: 4px 12px;
+  border-radius: 6px;
+}
+
+/* Cards */
+.pa-card {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 54px;
+  height: 76px;
+  border-radius: 8px;
+  border: 2px solid var(--border);
+  background: #1e272e;
+  font-weight: 800;
+  margin: 3px;
+  cursor: default;
+  transition: transform 0.15s;
+}
+
+.pa-card:hover {
+  transform: translateY(-3px);
+}
+
+.pa-card.red {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+
+.pa-card.black {
+  color: #dfe6e9;
+  border-color: rgba(223, 230, 233, 0.3);
+}
+
+.pa-card-rank {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.pa-card-suit {
+  font-size: 20px;
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.pa-card.small {
+  width: 40px;
+  height: 56px;
+}
+
+.pa-card.small .pa-card-rank {
+  font-size: 13px;
+}
+
+.pa-card.small .pa-card-suit {
+  font-size: 15px;
+}
+
+.pa-card.tiny {
+  width: 30px;
+  height: 42px;
+  margin: 1px;
+}
+
+.pa-card.tiny .pa-card-rank {
+  font-size: 11px;
+}
+
+.pa-card.tiny .pa-card-suit {
+  font-size: 12px;
+}
+
+.pa-cards-display {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 8px 0;
+}
+
+/* Sections */
+.pa-auction-section,
+.pa-my-section,
+.pa-teams-section,
+.pa-listings-section {
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+  margin-bottom: 16px;
+}
+
+.pa-auction-section h3,
+.pa-my-section h3,
+.pa-teams-section h3,
+.pa-listings-section h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+/* Team rows */
+.pa-team-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+}
+
+.pa-team-row.pa-mine {
+  background: rgba(108, 92, 231, 0.12);
+}
+
+.pa-team-name {
+  flex: 1;
+  font-weight: 600;
+}
+
+.pa-team-cards {
+  color: var(--muted);
+  font-size: 12px;
+  width: 60px;
+  text-align: center;
+}
+
+.pa-team-money {
+  font-weight: 700;
+  color: #00b894;
+  width: 70px;
+  text-align: right;
+}
+
+.pa-team-bid-status {
+  width: 30px;
+  text-align: center;
+}
+
+/* Bid form */
+.pa-bid-form {
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(108, 92, 231, 0.08);
+  border: 1px solid var(--brand);
+  margin: 12px 0;
+}
+
+.pa-bid-form label {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.pa-bid-submitted {
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(0, 184, 148, 0.12);
+  border: 1px solid rgba(0, 184, 148, 0.3);
+  color: #00b894;
+  font-weight: 600;
+  margin: 12px 0;
+}
+
+/* Result */
+.pa-result-box {
+  padding: 16px;
+  border-radius: 12px;
+  background: rgba(253, 203, 110, 0.08);
+  border: 1px solid rgba(253, 203, 110, 0.3);
+  margin: 12px 0;
+  text-align: center;
+}
+
+.pa-result-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.pa-result-paid {
+  font-size: 14px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.pa-bids-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  justify-content: center;
+}
+
+.pa-bid-chip {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+}
+
+.pa-bid-chip.winner {
+  background: rgba(0, 184, 148, 0.15);
+  border-color: #00b894;
+  color: #00b894;
+}
+
+/* Post-auction */
+.pa-card-select-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pa-card-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 8px;
+  transition: background 0.15s;
+}
+
+.pa-card-checkbox:hover {
+  background: rgba(108, 92, 231, 0.1);
+}
+
+.pa-card-checkbox input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
+.pa-submit-status {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+}
+
+.pa-submit-status.done {
+  background: rgba(0, 184, 148, 0.12);
+  border-color: #00b894;
+  color: #00b894;
+}
+
+.pa-btn-sell {
+  background: #00b894 !important;
+}
+
+.pa-btn-auction {
+  background: #6c5ce7 !important;
+}
+
+/* Post-bidding listings */
+.pa-listing-card {
+  padding: 14px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.02);
+  margin-bottom: 12px;
+}
+
+.pa-listing-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.pa-listing-seller {
+  font-weight: 700;
+  font-size: 14px;
+}
+
+/* Final standings */
+.pa-final-standings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.pa-final-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid var(--border);
+}
+
+.pa-final-row.pa-final-top {
+  background: rgba(108, 92, 231, 0.08);
+  border-color: var(--brand);
+}
+
+.pa-final-rank {
+  font-size: 20px;
+  width: 40px;
+  text-align: center;
+}
+
+.pa-final-info {
+  flex: 1;
+}
+
+.pa-final-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+
+.pa-final-hand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pa-hand-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--brand);
+  background: rgba(108, 92, 231, 0.15);
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+
+.pa-hand-cards {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.pa-final-prize {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.pa-final-money {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--brand);
+}
+
+/* History */
+.pa-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pa-history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.pa-history-round {
+  font-weight: 700;
+  color: var(--brand);
+  width: 30px;
+}
+
+.pa-history-cards {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.pa-history-winner {
+  font-weight: 600;
+  width: 100px;
+}
+
+.pa-history-paid {
+  font-weight: 600;
+  color: #00b894;
+  width: 50px;
+  text-align: right;
+}
+
+/* Rules badges */
+.pa-round-badge {
+  padding: 4px 10px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  background: rgba(108, 92, 231, 0.12);
+  color: var(--brand);
+  border: 1px solid rgba(108, 92, 231, 0.25);
+}
+
+.pa-prize-badge {
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.pa-prize-badge.gold {
+  background: rgba(253, 203, 110, 0.2);
+  border-color: #fdcb6e;
+  color: #fdcb6e;
+}
+
+.pa-prize-badge.silver {
+  background: rgba(223, 230, 233, 0.15);
+  border-color: #b2bec3;
+  color: #b2bec3;
+}
+
+.pa-prize-badge.bronze {
+  background: rgba(225, 112, 85, 0.15);
+  border-color: #e17055;
+  color: #e17055;
+}
+
+.pa-prize-badge.dim {
+  color: var(--muted);
+}
+
+.pa-prize-badge.neg {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.3);
+}

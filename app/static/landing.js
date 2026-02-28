@@ -55,6 +55,18 @@
     });
     grid.appendChild(headlineCard);
 
+    // 4) Poker Auction card
+    const pokerCard = createCard({
+      icon: "🃏",
+      name: "Poker Auction",
+      subtitle: "Card Auction",
+      accentFrom: "#ffeaa7",
+      accentTo: "#fdcb6e",
+      onClick: () => navigate("/poker-auction"),
+    });
+    grid.appendChild(pokerCard);
+
+
     // 3) Custom games (each as its own card)
     const otherGames = groups.other || [];
     otherGames.forEach(game => {
