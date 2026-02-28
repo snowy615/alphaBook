@@ -236,8 +236,7 @@
     }).join("");
 
     const adminBtn = state.is_admin ? `
-      <button onclick="paAdvance()" class="btn" id="advanceBtn" style="margin-top:16px;"
-        ${!state.all_submitted ? 'disabled title="Wait for all teams"' : ''}>
+      <button onclick="paAdvance()" class="btn" id="advanceBtn" style="margin-top:16px;">
         🔨 Close Post-Auction & Start Bidding
       </button>
     ` : '';
