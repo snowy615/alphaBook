@@ -281,8 +281,8 @@ async def start_game(game_id: str, user: User = Depends(current_user)):
         return {"ok": True, "status": game_data["status"]}
 
     teams = game_data.get("teams", [])
-    if len(teams) < 2:
-        raise HTTPException(status_code=400, detail="Need at least 2 teams")
+    if len(teams) < 1:
+        raise HTTPException(status_code=400, detail="Need at least 1 team")
 
     # Shuffle a full deck for the market auction (52 cards)
     deck = list(FULL_DECK)
