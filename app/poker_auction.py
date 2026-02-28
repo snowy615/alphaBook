@@ -34,12 +34,12 @@ SUIT_SYMBOLS = {"hearts": "♥", "diamonds": "♦", "clubs": "♣", "spades": "�
 ROUND_SCHEDULE = [2, 3, 4, 5, 5, 5, 5, 5, 5, 5, 4, 2, 2]  # 13 rounds = 52 cards
 # Fixed dollar awards per hand type
 HAND_AWARDS = {
-    9: 2500,   # Royal Flush
-    8: 2000,   # Straight Flush
-    7: 1500,   # Four of a Kind
-    6: 1200,   # Full House
-    5: 1000,   # Flush
-    4: 800,    # Straight
+    9: 10000,  # Royal Flush
+    8: 5000,   # Straight Flush
+    7: 3000,   # Four of a Kind
+    6: 2000,   # Full House
+    5: 1500,   # Flush
+    4: 1000,   # Straight
     3: 500,    # Three of a Kind
     2: 300,    # Two Pair
     1: 100,    # One Pair
