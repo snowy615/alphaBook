@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mental Math - {{ app_name }}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+    <div class="topbar">
+        <div class="brand">
+            <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+                <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+                <div class="titles">
+                    <h1>{{ app_name }}</h1>
+                    <div class="subtitle">← Back to Games</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <div id="loginBox" class="hidden"><a href="/login" class="btn">Login</a><a href="/signup" class="btn">Sign
+                    up</a></div>
+            <div id="userBox" class="hidden">
+                <span id="userName">user</span>
+                <form method="post" action="/logout" style="display:inline"><button type="submit"
+                        class="btn ghost">Logout</button></form>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="mm-rules">
+            <h2>🧮 Mental Math — Rules</h2>
+
+            <div class="rules-section">
+                <h3>🎯 How It Works</h3>
+                <p>Answer timed math questions as fast as you can. The admin configures question types, difficulty,
+                    number of questions, and time per question. Answer before the timer runs out!</p>
+            </div>
+
+            <div class="rules-section">
+                <h3>📊 Question Types</h3>
+                <div
+                    style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 8px;">
+                    <div class="mm-type-badge">➕ Addition</div>
+                    <div class="mm-type-badge">➖ Subtraction</div>
+                    <div class="mm-type-badge">✖️ Multiplication</div>
+                    <div class="mm-type-badge">➗ Division</div>
+                    <div class="mm-type-badge">📐 Exponents</div>
+                    <div class="mm-type-badge">⚖️ Comparison</div>
+                    <div class="mm-type-badge">🔢 Patterns</div>
+                    <div class="mm-type-badge">💯 Percentage</div>
+                </div>
+            </div>
+
+            <div class="rules-section">
+                <h3>🏆 Scoring</h3>
+                <p>Each correct answer = <strong>1 point</strong>. If time runs out, the question is skipped (0 points).
+                    The player with the most correct answers wins!</p>
+            </div>
+
+            <hr style="border-color: var(--border); margin: 32px 0;">
+
+            <!-- Admin: Create Game -->
+            <div id="adminCreate" class="hidden">
+                <div class="rules-section" style="border-color: var(--brand);">
+                    <h3>🛠️ Admin — Create Game</h3>
+
+                    <div class="mm-settings-grid">
+                        <div class="mm-setting-group">
+                            <label class="mm-label">Question Types</label>
+                            <div class="mm-checkbox-grid">
+                                <label class="mm-checkbox"><input type="checkbox" value="addition" checked>
+                                    Addition</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="subtraction" checked>
+                                    Subtraction</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="multiplication" checked>
+                                    Multiplication</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="division"> Division</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="exponent"> Exponents</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="comparison"> Comparison</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="pattern"> Patterns</label>
+                                <label class="mm-checkbox"><input type="checkbox" value="percentage"> Percentage</label>
+                            </div>
+                        </div>
+
+                        <div class="mm-setting-group">
+                            <label class="mm-label">Difficulty</label>
+                            <div class="mm-radio-group">
+                                <label class="mm-radio"><input type="radio" name="difficulty" value="easy"> Easy</label>
+                                <label class="mm-radio"><input type="radio" name="difficulty" value="medium" checked>
+                                    Medium</label>
+                                <label class="mm-radio"><input type="radio" name="difficulty" value="hard"> Hard</label>
+                            </div>
+                        </div>
+
+                        <div class="mm-setting-row">
+                            <div class="mm-setting-group">
+                                <label class="mm-label">Number of Questions</label>
+                                <input type="number" id="numQuestions" value="10" min="5" max="50" class="mm-input">
+                            </div>
+
+                            <div class="mm-setting-group">
+                                <label class="mm-label">Time per Question: <span id="timeDisplay">15</span>s</label>
+                                <input type="range" id="timeSlider" min="5" max="60" value="15" step="1"
+                                    class="mm-slider"
+                                    oninput="document.getElementById('timeDisplay').textContent = this.value">
+                            </div>
+                        </div>
+                    </div>
+
+                    <button onclick="createGame()" class="btn primary" id="createBtn"
+                        style="margin-top: 16px; width: 100%;">Create New Game</button>
+                    <div id="createResult" class="hidden" style="margin-top: 16px; text-align: center;">
+                        <p style="margin-bottom: 4px; color: var(--muted); font-size: 13px;">GAME CREATED — SHARE THIS
+                            CODE</p>
+                        <div id="createdCode"
+                            style="font-size: 32px; font-weight: 800; letter-spacing: 8px; color: var(--brand); margin: 8px 0;">
+                        </div>
+                        <a id="createdLink" href="#" class="btn primary" style="margin-top: 8px;">Go to Game Lobby →</a>
+                    </div>
+                </div>
+                <hr style="border-color: var(--border); margin: 32px 0;">
+            </div>
+
+            <div class="mm-join">
+                <h3>Join a Game</h3>
+                <p>Enter the 6-character code from your game admin:</p>
+                <div class="join-form">
+                    <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                    <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
+                </div>
+                <p id="joinMsg" class="small" style="margin-top: 8px;"></p>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer">
+        <p>{{ app_name }} • Mental Math</p>
+    </div>
+
+    <script>
+        // Auth
+        (async function () {
+            const fetchJSON = async (url, init) => {
+                const r = await fetch(url, { credentials: "include", ...init });
+                if (!r.ok) throw new Error(String(r.status));
+                return r.json();
+            };
+            try {
+                const me = await fetchJSON("/me");
+                document.getElementById("loginBox").classList.add("hidden");
+                document.getElementById("userBox").classList.remove("hidden");
+                document.getElementById("userName").textContent = me.username || "user";
+                if (me.is_admin) {
+                    document.getElementById("adminCreate").classList.remove("hidden");
+                }
+            } catch {
+                document.getElementById("loginBox").classList.remove("hidden");
+                document.getElementById("userBox").classList.add("hidden");
+            }
+        })();
+
+        async function createGame() {
+            const btn = document.getElementById("createBtn");
+            btn.disabled = true;
+            btn.textContent = "Creating...";
+            try {
+                const types = [];
+                document.querySelectorAll('.mm-checkbox input:checked').forEach(cb => types.push(cb.value));
+                const difficulty = document.querySelector('input[name="difficulty"]:checked')?.value || "medium";
+                const numQuestions = parseInt(document.getElementById("numQuestions").value) || 10;
+                const timePerQuestion = parseInt(document.getElementById("timeSlider").value) || 15;
+
+                if (types.length === 0) {
+                    btn.textContent = "Select at least one type!";
+                    setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+                    return;
+                }
+
+                const r = await fetch("/mental-math/create", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        question_types: types,
+                        difficulty: difficulty,
+                        num_questions: numQuestions,
+                        time_per_question: timePerQuestion,
+                    }),
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    document.getElementById("createdCode").textContent = data.join_code;
+                    document.getElementById("createdLink").href = `/mental-math/game/${data.game_id}`;
+                    document.getElementById("createResult").classList.remove("hidden");
+                    btn.textContent = "✅ Created!";
+                } else {
+                    btn.textContent = data.detail || "Error";
+                    setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+                }
+            } catch (e) {
+                btn.textContent = "Error";
+                setTimeout(() => { btn.textContent = "Create New Game"; btn.disabled = false; }, 2000);
+            }
+        }
+
+        async function joinGame() {
+            const code = document.getElementById("joinCode").value.trim();
+            const msg = document.getElementById("joinMsg");
+            if (!code || code.length < 4) { msg.textContent = "Enter a valid code"; return; }
+            try {
+                const r = await fetch("/mental-math/join", {
+                    method: "POST",
+                    credentials: "include",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ join_code: code }),
+                });
+                const data = await r.json();
+                if (r.ok && data.game_id) {
+                    window.location.href = `/mental-math/game/${data.game_id}`;
+                } else {
+                    msg.textContent = data.detail || "Could not join game";
+                    msg.style.color = "#ff6b6b";
+                }
+            } catch (e) {
+                msg.textContent = "Error joining game";
+                msg.style.color = "#ff6b6b";
+            }
+        }
+
+        document.getElementById("joinCode").addEventListener("keydown", e => {
+            if (e.key === "Enter") joinGame();
+        });
+    </script>
+</body>
+
+</html>

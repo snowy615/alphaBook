@@ -80,3 +80,19 @@ class FiveOsSubmission(BaseModel):
     pos_q1: str = "long"  # long / short
     pos_q2: str = "long"
     pos_q3: str = "long"
+
+
+class MentalMathGame(BaseModel):
+    id: Optional[str] = None
+    join_code: str = ""
+    status: str = "lobby"  # lobby, playing, finished
+    settings: dict = Field(default_factory=dict)
+    # settings = {question_types: [...], difficulty: str, num_questions: int, time_per_question: int}
+    questions: list = Field(default_factory=list)
+    # [{text, answer, type}, ...]
+    players: list = Field(default_factory=list)
+    # [{user_id, username}]
+    results: dict = Field(default_factory=dict)
+    # {user_id: {score: int, answers: [...]}}
+    created_by: str = ""
+    created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)

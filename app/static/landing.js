@@ -66,6 +66,17 @@
     });
     grid.appendChild(pokerCard);
 
+    // 5) Mental Math card
+    const mentalMathCard = createCard({
+      icon: "🧮",
+      name: "Mental Math",
+      subtitle: "Speed Quiz",
+      accentFrom: "#55efc4",
+      accentTo: "#00b894",
+      onClick: () => navigate("/mental-math"),
+    });
+    grid.appendChild(mentalMathCard);
+
 
     // 3) Custom games (each as its own card)
     const otherGames = groups.other || [];
