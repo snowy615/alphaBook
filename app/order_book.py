@@ -149,6 +149,18 @@ class OrderBook:
             "asks": [level(px, q) for px, q in asks],
         }
 
+    def has_active_order(self, order_id: str) -> bool:
+        """Return True if order_id is still resting in the book."""
+        for dq in self.bids.values():
+            for o in dq:
+                if o.id == order_id:
+                    return True
+        for dq in self.asks.values():
+            for o in dq:
+                if o.id == order_id:
+                    return True
+        return False
+
     def cancel_all_for_user(self, user_id: str) -> int:
         """Remove every resting order belonging to user_id. Returns count removed."""
         removed = 0
