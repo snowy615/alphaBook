@@ -1,9 +1,11 @@
 from pathlib import Path
-import asyncio, uuid, json, time
+import asyncio, uuid, json, time, logging
 from collections import defaultdict
 from decimal import Decimal
 from typing import Dict, Set, List
 import datetime as dt
+
+log = logging.getLogger("uvicorn.error")
 
 # Load env vars explicitly
 from dotenv import load_dotenv
@@ -28,6 +30,7 @@ from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame, Mar
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
+from app.market_maker import start_market_maker, BOT_USER_ID
 
 app = FastAPI(title="AlphaBook")
 
@@ -161,9 +164,71 @@ async def _startup():
     except Exception as e:
         print(f"⚠️ Failed to reload open orders: {e}")
 
+    # Start market maker bot
+    print("🔄 Starting market maker bot...")
+    asyncio.create_task(
+        start_market_maker(DEFAULT_SYMBOLS, broadcast_fn=_broadcast, fill_handler=_bot_fill_handler)
+    )
+    print("✅ Market maker bot started")
+
     print("=" * 60)
     print("✅ AlphaBook Started Successfully!")
     print("=" * 60)
+
+
+# ---- Bot fill handler (market maker → Firestore) ----
+async def _bot_fill_handler(symbol: str, fills: list) -> None:
+    """
+    Called by the market maker when it sweeps a stale user order.
+    Records the trade in Firestore and updates in-memory positions.
+    Also marks the swept user order as FILLED in Firestore.
+    """
+    if not fills:
+        return
+    try:
+        batch = db_module.db.batch()
+        for tr in fills:
+            px: Decimal = tr["price"]
+            q: Decimal  = tr["qty"]
+            buyer_id   = str(tr["buyer_id"])
+            seller_id  = str(tr["seller_id"])
+
+            # Trade record
+            trade_id = str(uuid.uuid4())
+            trade = DBTrade(
+                symbol=symbol,
+                buyer_id=buyer_id,
+                seller_id=seller_id,
+                price=str(px),
+                qty=str(q),
+                buy_order_id="",
+                sell_order_id="",
+                created_at=dt.datetime.utcnow(),
+            )
+            batch.set(
+                db_module.db.collection("trades").document(trade_id),
+                trade.model_dump(exclude={"id"}),
+            )
+
+            # Mark the swept user order as FILLED
+            maker_oid = tr.get("maker_order_id")
+            if maker_oid:
+                order_ref = db_module.db.collection("orders").document(maker_oid)
+                batch.update(order_ref, {
+                    "status": "FILLED",
+                    "filled_qty": str(q),
+                    "updated_at": dt.datetime.utcnow(),
+                })
+
+            # Update in-memory positions
+            _apply_buy(positions[buyer_id][symbol], px, q)
+            _apply_sell(positions[seller_id][symbol], px, q)
+
+        await batch.commit()
+        log.info("[MM] Recorded %d sweep fill(s) for %s", len(fills), symbol)
+    except Exception:
+        import traceback
+        log.error("[MM] fill_handler error for %s:\n%s", symbol, traceback.format_exc())
 
 
 # ---- PnL helpers ----

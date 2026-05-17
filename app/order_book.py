@@ -149,6 +149,19 @@ class OrderBook:
             "asks": [level(px, q) for px, q in asks],
         }
 
+    def cancel_all_for_user(self, user_id: str) -> int:
+        """Remove every resting order belonging to user_id. Returns count removed."""
+        removed = 0
+        for side in (self.bids, self.asks):
+            for px in list(side.keys()):
+                dq = side[px]
+                before = len(dq)
+                side[px] = deque(o for o in dq if o.user_id != user_id)
+                removed += before - len(side[px])
+                if not side[px]:
+                    del side[px]
+        return removed
+
     def clear_all_orders(self):
         """Clear all orders from this book"""
         self.bids.clear()
