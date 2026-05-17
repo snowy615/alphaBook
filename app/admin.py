@@ -17,6 +17,30 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+GAME_COLLECTIONS = {
+    "custom":        "custom_games",
+    "fiveos":        "fiveos_games",
+    "headline":      "headline_games",
+    "poker_auction": "poker_auction_games",
+    "mental_math":   "mental_math_games",
+}
+
+GAME_TYPE_LABELS = {
+    "custom":        "Custom",
+    "fiveos":        "5Os",
+    "headline":      "Headline",
+    "poker_auction": "Poker Auction",
+    "mental_math":   "Mental Math",
+}
+
+
+def _collection_for(game_type: str) -> str:
+    coll = GAME_COLLECTIONS.get(game_type)
+    if not coll:
+        raise HTTPException(status_code=404, detail=f"Unknown game type: {game_type}")
+    return coll
+
+
 def require_admin(user: User = Depends(current_user)):
     """Dependency to check if user is admin"""
     if not user.is_admin:
@@ -201,11 +225,50 @@ async def admin_dashboard(
     # Sort by P&L for leaderboard
     leaderboard = sorted(user_stats, key=lambda x: x["pnl"], reverse=True)
 
-    # Get custom games
-    games_ref = db_module.db.collection("custom_games")
-    g_q = games_ref.where("is_active", "==", True)
-    g_docs = await g_q.get()
-    games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
+    # Get all games across custom + built-in collections
+    games = []
+
+    # Custom games (filter on is_active)
+    custom_q = db_module.db.collection("custom_games").where("is_active", "==", True)
+    for d in await custom_q.get():
+        data = d.to_dict()
+        games.append({
+            "id": d.id,
+            "type": "custom",
+            "type_label": GAME_TYPE_LABELS["custom"],
+            "symbol": data.get("symbol", ""),
+            "name": data.get("name", ""),
+            "instructions": data.get("instructions", ""),
+            "expected_value": data.get("expected_value"),
+            "is_visible": data.get("is_visible", True),
+            "is_paused": data.get("is_paused", False),
+            "created_at": data.get("created_at"),
+        })
+
+    # Built-in games — filter out finished docs
+    for gtype in ("fiveos", "headline", "poker_auction", "mental_math"):
+        coll = db_module.db.collection(GAME_COLLECTIONS[gtype])
+        for d in await coll.get():
+            data = d.to_dict()
+            if data.get("status") == "finished":
+                continue
+            join_code = data.get("join_code", "")
+            label = GAME_TYPE_LABELS[gtype]
+            games.append({
+                "id": d.id,
+                "type": gtype,
+                "type_label": label,
+                "symbol": join_code,
+                "name": f"{label} · {join_code}" if join_code else label,
+                "instructions": "-",
+                "expected_value": None,
+                "is_visible": data.get("is_visible", True),
+                "is_paused": data.get("is_paused", False),
+                "created_at": data.get("created_at"),
+            })
+
+    # Sort newest first; treat missing created_at as epoch
+    games.sort(key=lambda g: g.get("created_at") or dt.datetime.min, reverse=True)
 
     return templates.TemplateResponse("admin.html", {
         "request": request,
@@ -428,6 +491,59 @@ async def resolve_game(
         "old_value": old_value,
         "new_value": resolve_data.expected_value
     }
+
+
+# ---- Generic typed game admin endpoints (works for custom + built-in) ----
+
+async def _get_game_doc(game_type: str, game_id: str):
+    coll_name = _collection_for(game_type)
+    doc_ref = db_module.db.collection(coll_name).document(game_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail="Game not found")
+    return doc_ref
+
+
+@router.post("/admin/games/{game_type}/{game_id}/pause")
+async def pause_game_typed(game_type: str, game_id: str, admin: User = Depends(require_admin)):
+    doc_ref = await _get_game_doc(game_type, game_id)
+    await doc_ref.update({"is_paused": True})
+    return {"ok": True, "id": game_id, "is_paused": True}
+
+
+@router.post("/admin/games/{game_type}/{game_id}/resume")
+async def resume_game_typed(game_type: str, game_id: str, admin: User = Depends(require_admin)):
+    doc_ref = await _get_game_doc(game_type, game_id)
+    await doc_ref.update({"is_paused": False})
+    return {"ok": True, "id": game_id, "is_paused": False}
+
+
+@router.post("/admin/games/{game_type}/{game_id}/hide")
+async def hide_game_typed(game_type: str, game_id: str, admin: User = Depends(require_admin)):
+    doc_ref = await _get_game_doc(game_type, game_id)
+    await doc_ref.update({"is_visible": False})
+    return {"ok": True, "id": game_id, "is_visible": False}
+
+
+@router.post("/admin/games/{game_type}/{game_id}/show")
+async def show_game_typed(game_type: str, game_id: str, admin: User = Depends(require_admin)):
+    doc_ref = await _get_game_doc(game_type, game_id)
+    await doc_ref.update({"is_visible": True})
+    return {"ok": True, "id": game_id, "is_visible": True}
+
+
+@router.delete("/admin/games/{game_type}/{game_id}")
+async def delete_game_typed(game_type: str, game_id: str, admin: User = Depends(require_admin)):
+    doc_ref = await _get_game_doc(game_type, game_id)
+    if game_type == "custom":
+        await doc_ref.update({
+            "is_active": False,
+            "updated_at": dt.datetime.utcnow(),
+        })
+    else:
+        # Built-in games use status lifecycle
+        await doc_ref.update({"status": "finished"})
+    return {"ok": True, "message": "Game deleted"}
 
 
 @router.post("/admin/users/{user_id}/blacklist")

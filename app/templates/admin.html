@@ -341,6 +341,7 @@
         <thead>
           <tr>
             <th>Symbol</th>
+            <th>Type</th>
             <th>Name</th>
             <th>Instructions</th>
             <th>Expected Value</th>
@@ -354,11 +355,18 @@
           {% for game in games %}
           <tr>
             <td><strong>{{ game.symbol }}</strong></td>
+            <td>{{ game.type_label }}</td>
             <td>{{ game.name }}</td>
             <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
               {{ game.instructions }}
             </td>
-            <td>${{ "%.2f" | format(game.expected_value) }}</td>
+            <td>
+              {% if game.expected_value is not none %}
+              ${{ "%.2f" | format(game.expected_value) }}
+              {% else %}
+              —
+              {% endif %}
+            </td>
 
             <!-- Visible column -->
             <td>
@@ -378,46 +386,48 @@
               {% endif %}
             </td>
 
-            <td>{{ game.created_at.strftime('%Y-%m-%d') }}</td>
+            <td>{% if game.created_at %}{{ game.created_at.strftime('%Y-%m-%d') }}{% else %}—{% endif %}</td>
             <td>
-              <!-- 1) Edit -->
+              <!-- 1) Edit (custom games only) -->
+              {% if game.type == 'custom' %}
               <button class="action-btn btn-game"
-                onclick="editGame({{ game.id }}, '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">
+                onclick="editGame('{{ game.id }}', '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">
                 Edit
               </button>
+              {% endif %}
 
               <!-- 2) Pause / Resume -->
               {% if game.is_paused %}
-              <button class="action-btn btn-game" onclick="resumeGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="resumeGame('{{ game.type }}', '{{ game.id }}', '{{ game.symbol }}')">
                 Resume
               </button>
               {% else %}
-              <button class="action-btn btn-game" onclick="pauseGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="pauseGame('{{ game.type }}', '{{ game.id }}', '{{ game.symbol }}')">
                 Pause
               </button>
               {% endif %}
 
               <!-- 3) Show / Hide -->
               {% if game.is_visible %}
-              <button class="action-btn btn-game" onclick="hideGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="hideGame('{{ game.type }}', '{{ game.id }}', '{{ game.symbol }}')">
                 Hide
               </button>
               {% else %}
-              <button class="action-btn btn-game" onclick="showGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="showGame('{{ game.type }}', '{{ game.id }}', '{{ game.symbol }}')">
                 Show
               </button>
               {% endif %}
 
               <!-- 4) Delete -->
-              <button class="action-btn btn-game" onclick="deleteGame({{ game.id }}, '{{ game.symbol }}')">
+              <button class="action-btn btn-game" onclick="deleteGame('{{ game.type }}', '{{ game.id }}', '{{ game.symbol }}')">
                 Delete
               </button>
             </td>
           </tr>
           {% else %}
           <tr>
-            <td colspan="8" style="text-align: center; color: var(--muted); padding: 40px;">
-              No custom games created yet. Click "Create New Game" to get started.
+            <td colspan="9" style="text-align: center; color: var(--muted); padding: 40px;">
+              No games yet. Click "Create New Game" to create a custom game.
             </td>
           </tr>
           {% endfor %}
@@ -561,11 +571,11 @@
         }
       });
 
-      async function deleteGame(gameId, symbol) {
+      async function deleteGame(gameType, gameId, symbol) {
         if (!confirm(`Are you sure you want to delete ${symbol}? This will deactivate the game but preserve trading history.`)) return;
 
         try {
-          const res = await fetch(`/admin/games/${gameId}`, {
+          const res = await fetch(`/admin/games/${gameType}/${gameId}`, {
             method: 'DELETE',
             credentials: 'include'
           });
@@ -582,11 +592,11 @@
         }
       }
 
-      async function showGame(gameId, symbol) {
+      async function showGame(gameType, gameId, symbol) {
         if (!confirm(`Show game ${symbol} to users?`)) return;
 
         try {
-          const res = await fetch(`/admin/games/${gameId}/show`, {
+          const res = await fetch(`/admin/games/${gameType}/${gameId}/show`, {
             method: 'POST',
             credentials: 'include'
           });
@@ -603,11 +613,11 @@
         }
       }
 
-      async function hideGame(gameId, symbol) {
+      async function hideGame(gameType, gameId, symbol) {
         if (!confirm(`Hide game ${symbol} from users?`)) return;
 
         try {
-          const res = await fetch(`/admin/games/${gameId}/hide`, {
+          const res = await fetch(`/admin/games/${gameType}/${gameId}/hide`, {
             method: 'POST',
             credentials: 'include'
           });
@@ -624,11 +634,11 @@
         }
       }
 
-      async function pauseGame(gameId, symbol) {
+      async function pauseGame(gameType, gameId, symbol) {
         if (!confirm(`Pause trading for ${symbol}?`)) return;
 
         try {
-          const res = await fetch(`/admin/games/${gameId}/pause`, {
+          const res = await fetch(`/admin/games/${gameType}/${gameId}/pause`, {
             method: 'POST',
             credentials: 'include'
           });
@@ -645,11 +655,11 @@
         }
       }
 
-      async function resumeGame(gameId, symbol) {
+      async function resumeGame(gameType, gameId, symbol) {
         if (!confirm(`Resume trading for ${symbol}?`)) return;
 
         try {
-          const res = await fetch(`/admin/games/${gameId}/resume`, {
+          const res = await fetch(`/admin/games/${gameType}/${gameId}/resume`, {
             method: 'POST',
             credentials: 'include'
           });

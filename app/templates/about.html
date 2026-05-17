@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>About - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .about-hero {
+      text-align: center;
+      padding: 64px 24px 48px;
+      max-width: 720px;
+      margin: 0 auto;
+    }
+
+    .about-hero h2 {
+      font-size: 42px;
+      font-weight: 800;
+      margin: 0 0 16px;
+      background: linear-gradient(135deg, #fff 30%, var(--brand));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      line-height: 1.2;
+    }
+
+    .about-hero p {
+      font-size: 18px;
+      color: var(--muted);
+      line-height: 1.7;
+      margin: 0 0 32px;
+    }
+
+    .about-cta {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .about-section {
+      max-width: 1100px;
+      margin: 0 auto 64px;
+      padding: 0 24px;
+    }
+
+    .about-section-title {
+      font-size: 22px;
+      font-weight: 700;
+      margin: 0 0 24px;
+      color: var(--text);
+    }
+
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .feature-card {
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px 24px;
+      transition: all 0.25s ease;
+    }
+
+    .feature-card:hover {
+      border-color: var(--brand);
+      transform: translateY(-3px);
+      box-shadow: 0 8px 28px rgba(108, 92, 231, 0.2);
+    }
+
+    .feature-icon {
+      font-size: 36px;
+      margin-bottom: 14px;
+      display: block;
+    }
+
+    .feature-title {
+      font-size: 17px;
+      font-weight: 700;
+      margin-bottom: 8px;
+      color: var(--text);
+    }
+
+    .feature-desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .modes-list {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .mode-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 20px;
+      padding: 20px 24px;
+      background: linear-gradient(180deg, var(--panel), var(--panel-2));
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      transition: border-color 0.2s ease;
+    }
+
+    .mode-row:hover {
+      border-color: rgba(108, 92, 231, 0.4);
+    }
+
+    .mode-icon {
+      font-size: 32px;
+      flex-shrink: 0;
+      width: 48px;
+      text-align: center;
+    }
+
+    .mode-body {
+      flex: 1;
+    }
+
+    .mode-title {
+      font-size: 16px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+
+    .mode-desc {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .divider {
+      height: 1px;
+      background: var(--border);
+      max-width: 1100px;
+      margin: 0 auto 64px;
+    }
+
+    .stat-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 48px;
+    }
+
+    .stat-cell {
+      background: var(--panel);
+      padding: 28px 20px;
+      text-align: center;
+    }
+
+    .stat-num {
+      font-size: 36px;
+      font-weight: 800;
+      color: var(--brand);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .stat-lbl {
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit;">
+        <div class="logo">
+          <img src="/static/alphabook.png" alt="AlphaBook" class="logo-img">
+        </div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">About</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/" class="btn ghost">Back to Platform</a>
+      <div id="loginBox" class="hidden">
+        <a href="/login" class="btn">Login</a>
+        <a href="/signup" class="btn primary">Sign up</a>
+      </div>
+      <div id="userBox" class="hidden">
+        <a href="/admin" id="adminLink" class="btn ghost" style="display:none;">Admin</a>
+        <span id="userName">user</span>
+        <form method="post" action="/logout" style="display:inline">
+          <button type="submit" class="btn ghost">Logout</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="about-hero">
+    <h2>Learn to trade. The right way.</h2>
+    <p>AlphaBook is a professional-grade financial education platform that puts you inside a live order book.
+      Trade real stocks, play structured games, and develop the intuition that separates traders from guessers.</p>
+    <div class="about-cta">
+      <a href="/signup" class="btn primary">Get started free</a>
+      <a href="/" class="btn">Explore games</a>
+    </div>
+  </div>
+
+  <div class="about-section">
+    <div class="stat-strip">
+      <div class="stat-cell">
+        <span class="stat-num">7+</span>
+        <span class="stat-lbl">Live stocks</span>
+      </div>
+      <div class="stat-cell">
+        <span class="stat-num">4</span>
+        <span class="stat-lbl">Game modes</span>
+      </div>
+      <div class="stat-cell">
+        <span class="stat-num">Real</span>
+        <span class="stat-lbl">Market data</span>
+      </div>
+      <div class="stat-cell">
+        <span class="stat-num">0</span>
+        <span class="stat-lbl">Real money risk</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="about-section">
+    <h3 class="about-section-title">Why AlphaBook?</h3>
+    <div class="features-grid">
+      <div class="feature-card">
+        <span class="feature-icon">📊</span>
+        <div class="feature-title">Live Order Book</div>
+        <div class="feature-desc">Experience a real price-time priority matching engine. See bids and asks update in real
+          time and place limit orders just like on a professional exchange.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">📈</span>
+        <div class="feature-title">Real Market Prices</div>
+        <div class="feature-desc">Market simulation uses live prices for AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA
+          — so your trading decisions are anchored to actual market conditions.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🎮</span>
+        <div class="feature-title">Structured Games</div>
+        <div class="feature-desc">Purpose-built games teach probability estimation, news impact analysis, card-game
+          pricing, and mental arithmetic under pressure.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🏆</span>
+        <div class="feature-title">Competitive Leaderboard</div>
+        <div class="feature-desc">Track your P&amp;L against other participants in real time. Compete to top the
+          leaderboard and understand where your edge comes from.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">🛡️</span>
+        <div class="feature-title">Zero Financial Risk</div>
+        <div class="feature-desc">All balances are virtual. You get the full trading experience — market risk, position
+          management, order flow — without putting real money on the line.</div>
+      </div>
+      <div class="feature-card">
+        <span class="feature-icon">⚡</span>
+        <div class="feature-title">Instant Setup</div>
+        <div class="feature-desc">Sign up in seconds and jump straight into a trading session. No software to install,
+          no configurations — just open a browser and start.</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="about-section">
+    <h3 class="about-section-title">Game Modes</h3>
+    <div class="modes-list">
+      <div class="mode-row">
+        <div class="mode-icon">📉</div>
+        <div class="mode-body">
+          <div class="mode-title">Market Simulation</div>
+          <div class="mode-desc">Trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live order book anchored to
+            real market prices. Place limit orders, manage your position, and track unrealised P&amp;L as prices move.
+            The order book matches buyers and sellers using strict price-time priority — exactly how stock exchanges
+            work.</div>
+        </div>
+      </div>
+      <div class="mode-row">
+        <div class="mode-icon">🃏</div>
+        <div class="mode-body">
+          <div class="mode-title">5Os — Quartile Estimation</div>
+          <div class="mode-desc">A trading-floor classic. Players estimate the five key statistics (minimum, 25th
+            percentile, median, 75th percentile, and maximum) of a hidden dataset. The market resolves against the true
+            values — perfect calibration wins.</div>
+        </div>
+      </div>
+      <div class="mode-row">
+        <div class="mode-icon">📰</div>
+        <div class="mode-body">
+          <div class="mode-title">Headline Trading</div>
+          <div class="mode-desc">News hits the wire and prices start moving. React to market-moving headlines, take
+            directional positions, and close out before time runs out. Learn how fast-money traders parse information
+            and act.</div>
+        </div>
+      </div>
+      <div class="mode-row">
+        <div class="mode-icon">🃏</div>
+        <div class="mode-body">
+          <div class="mode-title">Poker Auction</div>
+          <div class="mode-desc">Bid for poker cards in a sealed-bid auction, assemble the best hand you can, and trade
+            cards with other players in a post-auction market. Combines probability, valuation, and competitive
+            strategy.</div>
+        </div>
+      </div>
+      <div class="mode-row">
+        <div class="mode-icon">🧠</div>
+        <div class="mode-body">
+          <div class="mode-title">Mental Math</div>
+          <div class="mode-desc">Speed and accuracy in arithmetic is a prerequisite for trading floors. Timed questions
+            drill multiplication, division, percentages, and estimation — with a live leaderboard to keep the pressure
+            on.</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="divider"></div>
+
+  <div class="about-section" style="text-align: center; padding-bottom: 32px;">
+    <h3 class="about-section-title" style="text-align: center;">Ready to start?</h3>
+    <p style="color: var(--muted); margin-bottom: 28px; font-size: 16px;">Create a free account and join your first session in under a minute.</p>
+    <div class="about-cta">
+      <a href="/signup" class="btn primary">Create account</a>
+      <a href="/login" class="btn">Log in</a>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>&copy; {{ year }} {{ app_name }} &mdash; Financial education platform</p>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>

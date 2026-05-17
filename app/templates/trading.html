@@ -16,14 +16,14 @@
         </div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Back to Equities</div>
+          <div class="subtitle">← Back to Platform</div>
         </div>
       </a>
     </div>
     <div class="actions">
       <div id="loginBox" class="hidden">
         <a href="/login" class="btn">Login</a>
-        <a href="/signup" class="btn">Sign up</a>
+        <a href="/signup" class="btn primary">Sign up</a>
       </div>
       <div id="userBox" class="hidden">
         <a href="/admin" id="adminLink" class="btn ghost" style="display:none;">Admin</a>
@@ -206,7 +206,7 @@
   </dialog>
 
   <div class="footer">
-    <p>{{ app_name }} • {{ symbol }} Trading</p>
+    <p>&copy; {{ app_name }} &mdash; <a href="/about" style="color: var(--muted); text-decoration: none;">Financial Education Platform</a></p>
   </div>
 
   <script>

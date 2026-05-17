@@ -216,6 +216,15 @@ def _metrics_for(user_id: str):
 
 
 # ---- Pages ----
+@app.get("/about", include_in_schema=False)
+async def about_page(request: Request):
+    import datetime
+    return templates.TemplateResponse(
+        "about.html",
+        {"request": request, "app_name": "AlphaBook", "year": datetime.date.today().year},
+    )
+
+
 @app.get("/", include_in_schema=False)
 async def home(request: Request):
     from app.models import CustomGame

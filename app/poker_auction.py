@@ -254,6 +254,12 @@ async def join_game(req: JoinRequest, user: User = Depends(current_user)):
 
     doc = docs[0]
     game_data = doc.to_dict()
+
+    if not game_data.get("is_visible", True):
+        raise HTTPException(status_code=404, detail="Game not found or already started")
+    if game_data.get("is_paused", False):
+        raise HTTPException(status_code=423, detail="Game is paused by admin")
+
     teams = game_data.get("teams", [])
     uid = str(user.id)
 
