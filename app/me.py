@@ -7,7 +7,6 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from app import db as db_module
-from app.db import bucket
 from google.cloud import firestore
 from app.auth import current_user
 from app.models import User, Trade as DBTrade, Order as DBOrder
@@ -434,7 +433,8 @@ async def upload_my_cv(
     file: UploadFile = File(...),
     user: User = Depends(current_user),
 ):
-    """Upload or replace this member's CV PDF."""
+    """Upload or replace this member's CV PDF, stored under cvs/{year}/{track}/."""
+    bucket = db_module.bucket
     if not bucket:
         raise HTTPException(500, "Storage not configured")
 
@@ -446,7 +446,24 @@ async def upload_my_cv(
     if len(content) > 10 * 1024 * 1024:  # 10 MB cap
         raise HTTPException(400, "File too large (max 10 MB)")
 
-    blob_name = f"cvs/{user.id}.pdf"
+    # Fetch current profile to build the storage path by year/track
+    doc = await db_module.db.collection("users").document(str(user.id)).get()
+    profile = doc.to_dict() if doc.exists else {}
+
+    grad_year = str(profile.get("graduation_year") or "unassigned")
+    track_raw = profile.get("track") or ""
+    # Sanitise track for use as a path segment
+    track_folder = track_raw.replace(" ", "_") if track_raw else "General"
+
+    # Delete old blob if it exists at a different path
+    old_blob_name = profile.get("cv_blob_path")
+    if old_blob_name:
+        try:
+            bucket.blob(old_blob_name).delete()
+        except Exception:
+            pass
+
+    blob_name = f"cvs/{grad_year}/{track_folder}/{user.id}.pdf"
     blob = bucket.blob(blob_name)
     blob.upload_from_string(content, content_type="application/pdf")
 
@@ -459,6 +476,7 @@ async def upload_my_cv(
 @router.delete("/me/cv")
 async def delete_my_cv(user: User = Depends(current_user)):
     """Remove this member's uploaded CV."""
+    bucket = db_module.bucket
     if not bucket:
         raise HTTPException(500, "Storage not configured")
 

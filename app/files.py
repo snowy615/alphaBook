@@ -1,7 +1,7 @@
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
 from app.auth import current_user
 from app.models import User
-from app.db import bucket
+from app import db as db_module
 import uuid
 import datetime as dt
 
@@ -13,6 +13,7 @@ async def upload_file(
     user: User = Depends(current_user)
 ):
     """Upload a file to Firebase Cloud Storage"""
+    bucket = db_module.bucket
     if not bucket:
         raise HTTPException(status_code=500, detail="Storage bucket not configured")
 

@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from app import db as db_module
-from app.db import bucket
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
@@ -785,7 +784,7 @@ async def admin_delete_cv(
     admin: User = Depends(require_admin),
 ):
     """Admin removes a member's uploaded CV."""
-    if not bucket:
+    if not db_module.bucket:
         raise HTTPException(500, "Storage not configured")
 
     doc_ref = db_module.db.collection("users").document(user_id)
@@ -796,7 +795,7 @@ async def admin_delete_cv(
     blob_name = (doc.to_dict() or {}).get("cv_blob_path")
     if blob_name:
         try:
-            bucket.blob(blob_name).delete()
+            db_module.bucket.blob(blob_name).delete()
         except Exception:
             pass
         await doc_ref.update({"cv_blob_path": None})
@@ -833,7 +832,7 @@ async def generate_cv_book(
     from app.cv_book import build_cv_book
     import asyncio
 
-    if not bucket:
+    if not db_module.bucket:
         raise HTTPException(500, "Storage not configured")
 
     # Fetch all non-admin users
@@ -847,7 +846,7 @@ async def generate_cv_book(
         cv_bytes = None
         if blob_path:
             try:
-                blob = bucket.blob(blob_path)
+                blob = db_module.bucket.blob(blob_path)
                 cv_bytes = blob.download_as_bytes()
             except Exception as exc:
                 pass  # CV missing from storage; skip it
