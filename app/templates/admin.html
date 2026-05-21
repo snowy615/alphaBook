@@ -272,6 +272,7 @@
       <button class="admin-tab" data-tab="games" onclick="switchTab('games', this)">Custom Games</button>
       <button class="admin-tab" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard</button>
       <button class="admin-tab" data-tab="news" onclick="switchTab('news', this)">Market News</button>
+      <button class="admin-tab" data-tab="cvbook" onclick="switchTab('cvbook', this)">CV Book</button>
       <button class="admin-tab" data-tab="settings" onclick="switchTab('settings', this)">Settings</button>
     </div>
 
@@ -748,6 +749,94 @@
       </div>
     </div>
 
+    <!-- CV Book Tab -->
+    <div id="cvbook-tab" class="tab-content">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
+        <div>
+          <h2 style="margin:0 0 6px;">CV Book Generator</h2>
+          <p style="color:var(--muted); margin:0;">Members must upload their CV from their profile page. Once ready, generate the full book with one click.</p>
+        </div>
+        <div style="display:flex; gap:12px; align-items:center;">
+          <select id="cvYearLabel" style="padding:10px 14px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:14px;">
+            <option value="2025-2026">2025–2026</option>
+            <option value="2026-2027">2026–2027</option>
+            <option value="2027-2028">2027–2028</option>
+          </select>
+          <button class="btn primary" id="generateCvBookBtn" onclick="generateCvBook()">
+            Generate CV Book
+          </button>
+          <button class="btn" onclick="loadCvStatus()" style="background:var(--card); border:1px solid var(--border);">
+            Refresh Status
+          </button>
+        </div>
+      </div>
+
+      <!-- Summary chips -->
+      <div style="display:flex; gap:16px; margin-bottom:24px;" id="cvSummaryChips">
+        <div class="stat-card" style="padding:14px 20px; flex:0 0 auto;">
+          <div class="stat-label">Total Members</div>
+          <div class="stat-value" id="cvTotal" style="font-size:24px;">—</div>
+        </div>
+        <div class="stat-card" style="padding:14px 20px; flex:0 0 auto;">
+          <div class="stat-label">CVs Uploaded</div>
+          <div class="stat-value" id="cvUploaded" style="font-size:24px; color:var(--green);">—</div>
+        </div>
+        <div class="stat-card" style="padding:14px 20px; flex:0 0 auto;">
+          <div class="stat-label">Missing CVs</div>
+          <div class="stat-value" id="cvMissing" style="font-size:24px; color:var(--red);">—</div>
+        </div>
+      </div>
+
+      <!-- Member CV status table -->
+      <table class="users-table" id="cvStatusTable">
+        <thead>
+          <tr>
+            <th>Username</th>
+            <th>Full Name</th>
+            <th>Grad Year</th>
+            <th>Track</th>
+            <th>CV Status</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="cvStatusBody">
+          <tr><td colspan="6" style="text-align:center; color:var(--muted); padding:40px;">Loading…</td></tr>
+        </tbody>
+      </table>
+
+      <!-- Edit modal -->
+      <div id="cvEditModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
+        <div style="background:var(--card); border-radius:16px; padding:32px; width:420px; max-width:90vw;">
+          <h3 style="margin:0 0 20px;">Edit CV Profile</h3>
+          <input type="hidden" id="editUserId">
+          <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Full Name</label>
+            <input id="editFullName" type="text" placeholder="e.g. Jane Smith"
+              style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Graduation Year</label>
+            <input id="editGradYear" type="number" placeholder="e.g. 2027" min="2024" max="2032"
+              style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
+          </div>
+          <div style="margin-bottom:24px;">
+            <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Track</label>
+            <select id="editTrack" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;">
+              <option value="">General Member</option>
+              <option value="Fundamental">Fundamental Analyst ✓ CV book</option>
+              <option value="Quant">Quantitative Analyst ✓ CV book</option>
+              <option value="Fundamental Bootcamp">Fundamental Bootcamp</option>
+              <option value="Quant Bootcamp">Quant Bootcamp</option>
+            </select>
+          </div>
+          <div style="display:flex; gap:12px; justify-content:flex-end;">
+            <button class="btn" onclick="closeCvModal()" style="background:var(--card); border:1px solid var(--border);">Cancel</button>
+            <button class="btn primary" onclick="saveCvProfile()">Save</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Settings Tab -->
     <div id="settings-tab" class="tab-content">
       <div class="danger-zone">
@@ -1021,6 +1110,139 @@
       switchTab(savedTab, btn);
 
       loadAdminNews();
+
+      // Auto-load CV status when the tab becomes active
+      document.querySelector('.admin-tab[data-tab="cvbook"]').addEventListener('click', () => {
+        loadCvStatus();
+      });
+      if (savedTab === 'cvbook') loadCvStatus();
+    });
+
+    // ── CV Book ──────────────────────────────────────────────────────────────
+
+    async function loadCvStatus() {
+      try {
+        const res = await fetch('/admin/cv-book/status', { credentials: 'include' });
+        if (!res.ok) throw new Error(await res.text());
+        const members = await res.json();
+
+        document.getElementById('cvTotal').textContent = members.length;
+        const uploaded = members.filter(m => m.cv_uploaded).length;
+        document.getElementById('cvUploaded').textContent = uploaded;
+        document.getElementById('cvMissing').textContent = members.length - uploaded;
+
+        const tbody = document.getElementById('cvStatusBody');
+        if (!members.length) {
+          tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px;">No members found.</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = members.map(m => `
+          <tr>
+            <td><strong>${m.username}</strong></td>
+            <td>${m.full_name || '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${m.graduation_year || '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${m.track
+              ? `<span class="badge" style="background:${m.track==='Quant'?'rgba(26,189,156,0.15)':'rgba(108,92,231,0.15)'};color:${m.track==='Quant'?'#1abc9c':'var(--brand)'}">${m.track}</span>`
+              : '<span style="color:var(--muted)">—</span>'}</td>
+            <td>${m.cv_uploaded
+              ? '<span class="badge badge-active">✓ Uploaded</span>'
+              : '<span class="badge badge-blacklisted">✗ Missing</span>'}</td>
+            <td>
+              <button class="action-btn btn-game" onclick="openCvModal('${m.id}','${m.full_name||''}',${m.graduation_year||'null'},'${m.track||''}')">Edit</button>
+              ${m.cv_uploaded ? `<button class="action-btn btn-delete" onclick="adminDeleteCv('${m.id}')">Remove CV</button>` : ''}
+            </td>
+          </tr>
+        `).join('');
+      } catch (err) {
+        document.getElementById('cvStatusBody').innerHTML =
+          `<tr><td colspan="6" style="text-align:center;color:var(--red);padding:40px;">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function generateCvBook() {
+      const btn = document.getElementById('generateCvBookBtn');
+      const yearLabel = document.getElementById('cvYearLabel').value;
+      btn.disabled = true;
+      btn.textContent = 'Generating…';
+      try {
+        const res = await fetch(`/admin/cv-book/generate?year_label=${encodeURIComponent(yearLabel)}`, {
+          method: 'POST',
+          credentials: 'include',
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.detail || `HTTP ${res.status}`);
+        }
+        // Trigger browser download
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `OAF_CV_Book_${yearLabel.replace('-','_')}.pdf`;
+        a.click();
+        URL.revokeObjectURL(url);
+      } catch (err) {
+        alert('Failed to generate CV book: ' + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Generate CV Book';
+      }
+    }
+
+    function openCvModal(userId, fullName, gradYear, track) {
+      document.getElementById('editUserId').value = userId;
+      document.getElementById('editFullName').value = fullName;
+      document.getElementById('editGradYear').value = gradYear !== 'null' ? gradYear : '';
+      document.getElementById('editTrack').value = track || '';
+      const modal = document.getElementById('cvEditModal');
+      modal.style.display = 'flex';
+    }
+
+    function closeCvModal() {
+      document.getElementById('cvEditModal').style.display = 'none';
+    }
+
+    async function saveCvProfile() {
+      const userId = document.getElementById('editUserId').value;
+      const gradYearRaw = document.getElementById('editGradYear').value;
+      const payload = {
+        full_name: document.getElementById('editFullName').value.trim() || null,
+        graduation_year: gradYearRaw ? parseInt(gradYearRaw) : null,
+        track: document.getElementById('editTrack').value || null,
+      };
+      try {
+        const res = await fetch(`/admin/users/${userId}/cv-profile`, {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        closeCvModal();
+        loadCvStatus();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    async function adminDeleteCv(userId) {
+      if (!confirm('Remove this member\'s uploaded CV?')) return;
+      try {
+        const res = await fetch(`/admin/users/${userId}/cv`, {
+          method: 'DELETE',
+          credentials: 'include',
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        loadCvStatus();
+      } catch (err) {
+        alert('Error: ' + err.message);
+      }
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('cvEditModal').addEventListener('click', function(e) {
+      if (e.target === this) closeCvModal();
     });
   </script>
 </body>

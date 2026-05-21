@@ -281,6 +281,11 @@ def _metrics_for(user_id: str):
 
 
 # ---- Pages ----
+@app.get("/profile", include_in_schema=False)
+async def profile_page(request: Request):
+    return templates.TemplateResponse("profile.html", {"request": request})
+
+
 @app.get("/about", include_in_schema=False)
 async def about_page(request: Request):
     import datetime

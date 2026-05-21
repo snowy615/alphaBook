@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>My Profile — AlphaBook</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .profile-card {
+      max-width: 560px;
+      margin: 40px auto;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 36px;
+    }
+    .profile-card h1 { margin: 0 0 6px; font-size: 24px; }
+    .profile-card .subtitle { color: var(--muted); font-size: 14px; margin-bottom: 32px; }
+    .field-group { margin-bottom: 20px; }
+    .field-group label {
+      display: block; font-size: 13px; font-weight: 600;
+      color: var(--muted); margin-bottom: 7px;
+    }
+    .field-group input,
+    .field-group select {
+      width: 100%; padding: 11px 14px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); font-size: 15px; box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+    .field-group input:focus,
+    .field-group select:focus { outline: none; border-color: var(--brand); }
+    .divider { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
+    .upload-area {
+      border: 2px dashed var(--border); border-radius: 12px;
+      padding: 32px; text-align: center; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .upload-area:hover, .upload-area.drag-over {
+      border-color: var(--brand); background: rgba(108,92,231,0.04);
+    }
+    .upload-area .upload-icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-area .upload-label { font-weight: 600; margin-bottom: 4px; }
+    .upload-area .upload-hint { font-size: 13px; color: var(--muted); }
+    .cv-status-banner {
+      display: flex; align-items: center; gap: 12px;
+      padding: 14px 18px; border-radius: 10px; margin-bottom: 16px;
+      font-size: 14px; font-weight: 600;
+    }
+    .cv-status-banner.uploaded { background: rgba(46,204,113,0.12); color: #2ecc71; }
+    .cv-status-banner.missing  { background: rgba(255,107,107,0.12); color: var(--red); }
+    .btn-row { display: flex; gap: 12px; margin-top: 24px; }
+    .progress-bar-wrap { height: 6px; background: var(--border); border-radius: 4px; margin-top: 12px; display: none; }
+    .progress-bar { height: 100%; background: var(--brand); border-radius: 4px; width: 0%; transition: width 0.3s; }
+
+    /* Track badge inside dropdown hint */
+    .track-hint {
+      font-size: 12px; color: var(--muted); margin-top: 6px;
+      padding: 8px 12px; border-radius: 8px; background: rgba(108,92,231,0.06);
+      display: none;
+    }
+    .track-hint.visible { display: block; }
+
+    /* Modal */
+    .modal-backdrop {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.55); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal-box {
+      background: var(--card); border-radius: 16px; padding: 32px;
+      width: 400px; max-width: 90vw;
+    }
+    .modal-box h3 { margin: 0 0 8px; }
+    .modal-box p  { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
+    .modal-box input {
+      width: 100%; padding: 11px 14px; border-radius: 9px;
+      border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); font-size: 15px; box-sizing: border-box;
+      margin-bottom: 8px;
+    }
+    .modal-error { font-size: 13px; color: var(--red); min-height: 18px; margin-bottom: 16px; }
+    .modal-btn-row { display: flex; gap: 12px; justify-content: flex-end; }
+
+    /* Toast */
+    .toast {
+      position: fixed; bottom: 28px; right: 28px;
+      padding: 14px 22px; border-radius: 10px; font-weight: 600;
+      font-size: 14px; z-index: 999; opacity: 0;
+      transform: translateY(12px); transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.success { background: #2ecc71; color: #fff; }
+    .toast.error   { background: var(--red);  color: #fff; }
+  </style>
+</head>
+<body>
+  <div id="nav-placeholder"></div>
+
+  <div class="profile-card">
+    <h1>My Profile</h1>
+    <p class="subtitle">Keep your details up to date so the CV book is accurate.</p>
+
+    <!-- Profile fields -->
+    <div class="field-group">
+      <label>Full Name <span style="color:var(--muted);font-weight:400">(as it should appear in the CV book)</span></label>
+      <input id="fullName" type="text" placeholder="e.g. Jane Smith">
+    </div>
+    <div class="field-group">
+      <label>Graduation Year</label>
+      <input id="gradYear" type="number" placeholder="e.g. 2027" min="2024" max="2032">
+    </div>
+    <div class="field-group">
+      <label>Role / Track</label>
+      <select id="track" onchange="onTrackChange(this.value)">
+        <option value="">General Member</option>
+        <option value="Fundamental">Fundamental Analyst</option>
+        <option value="Quant">Quantitative Analyst</option>
+        <option value="Fundamental Bootcamp">Fundamental Bootcamp</option>
+        <option value="Quant Bootcamp">Quant Bootcamp</option>
+      </select>
+      <div class="track-hint" id="trackHint"></div>
+    </div>
+    <div class="btn-row">
+      <button class="btn primary" onclick="saveProfile()">Save Details</button>
+    </div>
+
+    <hr class="divider">
+
+    <!-- CV Upload -->
+    <h3 style="margin:0 0 6px;">CV / Resume</h3>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">
+      Only Fundamental and Quantitative Analysts are included in the CV book.
+    </p>
+    <div id="cvStatusBanner" class="cv-status-banner missing">
+      <span>✗</span> <span id="cvStatusText">No CV uploaded yet</span>
+    </div>
+
+    <div class="upload-area" id="uploadArea"
+         onclick="document.getElementById('cvFileInput').click()"
+         ondragover="onDragOver(event)" ondragleave="onDragLeave(event)" ondrop="onDrop(event)">
+      <div class="upload-icon">📄</div>
+      <div class="upload-label">Click to upload or drag & drop</div>
+      <div class="upload-hint">PDF only · Max 10 MB</div>
+      <div id="selectedFileName" style="margin-top:10px;font-weight:600;color:var(--brand);display:none;"></div>
+    </div>
+    <input type="file" id="cvFileInput" accept=".pdf" style="display:none" onchange="onFileSelected(this)">
+
+    <div class="progress-bar-wrap" id="progressWrap">
+      <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div class="btn-row">
+      <button class="btn primary" id="uploadBtn" onclick="uploadCv()" disabled>Upload CV</button>
+      <button class="btn" id="removeBtn" onclick="removeCv()"
+        style="background:rgba(255,107,107,0.15);color:var(--red);border:none;display:none;">
+        Remove CV
+      </button>
+    </div>
+  </div>
+
+  <!-- Analyst password modal -->
+  <div class="modal-backdrop" id="pwModal">
+    <div class="modal-box">
+      <h3>Analyst Access</h3>
+      <p>Enter the Oxford Alpha Fund analyst password to unlock this role.</p>
+      <input type="password" id="pwInput" placeholder="Password" onkeydown="if(event.key==='Enter')confirmPassword()">
+      <div class="modal-error" id="pwError"></div>
+      <div class="modal-btn-row">
+        <button class="btn" onclick="cancelPassword()" style="background:var(--card);border:1px solid var(--border);">Cancel</button>
+        <button class="btn primary" onclick="confirmPassword()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script src="/static/app.js"></script>
+  <script>
+    const ANALYST_TRACKS = new Set(['Fundamental', 'Quant']);
+    const TRACK_HINTS = {
+      'Fundamental': '✓ Included in CV book as a Fundamental Analyst',
+      'Quant': '✓ Included in CV book as a Quantitative Analyst',
+      'Fundamental Bootcamp': 'Bootcamp participant — not included in the CV book',
+      'Quant Bootcamp': 'Bootcamp participant — not included in the CV book',
+      '': '',
+    };
+
+    let pendingTrack = null;   // track the user wants to switch to, awaiting password
+    let confirmedPassword = null;  // password already verified this session
+
+    async function loadProfile() {
+      try {
+        const res = await fetch('/me/profile', { credentials: 'include' });
+        if (res.status === 401) { location.href = '/login'; return; }
+        if (!res.ok) throw new Error();
+        const data = await res.json();
+
+        document.getElementById('fullName').value = data.full_name || '';
+        document.getElementById('gradYear').value  = data.graduation_year || '';
+        const sel = document.getElementById('track');
+        sel.value = data.track || '';
+        updateTrackHint(data.track || '');
+        setCvStatus(data.cv_uploaded);
+      } catch {
+        showToast('Failed to load profile', 'error');
+      }
+    }
+
+    function onTrackChange(value) {
+      if (ANALYST_TRACKS.has(value)) {
+        if (!confirmedPassword) {
+          // Revert the select and show the password modal
+          pendingTrack = value;
+          document.getElementById('track').value = getPreviousTrack();
+          openPasswordModal();
+          return;
+        }
+      }
+      updateTrackHint(value);
+    }
+
+    function getPreviousTrack() {
+      // Return the currently saved track (before change) from the DOM's data attribute
+      return document.getElementById('track').dataset.saved || '';
+    }
+
+    function updateTrackHint(value) {
+      const hint = document.getElementById('trackHint');
+      const msg  = TRACK_HINTS[value] || '';
+      hint.textContent = msg;
+      hint.className   = 'track-hint' + (msg ? ' visible' : '');
+    }
+
+    function openPasswordModal() {
+      document.getElementById('pwInput').value = '';
+      document.getElementById('pwError').textContent = '';
+      document.getElementById('pwModal').classList.add('open');
+      setTimeout(() => document.getElementById('pwInput').focus(), 80);
+    }
+
+    function cancelPassword() {
+      pendingTrack = null;
+      document.getElementById('pwModal').classList.remove('open');
+    }
+
+    async function confirmPassword() {
+      const pw = document.getElementById('pwInput').value;
+      // Verify password by attempting the save with the pending track
+      try {
+        const res = await fetch('/me/profile', {
+          method: 'PUT',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ track: pendingTrack, analyst_password: pw }),
+        });
+        if (res.status === 403) {
+          document.getElementById('pwError').textContent = 'Incorrect password — try again.';
+          return;
+        }
+        if (!res.ok) throw new Error((await res.json()).detail || 'Error');
+        // Password accepted — apply the track
+        confirmedPassword = pw;
+        const sel = document.getElementById('track');
+        sel.value = pendingTrack;
+        sel.dataset.saved = pendingTrack;
+        updateTrackHint(pendingTrack);
+        pendingTrack = null;
+        document.getElementById('pwModal').classList.remove('open');
+        showToast('Track updated to ' + sel.value, 'success');
+      } catch (err) {
+        document.getElementById('pwError').textContent = err.message;
+      }
+    }
+
+    async function saveProfile() {
+      const track = document.getElementById('track').value;
+      const gradRaw = document.getElementById('gradYear').value;
+      const payload = {
+        full_name: document.getElementById('fullName').value.trim() || null,
+        graduation_year: gradRaw ? parseInt(gradRaw) : null,
+        track: track,
+        ...(ANALYST_TRACKS.has(track) && confirmedPassword
+          ? { analyst_password: confirmedPassword }
+          : {}),
+      };
+      try {
+        const res = await fetch('/me/profile', {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (res.status === 403) {
+          // Need to re-verify password
+          pendingTrack = track;
+          openPasswordModal();
+          return;
+        }
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        document.getElementById('track').dataset.saved = track;
+        showToast('Profile saved!', 'success');
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function setCvStatus(uploaded) {
+      const banner = document.getElementById('cvStatusBanner');
+      const text   = document.getElementById('cvStatusText');
+      const removeBtn = document.getElementById('removeBtn');
+      if (uploaded) {
+        banner.className = 'cv-status-banner uploaded';
+        banner.children[0].textContent = '✓';
+        text.textContent = 'CV uploaded successfully';
+        removeBtn.style.display = 'inline-flex';
+      } else {
+        banner.className = 'cv-status-banner missing';
+        banner.children[0].textContent = '✗';
+        text.textContent = 'No CV uploaded yet';
+        removeBtn.style.display = 'none';
+      }
+    }
+
+    function onFileSelected(input) {
+      const file = input.files[0];
+      if (!file) return;
+      if (!file.name.toLowerCase().endsWith('.pdf')) {
+        showToast('Only PDF files are accepted', 'error'); return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        showToast('File exceeds 10 MB limit', 'error'); return;
+      }
+      selectedFile = file;
+      const nameEl = document.getElementById('selectedFileName');
+      nameEl.textContent = file.name;
+      nameEl.style.display = 'block';
+      document.getElementById('uploadBtn').disabled = false;
+    }
+
+    function onDragOver(e) {
+      e.preventDefault();
+      document.getElementById('uploadArea').classList.add('drag-over');
+    }
+    function onDragLeave() {
+      document.getElementById('uploadArea').classList.remove('drag-over');
+    }
+    function onDrop(e) {
+      e.preventDefault();
+      document.getElementById('uploadArea').classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const dt = new DataTransfer(); dt.items.add(file);
+        const input = document.getElementById('cvFileInput');
+        input.files = dt.files;
+        onFileSelected(input);
+      }
+    }
+
+    let selectedFile = null;
+
+    async function uploadCv() {
+      if (!selectedFile) return;
+      const btn  = document.getElementById('uploadBtn');
+      const wrap = document.getElementById('progressWrap');
+      const bar  = document.getElementById('progressBar');
+      btn.disabled = true;
+      wrap.style.display = 'block';
+      bar.style.width = '30%';
+
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      try {
+        bar.style.width = '65%';
+        const res = await fetch('/me/cv', {
+          method: 'POST', credentials: 'include', body: formData,
+        });
+        bar.style.width = '100%';
+        if (!res.ok) throw new Error((await res.json()).detail || 'Upload failed');
+        showToast('CV uploaded successfully!', 'success');
+        setCvStatus(true);
+        selectedFile = null;
+        document.getElementById('cvFileInput').value = '';
+        document.getElementById('selectedFileName').style.display = 'none';
+      } catch (err) {
+        showToast('Upload error: ' + err.message, 'error');
+      } finally {
+        btn.disabled = true;
+        setTimeout(() => { wrap.style.display = 'none'; bar.style.width = '0%'; }, 800);
+      }
+    }
+
+    async function removeCv() {
+      if (!confirm('Remove your uploaded CV?')) return;
+      try {
+        const res = await fetch('/me/cv', { method: 'DELETE', credentials: 'include' });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        showToast('CV removed', 'success');
+        setCvStatus(false);
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function showToast(msg, type = 'success') {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.className = `toast ${type} show`;
+      setTimeout(() => { el.className = `toast ${type}`; }, 3000);
+    }
+
+    // Close modal on backdrop click
+    document.getElementById('pwModal').addEventListener('click', function(e) {
+      if (e.target === this) cancelPassword();
+    });
+
+    loadProfile();
+  </script>
+</body>
+</html>

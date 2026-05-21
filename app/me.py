@@ -3,8 +3,11 @@ import time, datetime as dt
 from typing import Any, Dict, List, Optional
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 from app import db as db_module
+from app.db import bucket
 from google.cloud import firestore
 from app.auth import current_user
 from app.models import User, Trade as DBTrade, Order as DBOrder
@@ -354,3 +357,116 @@ async def cancel_my_order_delete(
 ):
     """Cancel order (DELETE)."""
     return await _cancel_any(order_id, user)
+
+
+# ── CV / Profile ──────────────────────────────────────────────────────────────
+
+import os
+
+# Tracks that require the analyst password to select
+ANALYST_TRACKS = {"Fundamental", "Quant"}
+# Tracks included in the CV book
+CV_BOOK_TRACKS = {"Fundamental", "Quant"}
+# All valid track choices (empty string = general)
+VALID_TRACKS = {"", "Fundamental", "Quant", "Fundamental Bootcamp", "Quant Bootcamp"}
+
+_ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "AlphaFund")
+
+
+class ProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    graduation_year: Optional[int] = None
+    track: Optional[str] = None
+    analyst_password: Optional[str] = None  # required when upgrading to analyst track
+
+
+@router.get("/me/profile")
+async def get_my_profile(user: User = Depends(current_user)):
+    """Return CV-book profile fields for the current user."""
+    doc = await db_module.db.collection("users").document(str(user.id)).get()
+    data = doc.to_dict() if doc.exists else {}
+    return {
+        "username": user.username,
+        "full_name": data.get("full_name") or "",
+        "graduation_year": data.get("graduation_year"),
+        "track": data.get("track") or "",
+        "cv_uploaded": bool(data.get("cv_blob_path")),
+    }
+
+
+@router.put("/me/profile")
+async def update_my_profile(
+    payload: ProfileUpdate,
+    user: User = Depends(current_user),
+):
+    """Update name, graduation year, and track.
+
+    Analyst tracks (Fundamental, Quant) require analyst_password.
+    Bootcamp tracks are freely selectable. Leaving track empty = general member.
+    """
+    if payload.track is not None:
+        if payload.track not in VALID_TRACKS:
+            raise HTTPException(400, f"Invalid track. Choose from: {', '.join(sorted(VALID_TRACKS) or ['(none)'])}")
+        if payload.track in ANALYST_TRACKS:
+            if payload.analyst_password != _ANALYST_PASSWORD:
+                raise HTTPException(403, "Incorrect password for analyst track")
+
+    update: Dict[str, Any] = {}
+    if payload.full_name is not None:
+        update["full_name"] = payload.full_name.strip()
+    if payload.graduation_year is not None:
+        update["graduation_year"] = payload.graduation_year
+    if payload.track is not None:
+        update["track"] = payload.track
+
+    if update:
+        await db_module.db.collection("users").document(str(user.id)).update(update)
+    return {"ok": True}
+
+
+@router.post("/me/cv")
+async def upload_my_cv(
+    file: UploadFile = File(...),
+    user: User = Depends(current_user),
+):
+    """Upload or replace this member's CV PDF."""
+    if not bucket:
+        raise HTTPException(500, "Storage not configured")
+
+    filename = file.filename or ""
+    if not filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Only PDF files are accepted")
+
+    content = await file.read()
+    if len(content) > 10 * 1024 * 1024:  # 10 MB cap
+        raise HTTPException(400, "File too large (max 10 MB)")
+
+    blob_name = f"cvs/{user.id}.pdf"
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(content, content_type="application/pdf")
+
+    await db_module.db.collection("users").document(str(user.id)).update({
+        "cv_blob_path": blob_name,
+    })
+    return {"ok": True, "blob_path": blob_name}
+
+
+@router.delete("/me/cv")
+async def delete_my_cv(user: User = Depends(current_user)):
+    """Remove this member's uploaded CV."""
+    if not bucket:
+        raise HTTPException(500, "Storage not configured")
+
+    doc = await db_module.db.collection("users").document(str(user.id)).get()
+    data = doc.to_dict() if doc.exists else {}
+    blob_name = data.get("cv_blob_path")
+
+    if blob_name:
+        try:
+            bucket.blob(blob_name).delete()
+        except Exception:
+            pass
+        await db_module.db.collection("users").document(str(user.id)).update({
+            "cv_blob_path": None,
+        })
+    return {"ok": True}

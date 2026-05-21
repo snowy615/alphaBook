@@ -5,12 +5,17 @@ from pydantic import BaseModel, Field
 class User(BaseModel):
     id: Optional[str] = None # Firestore Document ID
     username: str
-    password_hash: Optional[str] = None 
+    password_hash: Optional[str] = None
     balance: float = Field(default=10000.0)
     is_admin: bool = Field(default=False)
     is_blacklisted: bool = Field(default=False)
     created_at: dt.datetime = Field(default_factory=dt.datetime.utcnow)
     firebase_uid: Optional[str] = None
+    # CV Book fields
+    graduation_year: Optional[int] = None       # e.g. 2027
+    track: Optional[str] = None                 # "Fundamental" or "Quant"
+    cv_blob_path: Optional[str] = None          # Firebase Storage path
+    full_name: Optional[str] = None             # Display name for CV book
 
 class Order(BaseModel):
     id: Optional[str] = None

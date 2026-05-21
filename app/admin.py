@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from app import db as db_module
+from app.db import bucket
 from google.cloud import firestore
 from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
@@ -9,8 +10,9 @@ from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
+import io
 from decimal import Decimal
-from typing import List
+from typing import List, Optional
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -732,9 +734,140 @@ async def admin_delete_news(
     """Admin delete news"""
     doc_ref = db_module.db.collection("market_news").document(news_id)
     doc = await doc_ref.get()
-    
+
     if not doc.exists:
         raise HTTPException(status_code=404, detail="News not found")
 
     await doc_ref.delete()
     return {"ok": True}
+
+
+# ── CV Book ───────────────────────────────────────────────────────────────────
+
+class CvProfileUpdate(BaseModel):
+    full_name: Optional[str] = None
+    graduation_year: Optional[int] = None
+    track: Optional[str] = None
+
+
+@router.put("/admin/users/{user_id}/cv-profile")
+async def admin_update_cv_profile(
+    user_id: str,
+    payload: CvProfileUpdate,
+    admin: User = Depends(require_admin),
+):
+    """Admin can set graduation year / track for any user."""
+    VALID_TRACKS = {"", "Fundamental", "Quant", "Fundamental Bootcamp", "Quant Bootcamp"}
+    if payload.track is not None and payload.track not in VALID_TRACKS:
+        raise HTTPException(400, "Invalid track value")
+
+    doc_ref = db_module.db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "User not found")
+
+    update = {}
+    if payload.full_name is not None:
+        update["full_name"] = payload.full_name.strip()
+    if payload.graduation_year is not None:
+        update["graduation_year"] = payload.graduation_year
+    if payload.track is not None:
+        update["track"] = payload.track
+
+    if update:
+        await doc_ref.update(update)
+    return {"ok": True}
+
+
+@router.delete("/admin/users/{user_id}/cv")
+async def admin_delete_cv(
+    user_id: str,
+    admin: User = Depends(require_admin),
+):
+    """Admin removes a member's uploaded CV."""
+    if not bucket:
+        raise HTTPException(500, "Storage not configured")
+
+    doc_ref = db_module.db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "User not found")
+
+    blob_name = (doc.to_dict() or {}).get("cv_blob_path")
+    if blob_name:
+        try:
+            bucket.blob(blob_name).delete()
+        except Exception:
+            pass
+        await doc_ref.update({"cv_blob_path": None})
+    return {"ok": True}
+
+
+@router.get("/admin/cv-book/status")
+async def cv_book_status(admin: User = Depends(require_admin)):
+    """Return CV upload status for all non-admin users."""
+    docs = await db_module.db.collection("users").get()
+    result = []
+    for d in docs:
+        data = d.to_dict()
+        if data.get("is_admin"):
+            continue
+        result.append({
+            "id": d.id,
+            "username": data.get("username", ""),
+            "full_name": data.get("full_name") or "",
+            "graduation_year": data.get("graduation_year"),
+            "track": data.get("track") or "",
+            "cv_uploaded": bool(data.get("cv_blob_path")),
+        })
+    result.sort(key=lambda x: (x["graduation_year"] or 9999, x["track"], x["username"]))
+    return result
+
+
+@router.post("/admin/cv-book/generate")
+async def generate_cv_book(
+    year_label: str = "2025-2026",
+    admin: User = Depends(require_admin),
+):
+    """Generate and stream the full CV book PDF."""
+    from app.cv_book import build_cv_book
+    import asyncio
+
+    if not bucket:
+        raise HTTPException(500, "Storage not configured")
+
+    # Fetch all non-admin users
+    docs = await db_module.db.collection("users").get()
+    members = []
+    for d in docs:
+        data = d.to_dict()
+        if data.get("is_admin") or data.get("is_blacklisted"):
+            continue
+        blob_path = data.get("cv_blob_path")
+        cv_bytes = None
+        if blob_path:
+            try:
+                blob = bucket.blob(blob_path)
+                cv_bytes = blob.download_as_bytes()
+            except Exception as exc:
+                pass  # CV missing from storage; skip it
+        members.append({
+            "username": data.get("username", ""),
+            "full_name": data.get("full_name") or data.get("username", ""),
+            "graduation_year": data.get("graduation_year"),
+            "track": data.get("track"),
+            "cv_bytes": cv_bytes,
+        })
+
+    # Run blocking PDF generation in a thread pool
+    loop = asyncio.get_event_loop()
+    pdf_bytes = await loop.run_in_executor(
+        None, build_cv_book, members, year_label
+    )
+
+    filename = f"OAF_CV_Book_{year_label.replace('-', '_')}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
