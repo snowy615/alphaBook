@@ -1,10 +1,10 @@
 from __future__ import annotations
-import time, datetime as dt
+import io, time, datetime as dt
 from typing import Any, Dict, List, Optional
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from app import db as db_module
 from google.cloud import firestore
@@ -426,6 +426,31 @@ async def update_my_profile(
     if update:
         await db_module.db.collection("users").document(str(user.id)).update(update)
     return {"ok": True}
+
+
+@router.get("/me/cv")
+async def view_my_cv(user: User = Depends(current_user)):
+    """Stream the member's uploaded CV PDF for inline viewing."""
+    bucket = db_module.bucket
+    if not bucket:
+        raise HTTPException(500, "Storage not configured")
+
+    doc = await db_module.db.collection("users").document(str(user.id)).get()
+    data = doc.to_dict() if doc.exists else {}
+    blob_name = data.get("cv_blob_path")
+
+    if not blob_name:
+        raise HTTPException(404, "No CV uploaded yet")
+
+    import asyncio
+    pdf_bytes = await asyncio.get_event_loop().run_in_executor(
+        None, bucket.blob(blob_name).download_as_bytes
+    )
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": "inline; filename=\"cv.pdf\""},
+    )
 
 
 @router.post("/me/cv")

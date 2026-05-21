@@ -99,6 +99,13 @@
 <body>
   <div id="nav-placeholder"></div>
 
+  <div style="max-width:560px;margin:24px auto 0;padding:0 20px;">
+    <a href="/" style="display:inline-flex;align-items:center;gap:6px;color:var(--muted);text-decoration:none;font-size:14px;font-weight:600;transition:color 0.2s;"
+       onmouseover="this.style.color='var(--text)'" onmouseout="this.style.color='var(--muted)'">
+      ← Back to Home
+    </a>
+  </div>
+
   <div class="profile-card">
     <h1>My Profile</h1>
     <p class="subtitle">Keep your details up to date so the CV book is accurate.</p>
@@ -154,10 +161,32 @@
 
     <div class="btn-row">
       <button class="btn primary" id="uploadBtn" onclick="uploadCv()" disabled>Upload CV</button>
+      <button class="btn" id="viewBtn" onclick="toggleViewer()"
+        style="display:none;">
+        View CV
+      </button>
       <button class="btn" id="removeBtn" onclick="removeCv()"
         style="background:rgba(255,107,107,0.15);color:var(--red);border:none;display:none;">
         Remove CV
       </button>
+    </div>
+
+    <!-- Inline PDF viewer -->
+    <div id="cvViewer" style="display:none;margin-top:20px;border-radius:10px;overflow:hidden;border:1px solid var(--border);">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border);">
+        <span style="font-size:13px;font-weight:600;color:var(--muted);">CV Preview</span>
+        <div style="display:flex;gap:8px;">
+          <a id="cvOpenLink" href="/me/cv" target="_blank"
+            style="font-size:12px;font-weight:600;color:var(--brand);text-decoration:none;padding:4px 10px;border-radius:6px;background:rgba(108,92,231,0.1);">
+            Open in new tab ↗
+          </a>
+          <button onclick="toggleViewer()"
+            style="font-size:12px;font-weight:600;background:none;border:none;color:var(--muted);cursor:pointer;padding:4px 8px;">
+            ✕ Close
+          </button>
+        </div>
+      </div>
+      <iframe id="cvFrame" src="" style="width:100%;height:680px;border:none;display:block;"></iframe>
     </div>
   </div>
 
@@ -307,19 +336,42 @@
     }
 
     function setCvStatus(uploaded) {
-      const banner = document.getElementById('cvStatusBanner');
-      const text   = document.getElementById('cvStatusText');
+      const banner    = document.getElementById('cvStatusBanner');
+      const text      = document.getElementById('cvStatusText');
+      const viewBtn   = document.getElementById('viewBtn');
       const removeBtn = document.getElementById('removeBtn');
       if (uploaded) {
         banner.className = 'cv-status-banner uploaded';
         banner.children[0].textContent = '✓';
         text.textContent = 'CV uploaded successfully';
+        viewBtn.style.display   = 'inline-flex';
         removeBtn.style.display = 'inline-flex';
       } else {
         banner.className = 'cv-status-banner missing';
         banner.children[0].textContent = '✗';
         text.textContent = 'No CV uploaded yet';
+        viewBtn.style.display   = 'none';
         removeBtn.style.display = 'none';
+        // hide viewer if open
+        document.getElementById('cvViewer').style.display = 'none';
+        document.getElementById('cvFrame').src = '';
+      }
+    }
+
+    function toggleViewer() {
+      const viewer = document.getElementById('cvViewer');
+      const frame  = document.getElementById('cvFrame');
+      const btn    = document.getElementById('viewBtn');
+      if (viewer.style.display === 'none') {
+        // Add cache-busting param so re-uploads always show fresh PDF
+        frame.src = '/me/cv?t=' + Date.now();
+        viewer.style.display = 'block';
+        btn.textContent = 'Hide CV';
+        viewer.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      } else {
+        viewer.style.display = 'none';
+        frame.src = '';
+        btn.textContent = 'View CV';
       }
     }
 
