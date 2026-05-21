@@ -319,11 +319,11 @@
             <td>
               {% if not u.is_admin %}
               {% if u.is_blacklisted %}
-              <button class="action-btn btn-unblacklist" onclick="unblacklistUser({{ u.id }})">Unban</button>
+              <button class="action-btn btn-unblacklist" onclick="unblacklistUser('{{ u.id }}')">Unban</button>
               {% else %}
-              <button class="action-btn btn-blacklist" onclick="blacklistUser({{ u.id }})">Ban</button>
+              <button class="action-btn btn-blacklist" onclick="blacklistUser('{{ u.id }}')">Ban</button>
               {% endif %}
-              <button class="action-btn btn-delete" onclick="deleteUser({{ u.id }}, '{{ u.username }}')">Delete</button>
+              <button class="action-btn btn-delete" onclick="deleteUser('{{ u.id }}', '{{ u.username }}')">Delete</button>
               {% endif %}
             </td>
           </tr>
