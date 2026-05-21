@@ -27,6 +27,7 @@
       </div>
       <div id="userBox" class="hidden">
         <a href="/admin" id="adminLink" class="btn ghost" style="display:none;">Admin</a>
+        <a href="/profile" class="btn ghost">Profile</a>
         <span id="userName">user</span>
         <form method="post" action="/logout" style="display:inline">
           <button type="submit" class="btn ghost">Logout</button>
@@ -41,9 +42,7 @@
     </div>
   </div>
 
-  <div class="footer">
-    <p>&copy; {{ app_name }} &mdash; <a href="/about" style="color: var(--muted); text-decoration: none;">Financial Education Platform</a></p>
-  </div>
+  <div class="footer"></div>
 
   <script>
     window.SYMBOLS = {{ symbols_json|safe }};

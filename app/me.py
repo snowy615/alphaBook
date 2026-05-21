@@ -365,12 +365,14 @@ import os
 
 # Tracks that require the analyst password to select
 ANALYST_TRACKS = {"Fundamental", "Quant"}
+BOOTCAMP_TRACKS = {"Fundamental Bootcamp", "Quant Bootcamp"}
 # Tracks included in the CV book
 CV_BOOK_TRACKS = {"Fundamental", "Quant"}
 # All valid track choices (empty string = general)
 VALID_TRACKS = {"", "Fundamental", "Quant", "Fundamental Bootcamp", "Quant Bootcamp"}
 
 _ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "AlphaFund")
+_BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "AlphaFundBootcamp")
 
 
 class ProfileUpdate(BaseModel):
@@ -410,6 +412,9 @@ async def update_my_profile(
         if payload.track in ANALYST_TRACKS:
             if payload.analyst_password != _ANALYST_PASSWORD:
                 raise HTTPException(403, "Incorrect password for analyst track")
+        elif payload.track in BOOTCAMP_TRACKS:
+            if payload.analyst_password != _BOOTCAMP_PASSWORD:
+                raise HTTPException(403, "Incorrect password for bootcamp track")
 
     update: Dict[str, Any] = {}
     if payload.full_name is not None:
