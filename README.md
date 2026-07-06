@@ -1,119 +1,74 @@
 # AlphaBook
 
-**AlphaBook is an open-source financial education platform that puts students inside a live order book — trade real stocks, play structured trading games, and build the intuition that separates traders from guessers, with zero real-money risk.**
+**A live exchange in your browser: real order book, real market data, structured trading games. Open-source, built at Oxford, free for any student, society, or classroom.**
 
-**Try it now: [alphabook.uk](https://alphabook.uk)** — sign up free and join a session in under a minute.
+**[alphabook.uk](https://alphabook.uk)** — sign up and trade in under a minute.
 
+[![CI](https://github.com/snowy615/alphaBook/actions/workflows/ci.yml/badge.svg)](https://github.com/snowy615/alphaBook/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-![Python](https://img.shields.io/badge/python-3.11-blue.svg)
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688.svg)
 
----
+## Why
 
-## Purpose
+The skills trading firms actually test — market making, probability calibration, pricing under pressure — are taught almost nowhere outside the firms themselves. AlphaBook makes them trainable: a real price-time-priority matching engine, live market data, and games modelled on trading-floor exercises, all with virtual balances and zero real-money risk.
 
-Quantitative trading and market making are among the most sought-after careers for STEM students, yet the education around them is broken: textbooks explain market microstructure in the abstract, and nothing lets a student *feel* it — place a limit order, watch it rest in the book, get picked off by a faster participant, and understand why.
+We use it to run live trading bootcamps and competitions for the Oxford student quant community, including the Oxford Alpha Fund: an instructor creates a game, scripts the news flow, and a room of students competes on a shared order book with a real-time P&L leaderboard.
 
-AlphaBook closes that gap. We are students at the University of Oxford building the platform we wished existed: a real matching engine with real market data, wrapped in structured games that teach the specific skills trading firms actually test — probability calibration, reacting to news, valuation under uncertainty, and mental arithmetic under pressure.
+## The platform
 
-Everything runs in the browser with virtual balances. Students get the full trading experience — market risk, position management, order flow — without installing anything or risking a penny.
+- **Market Simulation** — trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live limit order book anchored to real prices; an automated market-maker bot keeps the book liquid
+- **5Os** — estimate the five statistics (min, quartiles, median, max) of a hidden hand of cards; best calibration wins
+- **Headline Trading** — news hits the wire, prices move; trade a futures market on the story before time runs out
+- **Poker Auction** — sealed-bid second-price auctions for cards, then trade hands in a post-auction market
+- **Mental Math** — timed arithmetic drills with configurable types and difficulty
 
-## What's on the platform
+Every mode has a live leaderboard. Works solo too — the market-maker bot is always on the other side.
 
-**Market Simulation** — the core experience. Trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live limit order book anchored to real market prices. Orders match by strict price-time priority — exactly how real exchanges work — and an automated market-maker bot keeps the book alive so there is always someone to trade against.
+## Roadmap
 
-**Structured trading games**, each modelled on exercises used on real trading floors:
+We are seeking grant funding to turn the simulator into an adaptive teaching platform:
 
-- **5Os** — a trading-floor classic: estimate the five key statistics (min, 25th percentile, median, 75th percentile, max) of a hidden hand of cards; the market resolves against the truth, so perfect calibration wins
-- **Headline Trading** — news hits the wire and prices move; take directional positions in a futures market and close out before time runs out
-- **Poker Auction** — a multi-round sealed-bid second-price auction where teams bid for cards, assemble hands, and trade in a post-auction market; combines probability, valuation, and game theory
-- **Mental Math** — timed arithmetic drills with configurable question types and difficulty, because speed and accuracy are prerequisites on any trading floor
-
-Every mode has a live leaderboard, so sessions run as competitions.
-
-## How it's used
-
-AlphaBook is built for **live, instructor-led sessions**: an admin creates a custom trading game, sets the scenario and news flow, and a room full of students competes on a shared order book while the leaderboard tracks P&L in real time. We run it this way for trading bootcamps and game nights with the Oxford student quant community, including the Oxford Alpha Fund.
-
-It works equally well solo — anyone can sign up at [alphabook.uk](https://alphabook.uk) and practise against the market-maker bot.
-
-## Impact & roadmap
-
-Our goal is to democratize trading education: the exercises above are normally only accessible inside trading-firm internships and interviews. AlphaBook makes them free and open-source for any student, society, or classroom anywhere.
-
-We are seeking grant funding to take AlphaBook from a simulator to an adaptive teaching platform:
-
-- **AI-driven agents** — integrate LLMs to drive adaptive bot behaviour: market makers that adjust their quoting style to the student's skill level instead of following fixed rules
-- **Real-time strategy feedback** — an AI coach that reviews a student's fills after each session and explains what a professional would have done differently
-- **Pluggable strategy API** — let students write and backtest their own market-making bots against the live book
-- **Session replay & analytics** — record full order-flow history so instructors can replay and dissect a session tick by tick
+- **LLM-driven agents** — market-maker bots that adapt their quoting to the student's skill level
+- **AI strategy coach** — post-session review of a student's fills: what a professional would have done differently
+- **Strategy API** — students write and backtest their own bots against the live book
+- **Session replay** — full order-flow recording so instructors can dissect a session tick by tick
 
 ## Team
 
-- **Xue (Snow) Yan** — project lead
-- **Siyu (Sylvia) Li** — developer
-- **Nick Wang** — developer
-- **Fiona (Yiran) Zhang**
-- **Xinyun Jiang**
-- **Yiluan (Eylan) Zeng**
+**Xue (Snow) Yan** (project lead) · **Siyu (Sylvia) Li** · **Nick Wang** · **Fiona (Yiran) Zhang** · **Xinyun Jiang** · **Yiluan (Eylan) Zeng**
 
 ---
 
-## Technical overview
+## Architecture
 
-| Layer            | Technology                                    |
-|------------------|-----------------------------------------------|
-| Backend          | Python 3.11 / FastAPI / Uvicorn               |
-| Frontend         | Jinja2 templates + vanilla JavaScript         |
-| Database         | Google Cloud Firestore (async client)         |
-| Auth             | Firebase Authentication                       |
-| Real-time        | WebSockets                                    |
-| Market data      | Stooq quotes + synthetic tick engine          |
-| Hosting          | Google Cloud Run + Firebase Hosting           |
-| Containerization | Docker                                        |
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.11 / FastAPI / Uvicorn |
+| Frontend | Jinja2 + vanilla JavaScript |
+| Data & auth | Cloud Firestore (async) + Firebase Auth |
+| Real-time | WebSockets (book snapshot broadcast on every trade) |
+| Market data | Stooq quotes + synthetic tick engine |
+| Deploy | Docker → Cloud Run + Firebase Hosting |
 
-Key backend modules (`app/`):
-
-- `main.py` — FastAPI app: page routes, REST endpoints, and the `/ws/{symbol}` WebSocket that broadcasts order book updates to all connected clients on every trade (no polling)
-- `order_book.py` — the matching engine: limit orders, price-time priority, partial fills, cancellation
-- `market_data.py` — real quotes from [Stooq](https://stooq.com) (15-min delayed) blended with a synthetic tick engine for smooth intra-poll price movement
-- `market_maker.py` — the liquidity bot: passive two-sided quoting with realistic depth, gradual level updates, and delayed sweeps of stale orders
-- `fiveos.py`, `headline.py`, `poker_auction.py`, `mental_math.py` — the game engines
-- `admin.py` — game CRUD, market news publishing, leaderboard, user management
-- `auth.py` / `db.py` — Firebase token verification (`__session` cookie) and the Firestore client
-- `models.py` / `schemas.py` — Pydantic models and request/response validation
-
-Firestore collections: `users`, `orders`, `trades`, `custom_games`, `market_news`. Users start with a $10,000 virtual balance; prices are stored as strings to preserve decimal precision.
+Key modules in `app/`: `order_book.py` (matching engine: price-time priority, partial fills), `market_maker.py` (two-sided quoting with realistic depth and delayed sweeps), `market_data.py` (real quotes blended with synthetic ticks), `fiveos.py` / `headline.py` / `poker_auction.py` / `mental_math.py` (game engines), `admin.py` (games, news, leaderboard, users). Tests live in `tests/`; CI runs ruff + pytest on every push.
 
 ## Run it locally
 
 Prerequisites: Python 3.11+, a free [Firebase](https://console.firebase.google.com/) project (Auth + Firestore).
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/snowy615/alphaBook.git
 cd alphaBook
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 
-# 2. Configure credentials
-cp .env.example .env
-# Fill in your Firebase web config and place your service-account.json
-# in the project root — see SETUP.md for a click-by-click guide
-
-# 3. Run
+cp .env.example .env   # fill in Firebase config — see SETUP.md
 python -m uvicorn app.main:app --reload
 ```
 
-Open [http://localhost:8000](http://localhost:8000), sign up, and start trading.
+Open [http://localhost:8000](http://localhost:8000). Full Firebase setup and Cloud Run deployment: **[SETUP.md](SETUP.md)**.
 
-Full setup instructions (Firebase project creation, service accounts, deployment to Cloud Run + Firebase Hosting) are in **[SETUP.md](SETUP.md)**.
+## Contributing & license
 
-## Contributing
-
-Pull requests are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## License
-
-MIT — see [LICENSE](LICENSE).
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). MIT licensed ([LICENSE](LICENSE)).
