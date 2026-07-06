@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- **Python 3.9+** installed.
+- **Python 3.11+** installed.
 - **Google Account** for Firebase.
 - Use `virtualenv` or `venv` to isolate dependencies.
 

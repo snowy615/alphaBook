@@ -1,0 +1,14 @@
+target-version = "py311"
+line-length = 120
+
+[lint]
+# Start with a focused rule set — expand over time
+select = [
+    "F401",   # unused imports
+    "F841",   # unused variables
+]
+ignore = []
+
+[lint.per-file-ignores]
+# Allow unused imports in __init__.py files
+"__init__.py" = ["F401"]
