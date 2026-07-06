@@ -8,7 +8,7 @@ import string
 import math
 from fractions import Fraction
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from app import db as db_module
 from app.auth import current_user
-from app.models import User, MentalMathGame
+from app.models import User
 
 router = APIRouter(prefix="/mental-math", tags=["mental-math"])
 BASE_DIR = Path(__file__).parent
@@ -154,7 +154,7 @@ def _gen_comparison(difficulty: str) -> dict:
     # Make sure they're not equal
     if val_a == val_b:
         val_b += 1
-        b_parts = text_b.split()
+
         # Simple fix: adjust the expression
         text_b = text_b + " + 1"
     answer = "A" if val_a > val_b else "B"

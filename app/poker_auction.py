@@ -7,7 +7,6 @@ import random
 import string
 import datetime as dt
 from pathlib import Path
-from typing import Optional, List
 from collections import Counter
 from itertools import combinations
 

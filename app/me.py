@@ -3,8 +3,8 @@ import io, time, datetime as dt
 from typing import Any, Dict, List, Optional
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from app import db as db_module
 from google.cloud import firestore
@@ -12,7 +12,7 @@ from app.auth import current_user
 from app.models import User, Trade as DBTrade, Order as DBOrder
 
 # In-memory state helpers
-from app.state import list_user_orders, cancel_order_by_id
+from app.state import cancel_order_by_id
 
 router = APIRouter(prefix="", tags=["me"])
 

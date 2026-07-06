@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from pathlib import Path
 import asyncio, uuid, json, time, logging
 from collections import defaultdict
@@ -18,7 +19,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, H
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 
-from app.order_book import OrderBook, Order as BookOrder
+from app.order_book import Order as BookOrder
 from app.schemas import OrderIn, Ack, PriceOut
 from app.market_data import start_ref_engine, get_ref_price, set_hint_mid
 from app.db import init_firestore
@@ -26,13 +27,122 @@ from app import db as db_module
 from google.cloud import firestore as firestore_module
 from google.cloud.firestore import FieldFilter
 from app.auth import router as auth_router, current_user
-from app.models import User, Order as DBOrder, Trade as DBTrade, CustomGame, MarketNews # explicit import
+from app.models import User, Order as DBOrder, Trade as DBTrade # explicit import
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
-from app.market_maker import start_market_maker, BOT_USER_ID
+from app.market_maker import start_market_maker
 
-app = FastAPI(title="AlphaBook")
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup and shutdown lifecycle for the FastAPI application."""
+    import traceback
+
+    log.info("=" * 60)
+    log.info("🚀 AlphaBook Starting Up...")
+    log.info("=" * 60)
+
+    # Initialize database
+    try:
+        log.info("🔄 Initializing Firestore...")
+        init_firestore()
+        log.info("✅ Firestore initialized")
+    except Exception as e:
+        log.error("❌ FATAL: Database initialization error: %s", e)
+        traceback.print_exc()
+        raise
+
+    # Create admin user if doesn't exist
+    try:
+        log.info("🔄 Setting up admin user...")
+        users_ref = db_module.db.collection("users")
+
+        q = users_ref.where(filter=FieldFilter("username", "==", "admin")).limit(1)
+        docs = await q.get()
+
+        if not docs:
+            admin_uid = "admin_user_id"
+            admin_user = User(
+                id=admin_uid,
+                username="admin",
+                password_hash="firebase_managed",
+                balance=10000.0,
+                is_admin=True,
+                is_blacklisted=False,
+                firebase_uid=admin_uid
+            )
+            await users_ref.document(admin_uid).set(admin_user.model_dump(exclude={"id"}))
+            log.info("✅ Admin user created: username='admin'")
+        else:
+            d = docs[0]
+            if not d.get("is_admin"):
+                await d.reference.update({"is_admin": True})
+            log.info("✅ Admin user verified: admin")
+
+    except Exception as e:
+        log.warning("⚠️ Admin user setup error: %s", e)
+
+
+    # Start market data engine
+    log.info("🔄 Starting market data engine...")
+    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
+    log.info("✅ Market data engine started")
+
+    # Reload open orders from Firestore into in-memory order book
+    try:
+        log.info("🔄 Reloading open orders from Firestore...")
+        open_orders_q = db_module.db.collection("orders").where("status", "==", "OPEN")
+        open_order_docs = await open_orders_q.get()
+        loaded_count = 0
+        for doc in open_order_docs:
+            o = doc.to_dict()
+            symbol = o.get("symbol", "")
+            if not symbol:
+                continue
+            remaining_qty = Decimal(o.get("qty", "0")) - Decimal(o.get("filled_qty", "0"))
+            if remaining_qty <= 0:
+                continue
+            book = books[symbol]
+            order = BookOrder(
+                id=o.get("order_id", doc.id),
+                user_id=o.get("user_id", ""),
+                side=o.get("side", "BUY"),
+                price=Decimal(o.get("price", "0")),
+                qty=remaining_qty,
+                orig_qty=Decimal(o.get("qty", "0")),
+            )
+            if order.side == "BUY":
+                from collections import deque
+                book.bids.setdefault(order.price, deque()).append(order)
+            else:
+                from collections import deque
+                book.asks.setdefault(order.price, deque()).append(order)
+            loaded_count += 1
+        log.info("✅ Reloaded %d open orders into memory", loaded_count)
+    except Exception as e:
+        log.warning("⚠️ Failed to reload open orders: %s", e)
+
+    # Start market maker bot
+    log.info("🔄 Starting market maker bot...")
+    asyncio.create_task(
+        start_market_maker(DEFAULT_SYMBOLS, broadcast_fn=_broadcast, fill_handler=_bot_fill_handler)
+    )
+    log.info("✅ Market maker bot started")
+
+    log.info("=" * 60)
+    log.info("✅ AlphaBook Started Successfully!")
+    log.info("=" * 60)
+
+    yield  # Application runs here
+
+    # Shutdown
+    from app.db import close_firestore
+    await close_firestore()
+    log.info("Firestore connection closed")
+
+
+app = FastAPI(title="AlphaBook", lifespan=lifespan)
 
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -67,113 +177,7 @@ async def get_news(limit: int = 20):
         items.append(NewsOut(id=d.id, **data))
     return items
 
-@app.on_event("startup")
-async def _startup():
-    import time as time_module
-    import traceback
-
-    print("=" * 60)
-    print("🚀 AlphaBook Starting Up...")
-    print("=" * 60)
-
-    # Initialize database
-    try:
-        print("🔄 Initializing Firestore...")
-        init_firestore()
-        print("✅ Firestore initialized")
-        print("✅ Firestore initialized")
-        # time_module.sleep(0.5) # Removed blocking sleep
-    except Exception as e:
-        print(f"❌ FATAL: Database initialization error: {e}")
-        traceback.print_exc()
-        raise
-
-    # Create admin user if doesn't exist
-    try:
-        print(f"🔄 Setting up admin user...")
-        # Check if admin exists
-        # In this new flow, we might want to ensure 'admin' user exists in Firestore.
-        # But we relied on 'username' query before.
-        users_ref = db_module.db.collection("users")
-        
-        q = users_ref.where(filter=FieldFilter("username", "==", "admin")).limit(1)
-        docs = await q.get()
-        
-        if not docs:
-            # We need a UID for the admin. Let's make one up or use a constant.
-            admin_uid = "admin_user_id"
-            admin_user = User(
-                id=admin_uid,
-                username="admin",
-                password_hash="firebase_managed", 
-                balance=10000.0,
-                is_admin=True,
-                is_blacklisted=False,
-                firebase_uid=admin_uid
-            )
-            await users_ref.document(admin_uid).set(admin_user.model_dump(exclude={"id"}))
-            print("✅ Admin user created: username='admin'")
-        else:
-            # Verify admin status
-            d = docs[0]
-            if not d.get("is_admin"):
-                await d.reference.update({"is_admin": True})
-            print(f"✅ Admin user verified: admin")
-
-    except Exception as e:
-        print(f"⚠️ Admin user setup error: {e}")
-
-
-    # Start market data engine
-    print("🔄 Starting market data engine...")
-    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
-    print("✅ Market data engine started")
-
-    # Reload open orders from Firestore into in-memory order book
-    try:
-        print("🔄 Reloading open orders from Firestore...")
-        open_orders_q = db_module.db.collection("orders").where("status", "==", "OPEN")
-        open_order_docs = await open_orders_q.get()
-        loaded_count = 0
-        for doc in open_order_docs:
-            o = doc.to_dict()
-            symbol = o.get("symbol", "")
-            if not symbol:
-                continue
-            remaining_qty = Decimal(o.get("qty", "0")) - Decimal(o.get("filled_qty", "0"))
-            if remaining_qty <= 0:
-                continue
-            book = books[symbol]
-            order = BookOrder(
-                id=o.get("order_id", doc.id),
-                user_id=o.get("user_id", ""),
-                side=o.get("side", "BUY"),
-                price=Decimal(o.get("price", "0")),
-                qty=remaining_qty,
-                orig_qty=Decimal(o.get("qty", "0")),
-            )
-            # Insert directly into the book (don't match — just restore resting orders)
-            if order.side == "BUY":
-                from collections import deque
-                book.bids.setdefault(order.price, deque()).append(order)
-            else:
-                from collections import deque
-                book.asks.setdefault(order.price, deque()).append(order)
-            loaded_count += 1
-        print(f"✅ Reloaded {loaded_count} open orders into memory")
-    except Exception as e:
-        print(f"⚠️ Failed to reload open orders: {e}")
-
-    # Start market maker bot
-    print("🔄 Starting market maker bot...")
-    asyncio.create_task(
-        start_market_maker(DEFAULT_SYMBOLS, broadcast_fn=_broadcast, fill_handler=_bot_fill_handler)
-    )
-    print("✅ Market maker bot started")
-
-    print("=" * 60)
-    print("✅ AlphaBook Started Successfully!")
-    print("=" * 60)
+# Startup logic is handled by the lifespan context manager above.
 
 
 # ---- Bot fill handler (market maker → Firestore) ----
@@ -444,7 +448,6 @@ async def trade_page(symbol: str, request: Request):
 @app.get("/symbols")
 async def get_symbols():
     """Get all available symbols (only visible custom games)."""
-    from app.models import CustomGame
 
     # Firestore
     games_ref = db_module.db.collection("custom_games")
@@ -561,15 +564,15 @@ async def submit_order(
         order_in: OrderIn,
         user: User = Depends(current_user)
 ):
-    print(f"DEBUG: submit_order start. Sym={order_in.symbol} Side={order_in.side} Ux={user.username}")
+    log.debug("submit_order start. Sym=%s Side=%s Ux=%s", order_in.symbol, order_in.side, user.username)
     symbol = order_in.symbol.upper()
 
     # Only allow trading on defined custom games
     games_ref = db_module.db.collection("custom_games")
     q = games_ref.where("symbol", "==", symbol).limit(1)
-    print("DEBUG: Checking custom games...")
+    log.debug("Checking custom games...")
     docs = await q.get()
-    print(f"DEBUG: Found {len(docs)} games")
+    log.debug("Found %d games", len(docs))
 
     if not docs:
          raise HTTPException(status_code=404, detail="Symbol is not tradable.")
@@ -618,19 +621,17 @@ async def submit_order(
     )
 
     # Match in order book
-    print("DEBUG: Acquiring lock...")
+    log.debug("Acquiring lock for %s...", symbol)
     async with lock:
-        print("DEBUG: Lock acquired. Adding order...")
         fills = book.add(order)
-        print("DEBUG: Order added. Snapshotting...")
         snap = book.snapshot(depth=TOP_DEPTH)
-    print("DEBUG: Lock released. Fills:", len(fills))
+    log.debug("Lock released. Fills: %d", len(fills))
 
     # Record trades in database
     total_filled = Decimal("0")
     
     # Batch write for trades?
-    print("DEBUG: Starting batch...")
+    log.debug("Starting batch write for %d fills...", len(fills))
     batch = db_module.db.batch()
     
     for tr in fills:
@@ -662,9 +663,8 @@ async def submit_order(
 
         total_filled += q
 
-    print("DEBUG: Committing batch...")
     await batch.commit()
-    print("DEBUG: Batch committed.")
+    log.debug("Batch committed for %s", symbol)
 
     # Update order status in database
     update_data = {
@@ -695,7 +695,7 @@ async def submit_order(
         "ref_price": get_ref_price(symbol),
     })
     
-    print("DEBUG: submitting ACK")
+    log.debug("Submitting ACK for order %s", order.id)
     return Ack(
         order_id=order.id,
         trades=[{

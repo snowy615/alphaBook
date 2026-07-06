@@ -23,9 +23,9 @@ def init_firestore():
 
     try:
         if not len(firebase_admin._apps):
-            print("DEBUG: init_firestore - no apps, initializing...")
+            logging.debug("init_firestore: no apps, initializing")
             if cred_json:
-                print("DEBUG: init_firestore - using FIREBASE_CREDENTIALS_JSON")
+                logging.debug("init_firestore: using FIREBASE_CREDENTIALS_JSON")
                 import json
                 cred_dict = json.loads(cred_json)
                 # Fix escaped newlines in private_key (common when passed via env vars)
@@ -37,40 +37,38 @@ def init_firestore():
                 })
                 client_creds = cred.get_credential()
             elif cred_path and os.path.exists(cred_path):
-                print(f"DEBUG: init_firestore - using cred_path: {cred_path}")
+                logging.debug("init_firestore: using cred_path %s", cred_path)
                 cred = credentials.Certificate(cred_path)
                 initialize_app(cred, {
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
                 })
                 client_creds = cred.get_credential()
             else:
-                print("DEBUG: init_firestore - using ADC / default creds")
+                logging.debug("init_firestore: using ADC / default creds")
                 # Use default credentials (good for Cloud Run / GKE)
                 initialize_app(options={
                     'storageBucket': os.getenv("FIREBASE_STORAGE_BUCKET")
                 })
         else:
-            print("DEBUG: init_firestore - app already initialized")
-            pass
+            logging.debug("init_firestore: app already initialized")
             
         logging.info("Firebase Admin initialized successfully.")
         
         # Initialize Async Firestore Client
         # This will also use GOOGLE_APPLICATION_CREDENTIALS
-        print("DEBUG: init_firestore - initializing AsyncClient...")
+        logging.debug("init_firestore: initializing AsyncClient")
         project_id = os.getenv("FIREBASE_PROJECT_ID")
         
         if client_creds:
-             print("DEBUG: using explicit client_creds")
+             logging.debug("init_firestore: using explicit client_creds")
              db = firestore.AsyncClient(project=project_id, credentials=client_creds)
         elif project_id:
-             print(f"DEBUG: using project_id only: {project_id}")
+             logging.debug("init_firestore: using project_id %s", project_id)
              db = firestore.AsyncClient(project=project_id)
         else:
-             print("DEBUG: using default AsyncClient constructor")
+             logging.debug("init_firestore: using default AsyncClient constructor")
              db = firestore.AsyncClient()
              
-        print(f"DEBUG: AsyncClient created. Project: {db.project}")
         logging.info(f"Firestore AsyncClient initialized. Project: {db.project}")
 
         # Initialize Storage Bucket

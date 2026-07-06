@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, datetime as dt, logging, hashlib
+import os, datetime as dt, logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
@@ -56,11 +56,9 @@ async def get_user_from_token(token: str) -> Optional[User]:
         return None
     
     # Firestore get
-    print(f"DEBUG: fetching user doc {uid}")
     doc_ref = db_module.db.collection("users").document(uid)
     doc = await doc_ref.get()
-    print(f"DEBUG: fetched user doc {uid} exists={doc.exists}")
-    
+
     if doc.exists:
         u_data = doc.to_dict()
         return User(id=doc.id, **u_data)
@@ -91,27 +89,22 @@ async def current_user(
     request: Request,
     creds: HTTPAuthorizationCredentials = Depends(http_bearer),
 ) -> User:
-    print(f"DEBUG: current_user check for {request.url.path}")
     # 1) Cookie
     token = request.cookies.get(COOKIE_NAME)
     # 2) Bearer
     if not token and creds and creds.scheme.lower() == "bearer":
         token = creds.credentials
     if not token:
-        print("DEBUG: current_user no token")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        
-    print("DEBUG: current_user calling get_user_from_token")
+
     user = await get_user_from_token(token)
     if not user:
-        print("DEBUG: current_user user not found")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
     # Check if user is blacklisted
     if user.is_blacklisted:
         raise HTTPException(status_code=403, detail="Account has been suspended")
 
-    print(f"DEBUG: current_user success: {user.username}")
     return user
 
 # ----- HTML forms -----
@@ -141,8 +134,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         doc = await doc_ref.get()
         
         user = None
-        created_new = False
-        
+
         if doc.exists:
             user = User(id=doc.id, **doc.to_dict())
         else:
@@ -174,7 +166,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             # Explicitly set document ID to firebase_uid
             await db_module.db.collection("users").document(firebase_uid).set(user_dict)
             log.info(f"Created new user: {username} ({firebase_uid})")
-            created_new = True
+            # User created successfully
         
         # Create session
         token = create_token(user.id) # user.id is firebase_uid

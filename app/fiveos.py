@@ -6,9 +6,7 @@ Endpoints for creating, joining, playing, and managing 5Os games.
 import random
 import string
 import statistics
-import json
 from pathlib import Path
-from typing import Optional
 import datetime as dt
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -17,7 +15,7 @@ from pydantic import BaseModel
 
 from app import db as db_module
 from app.auth import current_user
-from app.models import User, FiveOsGame, FiveOsSubmission
+from app.models import User
 
 router = APIRouter(prefix="/5os", tags=["5os"])
 BASE_DIR = Path(__file__).parent
@@ -421,11 +419,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
 
 def _compute_optimal_estimates(game_data: dict, user_id: str):
     """Compute optimal estimates per round based on cards known to the player."""
-    deck_15 = game_data["deck_15"]
     player_cards = game_data.get("player_cards", {})
     common_cards = game_data.get("common_cards", {})
-    all_ranks = list(range(1, 14))
-    total_rank_sum = sum(all_ranks)  # 91
 
     optimal = {}
     known_cards = []  # accumulate known cards across rounds

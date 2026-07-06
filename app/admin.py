@@ -1,17 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from app import db as db_module
-from google.cloud import firestore
 from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
-from app.models import User, Order, Trade, CustomGame, MarketNews
+from app.models import User, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
 import io
 from decimal import Decimal
-from typing import List, Optional
+from typing import Optional
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -848,7 +847,7 @@ async def generate_cv_book(
             try:
                 blob = db_module.bucket.blob(blob_path)
                 cv_bytes = blob.download_as_bytes()
-            except Exception as exc:
+            except Exception:
                 pass  # CV missing from storage; skip it
         members.append({
             "username": data.get("username", ""),

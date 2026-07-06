@@ -5,10 +5,8 @@ Real-time futures trading simulation with news-driven price movements.
 """
 import random
 import string
-import math
 import datetime as dt
 from pathlib import Path
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.templating import Jinja2Templates
