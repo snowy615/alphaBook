@@ -1,10 +1,8 @@
 # AlphaBook
 
-**AlphaBook is an open-source, extensible market-making simulator designed to democratize high-frequency trading education.**
+**AlphaBook is an open-source financial education platform that puts students inside a live order book — trade real stocks, play structured trading games, and build the intuition that separates traders from guessers, with zero real-money risk.**
 
-It is a real-time mini stock exchange: students trade real equities (AAPL, AMZN, GOOGL, META, MSFT, NVDA) against each other and against an automated market-maker bot, on a live limit order book with price-time priority matching, real delayed market data, and instant WebSocket updates — the same mechanics that drive real electronic markets, in a sandbox with simulated money.
-
-**Live demo:** [https://alphabook-5ef4e.web.app](https://alphabook-5ef4e.web.app)
+**Try it now: [alphabook.uk](https://alphabook.uk)** — sign up free and join a session in under a minute.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 ![Python](https://img.shields.io/badge/python-3.11-blue.svg)
@@ -12,24 +10,82 @@ It is a real-time mini stock exchange: students trade real equities (AAPL, AMZN,
 
 ---
 
-## Why AlphaBook?
+## Purpose
 
-I am a student at the University of Oxford building AlphaBook to bridge the gap between academic theory and practical, algorithmic implementation. Textbooks explain market microstructure; almost nothing lets a student *feel* it — place a limit order, watch it rest in the book, get picked off by a faster participant, and understand why.
+Quantitative trading and market making are among the most sought-after careers for STEM students, yet the education around them is broken: textbooks explain market microstructure in the abstract, and nothing lets a student *feel* it — place a limit order, watch it rest in the book, get picked off by a faster participant, and understand why.
 
-AlphaBook is already used to run live trading bootcamps and game sessions: an admin creates a custom trading game (e.g. "price this asset given these news headlines"), students compete on a shared order book, and a leaderboard tracks P&L in real time.
+AlphaBook closes that gap. We are students at the University of Oxford building the platform we wished existed: a real matching engine with real market data, wrapped in structured games that teach the specific skills trading firms actually test — probability calibration, reacting to news, valuation under uncertainty, and mental arithmetic under pressure.
 
-## Features
+Everything runs in the browser with virtual balances. Students get the full trading experience — market risk, position management, order flow — without installing anything or risking a penny.
 
-- **Limit order book engine** — in-memory price-time priority matching with partial fills and cancellation (`app/order_book.py`)
-- **Real market data** — live quotes from [Stooq](https://stooq.com) (15-min delayed) blended with a synthetic tick engine for smooth intra-poll movement (`app/market_data.py`)
-- **Market-maker bot** — passive two-sided quoting plus periodic sweeps of stale orders, so the book is always live even with few participants (`app/market_maker.py`)
-- **Real-time updates** — every trade broadcasts the new book snapshot to all connected clients over WebSockets; no polling
-- **Portfolio & P&L tracking** — each user starts with a $10,000 simulated balance
-- **Admin dashboard** — create custom trading games, publish market news, manage users, view the leaderboard
-- **Educational mini-games** — Mental Math (timed arithmetic under pressure), Headline (price an asset from news), Poker Auction, and FiveOs, each with its own rules page and scoreboard
-- **Auth & persistence** — Firebase Authentication and Cloud Firestore, deployable to Google Cloud Run in one command
+## What's on the platform
 
-## Quickstart
+**Market Simulation** — the core experience. Trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live limit order book anchored to real market prices. Orders match by strict price-time priority — exactly how real exchanges work — and an automated market-maker bot keeps the book alive so there is always someone to trade against.
+
+**Structured trading games**, each modelled on exercises used on real trading floors:
+
+- **5Os** — a trading-floor classic: estimate the five key statistics (min, 25th percentile, median, 75th percentile, max) of a hidden hand of cards; the market resolves against the truth, so perfect calibration wins
+- **Headline Trading** — news hits the wire and prices move; take directional positions in a futures market and close out before time runs out
+- **Poker Auction** — a multi-round sealed-bid second-price auction where teams bid for cards, assemble hands, and trade in a post-auction market; combines probability, valuation, and game theory
+- **Mental Math** — timed arithmetic drills with configurable question types and difficulty, because speed and accuracy are prerequisites on any trading floor
+
+Every mode has a live leaderboard, so sessions run as competitions.
+
+## How it's used
+
+AlphaBook is built for **live, instructor-led sessions**: an admin creates a custom trading game, sets the scenario and news flow, and a room full of students competes on a shared order book while the leaderboard tracks P&L in real time. We run it this way for trading bootcamps and game nights with the Oxford student quant community, including the Oxford Alpha Fund.
+
+It works equally well solo — anyone can sign up at [alphabook.uk](https://alphabook.uk) and practise against the market-maker bot.
+
+## Impact & roadmap
+
+Our goal is to democratize trading education: the exercises above are normally only accessible inside trading-firm internships and interviews. AlphaBook makes them free and open-source for any student, society, or classroom anywhere.
+
+We are seeking grant funding to take AlphaBook from a simulator to an adaptive teaching platform:
+
+- **AI-driven agents** — integrate LLMs to drive adaptive bot behaviour: market makers that adjust their quoting style to the student's skill level instead of following fixed rules
+- **Real-time strategy feedback** — an AI coach that reviews a student's fills after each session and explains what a professional would have done differently
+- **Pluggable strategy API** — let students write and backtest their own market-making bots against the live book
+- **Session replay & analytics** — record full order-flow history so instructors can replay and dissect a session tick by tick
+
+## Team
+
+- **Xue (Snow) Yan** — project lead
+- **Siyu (Sylvia) Li** — developer
+- **Nick Wang** — developer
+- **Fiona (Yiran) Zhang**
+- **Xinyun Jiang**
+- **Yiluan (Eylan) Zeng**
+
+---
+
+## Technical overview
+
+| Layer            | Technology                                    |
+|------------------|-----------------------------------------------|
+| Backend          | Python 3.11 / FastAPI / Uvicorn               |
+| Frontend         | Jinja2 templates + vanilla JavaScript         |
+| Database         | Google Cloud Firestore (async client)         |
+| Auth             | Firebase Authentication                       |
+| Real-time        | WebSockets                                    |
+| Market data      | Stooq quotes + synthetic tick engine          |
+| Hosting          | Google Cloud Run + Firebase Hosting           |
+| Containerization | Docker                                        |
+
+Key backend modules (`app/`):
+
+- `main.py` — FastAPI app: page routes, REST endpoints, and the `/ws/{symbol}` WebSocket that broadcasts order book updates to all connected clients on every trade (no polling)
+- `order_book.py` — the matching engine: limit orders, price-time priority, partial fills, cancellation
+- `market_data.py` — real quotes from [Stooq](https://stooq.com) (15-min delayed) blended with a synthetic tick engine for smooth intra-poll price movement
+- `market_maker.py` — the liquidity bot: passive two-sided quoting with realistic depth, gradual level updates, and delayed sweeps of stale orders
+- `fiveos.py`, `headline.py`, `poker_auction.py`, `mental_math.py` — the game engines
+- `admin.py` — game CRUD, market news publishing, leaderboard, user management
+- `auth.py` / `db.py` — Firebase token verification (`__session` cookie) and the Firestore client
+- `models.py` / `schemas.py` — Pydantic models and request/response validation
+
+Firestore collections: `users`, `orders`, `trades`, `custom_games`, `market_news`. Users start with a $10,000 virtual balance; prices are stored as strings to preserve decimal precision.
+
+## Run it locally
 
 Prerequisites: Python 3.11+, a free [Firebase](https://console.firebase.google.com/) project (Auth + Firestore).
 
@@ -53,40 +109,6 @@ python -m uvicorn app.main:app --reload
 Open [http://localhost:8000](http://localhost:8000), sign up, and start trading.
 
 Full setup instructions (Firebase project creation, service accounts, deployment to Cloud Run + Firebase Hosting) are in **[SETUP.md](SETUP.md)**.
-
-## Architecture
-
-| Layer            | Technology                                    |
-|------------------|-----------------------------------------------|
-| Backend          | Python 3.11 / FastAPI / Uvicorn               |
-| Frontend         | Jinja2 templates + vanilla JavaScript         |
-| Database         | Google Cloud Firestore (async client)         |
-| Auth             | Firebase Authentication                       |
-| Real-time        | WebSockets                                    |
-| Market data      | Stooq quotes + synthetic tick engine          |
-| Hosting          | Google Cloud Run + Firebase Hosting           |
-| Containerization | Docker                                        |
-
-Key backend modules (`app/`):
-
-- `main.py` — FastAPI app: page routes, REST endpoints, and the `/ws/{symbol}` WebSocket that broadcasts order book updates
-- `order_book.py` — the matching engine (limit orders, price-time priority, partial fills)
-- `market_data.py` / `market_maker.py` — real price feed and the automated liquidity provider
-- `admin.py` — game CRUD, news, leaderboard, user management
-- `auth.py` / `db.py` — Firebase token verification (`__session` cookie) and Firestore client
-- `mental_math.py`, `headline.py`, `poker_auction.py`, `fiveos.py` — the educational mini-games
-- `models.py` / `schemas.py` — Pydantic models and request/response validation
-
-Firestore collections: `users`, `orders`, `trades`, `custom_games`, `market_news`. Prices are stored as strings to preserve decimal precision.
-
-## Roadmap: Future Integration
-
-We are applying for grant funding to take AlphaBook from a simulator to an adaptive teaching platform:
-
-- **AI-driven agents** — integrate OpenAI models to drive adaptive agent behavior: bots that adjust their quoting style to the student's skill level instead of following fixed rules
-- **Real-time strategy feedback** — an LLM coach that reviews a student's fills after each session and explains what a professional market maker would have done differently
-- **Pluggable strategy API** — let students write and backtest their own market-making bots against the live book
-- **Session replay & analytics** — record full order-flow history so instructors can replay and dissect a session tick by tick
 
 ## Contributing
 
