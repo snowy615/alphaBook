@@ -3,7 +3,6 @@ __pycache__/
 *$py.class
 *.so
 .env
-.env.example
 service-account.json
 *.db
 venv/
@@ -11,3 +10,5 @@ env/
 .DS_Store
 .vscode/
 .idea/
+.firebase/
+*.pdf
