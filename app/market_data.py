@@ -46,7 +46,11 @@ STATIC_SEEDS: Dict[str, float] = {
 }
 
 # ── Quote fetch (Yahoo Finance) ────────────────────────────────────────────────
-_QUOTE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+# Two interchangeable hosts; if one rate-limits (429), the other often accepts.
+_QUOTE_URLS = [
+    "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d",
+    "https://query2.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d",
+]
 
 _HTTP_HEADERS = {
     "User-Agent": (
@@ -62,38 +66,46 @@ _HTTP_HEADERS = {
 async def _fetch_quote(symbol: str) -> Optional[float]:
     """
     Fetch the latest market price for *symbol* from Yahoo Finance.
+    Tries each host in turn (rate limits differ per host).
     Returns None on any error.
     """
-    url = _QUOTE_URL.format(symbol=symbol.upper())
     try:
         async with httpx.AsyncClient(
             headers=_HTTP_HEADERS, follow_redirects=True, timeout=12.0
         ) as client:
-            resp = await client.get(url)
+            for url_tmpl in _QUOTE_URLS:
+                url = url_tmpl.format(symbol=symbol.upper())
+                resp = await client.get(url)
 
-        if resp.status_code != 200:
-            log.warning("[QUOTE] %s HTTP %d", symbol, resp.status_code)
-            return None
+                if resp.status_code == 429:
+                    log.warning("[QUOTE] %s HTTP 429 on %s", symbol, httpx.URL(url).host)
+                    await asyncio.sleep(1.5)
+                    continue
+                if resp.status_code != 200:
+                    log.warning("[QUOTE] %s HTTP %d", symbol, resp.status_code)
+                    continue
 
-        data = resp.json()
-        result = (data.get("chart") or {}).get("result") or []
-        if not result:
-            log.warning("[QUOTE] %s empty chart result", symbol)
-            return None
+                data = resp.json()
+                result = (data.get("chart") or {}).get("result") or []
+                if not result:
+                    log.warning("[QUOTE] %s empty chart result", symbol)
+                    continue
 
-        meta = result[0].get("meta") or {}
-        price = meta.get("regularMarketPrice")
-        if price is None:
-            log.warning("[QUOTE] %s missing regularMarketPrice", symbol)
-            return None
+                meta = result[0].get("meta") or {}
+                price = meta.get("regularMarketPrice")
+                if price is None:
+                    log.warning("[QUOTE] %s missing regularMarketPrice", symbol)
+                    continue
 
-        price = float(price)
-        if price <= 0 or math.isnan(price):
-            log.warning("[QUOTE] %s bad price value: %s", symbol, price)
-            return None
+                price = float(price)
+                if price <= 0 or math.isnan(price):
+                    log.warning("[QUOTE] %s bad price value: %s", symbol, price)
+                    continue
 
-        log.info("[QUOTE] %-6s → $%.4f  (market_time=%s)", symbol, price, meta.get("regularMarketTime"))
-        return price
+                log.info("[QUOTE] %-6s → $%.4f  (market_time=%s)", symbol, price, meta.get("regularMarketTime"))
+                return price
+
+        return None
 
     except Exception:
         log.error("[QUOTE] %s fetch error:\n%s", symbol, traceback.format_exc())
