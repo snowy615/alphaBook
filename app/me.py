@@ -79,9 +79,8 @@ async def me_summary(
             else:
                 # Covering short
                 close_qty = min(qty, abs(pos["qty"]))
-                if pos["qty"] != 0:
-                    avg_short = abs(pos["total_cost"] / pos["qty"])
-                    pos["realized_pnl"] += (avg_short - price) * close_qty
+                avg_short = abs(pos["total_cost"] / pos["qty"])
+                pos["realized_pnl"] += (avg_short - price) * close_qty
 
                 pos["qty"] += qty
                 remaining = qty - close_qty
@@ -90,6 +89,9 @@ async def me_summary(
                     pos["total_cost"] = price * remaining
                 elif pos["qty"] == 0:
                     pos["total_cost"] = Decimal("0")
+                else:
+                    # Partial cover: remove the covered portion from cost basis
+                    pos["total_cost"] -= avg_short * close_qty
 
         # User is the seller - going short
         if trade.seller_id == uid:
@@ -100,9 +102,8 @@ async def me_summary(
             else:
                 # Closing long
                 close_qty = min(qty, pos["qty"])
-                if pos["qty"] != 0:
-                    avg_long = pos["total_cost"] / pos["qty"]
-                    pos["realized_pnl"] += (price - avg_long) * close_qty
+                avg_long = pos["total_cost"] / pos["qty"]
+                pos["realized_pnl"] += (price - avg_long) * close_qty
 
                 pos["qty"] -= qty
                 remaining = qty - close_qty
@@ -111,12 +112,17 @@ async def me_summary(
                     pos["total_cost"] = price * remaining
                 elif pos["qty"] == 0:
                     pos["total_cost"] = Decimal("0")
+                else:
+                    # Partial close: remove the sold portion from cost basis
+                    pos["total_cost"] -= avg_long * close_qty
 
     # Calculate totals
     total_qty = Decimal("0")
     total_notional = Decimal("0")
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
+    signed_cost = Decimal("0")     # +cost for longs (cash out), -proceeds for shorts (cash in)
+    signed_value = Decimal("0")    # market value of longs minus liability of shorts
 
     for symbol, pos in positions.items():
         qty = pos["qty"]
@@ -132,8 +138,12 @@ async def me_summary(
         # Calculate unrealized P&L
         if qty > 0:
             unrealized = (ref_decimal - avg_cost) * qty
+            signed_cost += total_cost
+            signed_value += ref_decimal * qty
         elif qty < 0:
             unrealized = (avg_cost - ref_decimal) * abs(qty)
+            signed_cost -= total_cost
+            signed_value -= ref_decimal * abs(qty)
         else:
             unrealized = Decimal("0")
 
@@ -146,8 +156,10 @@ async def me_summary(
 
     avg_cost = (total_notional / abs(total_qty)) if total_qty != 0 else None
     starting_cash = 10000.0
-    cash = starting_cash + float(total_realized) - float(total_notional)
-    equity = cash + float(total_unrealized)
+    # Cash = starting cash + realized P&L - what was spent opening current positions
+    # (short proceeds add to cash). Equity = cash + current value of positions.
+    cash = starting_cash + float(total_realized) - float(signed_cost)
+    equity = cash + float(signed_value)
 
     return {
         "positions": [],
@@ -203,9 +215,8 @@ async def me_pnl(
             if pos["qty"] < 0:
                 # Covering short
                 close_qty = min(qty, abs(pos["qty"]))
-                if pos["qty"] != 0:
-                    avg_short = abs(pos["total_cost"] / pos["qty"])
-                    realized_this_trade = (avg_short - price) * close_qty
+                avg_short = abs(pos["total_cost"] / pos["qty"])
+                realized_this_trade = (avg_short - price) * close_qty
 
                 remaining = qty - close_qty
                 pos["qty"] += qty
@@ -214,6 +225,9 @@ async def me_pnl(
                     pos["total_cost"] = price * remaining
                 elif pos["qty"] == 0:
                     pos["total_cost"] = Decimal("0")
+                else:
+                    # Partial cover: remove the covered portion from cost basis
+                    pos["total_cost"] -= avg_short * close_qty
             else:
                 # Adding to long
                 pos["total_cost"] += price * qty
@@ -224,9 +238,8 @@ async def me_pnl(
             if pos["qty"] > 0:
                 # Closing long
                 close_qty = min(qty, pos["qty"])
-                if pos["qty"] != 0:
-                    avg_long = pos["total_cost"] / pos["qty"]
-                    realized_this_trade = (price - avg_long) * close_qty
+                avg_long = pos["total_cost"] / pos["qty"]
+                realized_this_trade = (price - avg_long) * close_qty
 
                 remaining = qty - close_qty
                 pos["qty"] -= qty
@@ -235,6 +248,9 @@ async def me_pnl(
                     pos["total_cost"] = price * remaining
                 elif pos["qty"] == 0:
                     pos["total_cost"] = Decimal("0")
+                else:
+                    # Partial close: remove the sold portion from cost basis
+                    pos["total_cost"] -= avg_long * close_qty
             else:
                 # Adding to short
                 pos["total_cost"] += price * qty
@@ -324,6 +340,16 @@ async def _cancel_any(order_id: str, user) -> Dict[str, Any]:
          raise HTTPException(status_code=404, detail="Order not found or already closed")
 
     db_order_doc = docs[0]
+
+    # Cancelling is not allowed while the game is paused (same rule as DELETE /orders/{id})
+    symbol = (db_order_doc.to_dict().get("symbol") or "").upper()
+    if symbol:
+        g_docs = await db_module.db.collection("custom_games").where("symbol", "==", symbol).limit(1).get()
+        if g_docs and g_docs[0].to_dict().get("is_paused"):
+            raise HTTPException(
+                status_code=403,
+                detail="Trading for this game is currently paused; orders cannot be cancelled."
+            )
 
     # Try to cancel from in-memory book (may not exist if partially filled)
     try:

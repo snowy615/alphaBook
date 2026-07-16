@@ -2,10 +2,9 @@
 
 from decimal import Decimal
 
-import pytest
 
-from app.order_book import Order, OrderBook
-from tests.conftest import make_buy, make_sell, make_order
+from app.order_book import OrderBook
+from tests.conftest import make_buy, make_sell
 
 
 # ── Adding orders that rest (no match) ─────────────────────────────────────

@@ -1,13 +1,10 @@
 """
-Real market data via Stooq (https://stooq.com).
+Real market data via Yahoo Finance's public chart API.
 
-Stooq provides real stock quotes (15-min delayed during market hours,
-last close otherwise) with no API key and no rate limit for normal use.
-We call it asynchronously via httpx, which is already in requirements.txt.
-
-Response format (CSV):
-  Symbol, Date, Time, Open, High, Low, Close, Volume, Name
-  AAPL.US,2026-05-15,22:00:19,297.9,303.2,296.52,300.23,54862836,APPLE INC
+(Stooq, the previous provider, now fronts its CSV endpoints with an
+anti-bot challenge, so every server-side request 404s. Yahoo's
+/v8/finance/chart endpoint needs no API key and returns JSON with a
+regularMarketPrice field.)
 """
 
 import asyncio
@@ -37,7 +34,7 @@ MAX_TICK_MOVE_BP = 20     # hard cap on a single tick's move
 DEFAULT_SEED     = 100.0
 
 # Updated to real prices as of May 2026 — used only as startup fallback
-# until the first successful Stooq fetch arrives (~5-10 seconds)
+# until the first successful quote fetch arrives (~5-10 seconds)
 STATIC_SEEDS: Dict[str, float] = {
     "AAPL": 300.0,
     "MSFT": 422.0,
@@ -48,8 +45,8 @@ STATIC_SEEDS: Dict[str, float] = {
     "TSLA": 422.0,
 }
 
-# ── Stooq fetch ────────────────────────────────────────────────────────────────
-_STOOQ_URL = "https://stooq.com/q/l/?s={symbol}.US&f=sd2t2ohlcvn"
+# ── Quote fetch (Yahoo Finance) ────────────────────────────────────────────────
+_QUOTE_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
 
 _HTTP_HEADERS = {
     "User-Agent": (
@@ -57,20 +54,17 @@ _HTTP_HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "text/html,application/xhtml+xml,*/*",
+    "Accept": "application/json,*/*",
     "Accept-Language": "en-US,en;q=0.9",
 }
 
 
-async def _fetch_stooq(symbol: str) -> Optional[float]:
+async def _fetch_quote(symbol: str) -> Optional[float]:
     """
-    Fetch the latest close price for *symbol* from Stooq.
-
-    CSV layout (0-based columns):
-      0=symbol  1=date  2=time  3=open  4=high  5=low  6=close  7=volume  8=name
+    Fetch the latest market price for *symbol* from Yahoo Finance.
     Returns None on any error.
     """
-    url = _STOOQ_URL.format(symbol=symbol.upper())
+    url = _QUOTE_URL.format(symbol=symbol.upper())
     try:
         async with httpx.AsyncClient(
             headers=_HTTP_HEADERS, follow_redirects=True, timeout=12.0
@@ -78,34 +72,31 @@ async def _fetch_stooq(symbol: str) -> Optional[float]:
             resp = await client.get(url)
 
         if resp.status_code != 200:
-            log.warning("[STOOQ] %s HTTP %d", symbol, resp.status_code)
+            log.warning("[QUOTE] %s HTTP %d", symbol, resp.status_code)
             return None
 
-        text = resp.text.strip()
-        # Last non-empty line is the data row (first line is header if any)
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        if not lines:
-            log.warning("[STOOQ] %s empty response", symbol)
+        data = resp.json()
+        result = (data.get("chart") or {}).get("result") or []
+        if not result:
+            log.warning("[QUOTE] %s empty chart result", symbol)
             return None
 
-        # Stooq returns one data line per symbol (no header row for this URL)
-        parts = lines[-1].split(",")
-        if len(parts) < 7:
-            log.warning("[STOOQ] %s unexpected CSV: %r", symbol, lines[-1][:80])
+        meta = result[0].get("meta") or {}
+        price = meta.get("regularMarketPrice")
+        if price is None:
+            log.warning("[QUOTE] %s missing regularMarketPrice", symbol)
             return None
 
-        close_str = parts[6].strip()
-        price = float(close_str)
+        price = float(price)
         if price <= 0 or math.isnan(price):
-            log.warning("[STOOQ] %s bad price value: %s", symbol, close_str)
+            log.warning("[QUOTE] %s bad price value: %s", symbol, price)
             return None
 
-        provider_ts = f"{parts[1].strip()} {parts[2].strip()}"
-        log.info("[STOOQ] %-6s → $%.4f  (provider_ts=%s)", symbol, price, provider_ts)
+        log.info("[QUOTE] %-6s → $%.4f  (market_time=%s)", symbol, price, meta.get("regularMarketTime"))
         return price
 
     except Exception:
-        log.error("[STOOQ] %s fetch error:\n%s", symbol, traceback.format_exc())
+        log.error("[QUOTE] %s fetch error:\n%s", symbol, traceback.format_exc())
         return None
 
 
@@ -145,50 +136,58 @@ def _seed_estimates(symbols: List[str]) -> None:
             _synth[sym] = max(1e-6, base + jitter)
 
 
-async def _bootstrap_symbol(sym: str) -> None:
-    """Fetch real price at startup; retry with back-off on failure."""
-    backoff = 5.0
+async def _bootstrap_all(symbols: List[str]) -> None:
+    """
+    Fetch initial real prices one symbol at a time. Yahoo rate-limits
+    bursts (HTTP 429), so requests are spaced out and failed symbols are
+    retried in later passes with growing back-off.
+    """
+    remaining = [s.upper() for s in symbols]
     for attempt in range(1, 8):
-        price = await _fetch_stooq(sym)
-        if price:
-            _official[sym] = price
-            _synth[sym] = price
-            fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            _official_info[sym] = {
-                "source": "stooq",
-                "fetched_at": fetched_at,
-            }
+        still_missing = []
+        for sym in remaining:
+            price = await _fetch_quote(sym)
+            if price:
+                _official[sym] = price
+                _synth[sym] = price
+                fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+                _official_info[sym] = {"source": "yahoo", "fetched_at": fetched_at}
+            else:
+                still_missing.append(sym)
+            await asyncio.sleep(2.0 + random.uniform(0, 1))
+        if not still_missing:
+            log.info("[MARKET] bootstrap complete for all %d symbols", len(symbols))
             return
-        wait = backoff + random.uniform(0, 2)
-        log.info("[MARKET] %s bootstrap attempt %d failed, retry in %.1fs", sym, attempt, wait)
+        remaining = still_missing
+        wait = min(15 * attempt, 90)
+        log.info("[MARKET] bootstrap pass %d: %s still missing, retry in %ds",
+                 attempt, remaining, wait)
         await asyncio.sleep(wait)
-        backoff = min(backoff * 1.5, 60)
 
-    log.warning("[MARKET] %s: all bootstrap attempts failed; using seed $%.2f",
-                sym, _synth.get(sym, DEFAULT_SEED))
+    log.warning("[MARKET] bootstrap incomplete for %s; using static seeds", remaining)
 
 
 async def _official_rotator(symbols: List[str], per_symbol_period_sec: int) -> None:
     """
-    Cycle through symbols, refreshing each from Stooq every
+    Cycle through symbols, refreshing each from the quote API every
     per_symbol_period_sec × len(symbols) seconds.
     """
     i = 0
     while True:
         sym = symbols[i % len(symbols)].upper()
-        price = await _fetch_stooq(sym)
+        price = await _fetch_quote(sym)
         if price:
             _official[sym] = price
             _synth.setdefault(sym, price)
             fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            _official_info[sym] = {"source": "stooq", "fetched_at": fetched_at}
+            _official_info[sym] = {"source": "yahoo", "fetched_at": fetched_at}
         i += 1
         await asyncio.sleep(per_symbol_period_sec)
 
 
 async def _fast_synth_loop(symbols: List[str], tick_sec: float) -> None:
     """
-    Generate smooth intra-second micro-movements between Stooq refreshes.
+    Generate smooth intra-second micro-movements between quote refreshes.
 
     Target = 70% official + 30% order-book mid (so user trading activity
     creates realistic short-term pressure on the price).
@@ -237,7 +236,7 @@ async def start_ref_engine(
     Args:
         symbols:         all active game symbols
         fast_tick:       seconds between synthetic micro-ticks
-        official_period: seconds between Stooq refreshes per symbol
+        official_period: seconds between quote refreshes per symbol
     """
     global _started
     if _started:
@@ -245,17 +244,15 @@ async def start_ref_engine(
     _started = True
 
     market_syms = [s for s in symbols if not s.upper().startswith("GAME")]
-    log.info("[MARKET] Starting Stooq engine for %s", market_syms)
+    log.info("[MARKET] Starting quote engine for %s", market_syms)
 
     if not market_syms:
         return
 
     _seed_estimates(market_syms)
 
-    # Bootstrap all symbols concurrently (staggered slightly)
-    for i, s in enumerate(market_syms):
-        asyncio.create_task(_bootstrap_symbol(s.upper()))
-        await asyncio.sleep(0.5)  # stagger to avoid hitting Stooq all at once
+    # Bootstrap sequentially — concurrent bursts trip Yahoo's rate limit
+    asyncio.create_task(_bootstrap_all(market_syms))
 
     asyncio.create_task(_fast_synth_loop(market_syms, fast_tick))
     asyncio.create_task(_official_rotator(market_syms, official_period))

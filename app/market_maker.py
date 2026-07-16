@@ -229,6 +229,7 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
                         "buyer_id": order.user_id,
                         "seller_id": BOT_USER_ID,
                         "maker_order_id": oid,
+                        "maker_orig_qty": order.orig_qty,
                     })
                     dq.remove(order)
                     if not dq:
@@ -259,6 +260,7 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
                         "buyer_id": BOT_USER_ID,
                         "seller_id": order.user_id,
                         "maker_order_id": oid,
+                        "maker_orig_qty": order.orig_qty,
                     })
                     dq.remove(order)
                     if not dq:

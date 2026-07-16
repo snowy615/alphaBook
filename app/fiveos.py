@@ -484,7 +484,7 @@ def _compute_optimal_estimates(game_data: dict, user_id: str):
         # Ranks confirmed present → contribute 0 to Q1
         # Ranks not yet seen → may or may not appear in unknown cards
         opt_q1 = 0
-        for rank in all_ranks:
+        for rank in RANKS:
             if rank in known_ranks_set:
                 continue  # This rank is in the 15, contributes 0
             # Probability none of the unknown cards have this rank

@@ -83,4 +83,7 @@ def init_firestore():
 async def close_firestore():
     global db
     if db:
-        db.close()
+        result = db.close()
+        # AsyncClient.close() is a coroutine; sync Client.close() is not
+        if result is not None and hasattr(result, "__await__"):
+            await result

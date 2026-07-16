@@ -48,7 +48,12 @@ class OrderBook:
                 fill = min(order.qty, head.qty)
                 head.qty -= fill
                 order.qty -= fill
-                trades.append({"price": best_px, "qty": fill, "buyer_id": order.user_id, "seller_id": head.user_id})
+                trades.append({
+                    "price": best_px, "qty": fill,
+                    "buyer_id": order.user_id, "seller_id": head.user_id,
+                    "maker_order_id": head.id, "maker_user_id": head.user_id,
+                    "maker_orig_qty": head.orig_qty, "maker_remaining": head.qty,
+                })
                 if head.qty == 0:
                     self.asks[best_px].popleft()
                     if not self.asks[best_px]:
@@ -62,7 +67,12 @@ class OrderBook:
                 fill = min(order.qty, head.qty)
                 head.qty -= fill
                 order.qty -= fill
-                trades.append({"price": best_px, "qty": fill, "buyer_id": head.user_id, "seller_id": order.user_id})
+                trades.append({
+                    "price": best_px, "qty": fill,
+                    "buyer_id": head.user_id, "seller_id": order.user_id,
+                    "maker_order_id": head.id, "maker_user_id": head.user_id,
+                    "maker_orig_qty": head.orig_qty, "maker_remaining": head.qty,
+                })
                 if head.qty == 0:
                     self.bids[best_px].popleft()
                     if not self.bids[best_px]:

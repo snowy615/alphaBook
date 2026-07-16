@@ -219,6 +219,48 @@
       height: 28px;
       width: auto;
     }
+
+    .badge-muted {
+      background: rgba(148, 163, 184, 0.2);
+      color: var(--muted);
+    }
+
+    #toast-container {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      z-index: 2000;
+    }
+
+    .toast {
+      padding: 12px 18px;
+      border-radius: 10px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+      animation: toast-in 0.2s ease-out;
+    }
+
+    .toast.toast-error {
+      border-color: var(--red);
+      color: var(--red);
+    }
+
+    .toast.toast-success {
+      border-color: var(--green);
+      color: var(--green);
+    }
+
+    @keyframes toast-in {
+      from { transform: translateY(8px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
   </style>
 </head>
 
@@ -262,8 +304,8 @@
         <div class="stat-value">{{ users | selectattr('is_blacklisted', 'equalto', true) | list | length }}</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Total Volume</div>
-        <div class="stat-value">{{ users | sum(attribute='trades') }}</div>
+        <div class="stat-label">Total Trades</div>
+        <div class="stat-value">{{ total_trades }}</div>
       </div>
     </div>
 
@@ -278,7 +320,12 @@
 
     <!-- All Users Tab -->
     <div id="users-tab" class="tab-content active">
-      <table class="users-table">
+      <div style="display:flex; gap:12px; align-items:center; margin-bottom: 16px;">
+        <input id="user-search" type="search" placeholder="Search users by name or ID…" oninput="filterUsers()"
+          style="flex: 0 1 340px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 14px;" />
+        <span id="user-search-count" class="small" style="color: var(--muted);"></span>
+      </div>
+      <table class="users-table" id="users-table">
         <thead>
           <tr>
             <th>ID</th>
@@ -374,7 +421,7 @@
               {% if game.is_visible %}
               <span class="badge badge-active">Shown</span>
               {% else %}
-              <span class="badge">Hidden</span>
+              <span class="badge badge-muted">Hidden</span>
               {% endif %}
             </td>
 
@@ -391,8 +438,9 @@
             <td>
               <!-- 1) Edit (custom games only) -->
               {% if game.type == 'custom' %}
+              {# tojson escapes quotes/angle brackets, so names with apostrophes can't break the handler #}
               <button class="action-btn btn-game"
-                onclick="editGame('{{ game.id }}', '{{ game.symbol }}', '{{ game.name }}', '{{ game.instructions }}', {{ game.expected_value }})">
+                onclick='editGame({{ {"id": game.id, "symbol": game.symbol, "name": game.name, "instructions": game.instructions, "expected_value": game.expected_value} | tojson }})'>
                 Edit
               </button>
               {% endif %}
@@ -507,15 +555,15 @@
         document.getElementById('game-modal').showModal();
       }
 
-      function editGame(id, symbol, name, instructions, expectedValue) {
-        editingGameId = id;
+      function editGame(game) {
+        editingGameId = game.id;
         document.getElementById('game-modal-title').textContent = 'Edit Game';
         document.getElementById('game-submit').textContent = 'Update Game';
-        document.getElementById('game-symbol').value = symbol;
+        document.getElementById('game-symbol').value = game.symbol;
         document.getElementById('game-symbol').disabled = true;
-        document.getElementById('game-name').value = name;
-        document.getElementById('game-instructions').value = instructions;
-        document.getElementById('game-expected').value = expectedValue;
+        document.getElementById('game-name').value = game.name;
+        document.getElementById('game-instructions').value = game.instructions;
+        document.getElementById('game-expected').value = game.expected_value;
         document.getElementById('game-modal').showModal();
       }
 
@@ -582,8 +630,8 @@
           });
 
           if (res.ok) {
-            alert('Game deleted successfully');
-            location.reload();
+            showToast('Game deleted');
+            setTimeout(() => location.reload(), 600);
           } else {
             const data = await res.json();
             alert('Error: ' + (data.detail || 'Failed to delete game'));
@@ -852,7 +900,31 @@
     </div>
   </div>
 
+  <div id="toast-container"></div>
+
   <script>
+    function showToast(message, type = 'success') {
+      const container = document.getElementById('toast-container');
+      const el = document.createElement('div');
+      el.className = 'toast toast-' + type;
+      el.textContent = message;
+      container.appendChild(el);
+      setTimeout(() => el.remove(), 3500);
+    }
+
+    function filterUsers() {
+      const q = (document.getElementById('user-search').value || '').trim().toLowerCase();
+      const rows = document.querySelectorAll('#users-table tbody tr');
+      let shown = 0;
+      rows.forEach(row => {
+        const match = !q || row.textContent.toLowerCase().includes(q);
+        row.style.display = match ? '' : 'none';
+        if (match) shown++;
+      });
+      const counter = document.getElementById('user-search-count');
+      counter.textContent = q ? `${shown} of ${rows.length} users` : '';
+    }
+
     function switchTab(tabName, btn) {
       try {
         localStorage.setItem('adminActiveTab', tabName);
@@ -889,8 +961,8 @@
         });
 
         if (res.ok) {
-          alert('User blacklisted successfully');
-          location.reload();
+          showToast('User blacklisted');
+          setTimeout(() => location.reload(), 600);
         } else {
           const data = await res.json();
           alert('Error: ' + (data.detail || 'Failed to blacklist user'));
@@ -908,8 +980,8 @@
         });
 
         if (res.ok) {
-          alert('User unblacklisted successfully');
-          location.reload();
+          showToast('User unblacklisted');
+          setTimeout(() => location.reload(), 600);
         } else {
           const data = await res.json();
           alert('Error: ' + (data.detail || 'Failed to unblacklist user'));
@@ -929,8 +1001,8 @@
         });
 
         if (res.ok) {
-          alert('User deleted successfully');
-          location.reload();
+          showToast('User deleted');
+          setTimeout(() => location.reload(), 600);
         } else {
           const data = await res.json();
           alert('Error: ' + (data.detail || 'Failed to delete user'));
@@ -951,8 +1023,8 @@
         });
 
         if (res.ok) {
-          alert('All users have been reset successfully');
-          location.reload();
+          showToast('All users have been reset');
+          setTimeout(() => location.reload(), 600);
         } else {
           const data = await res.json();
           alert('Error: ' + (data.detail || 'Failed to reset users'));
@@ -988,20 +1060,23 @@
           return;
         }
 
+        // News IDs are UUID strings — they must be quoted in the onclick
+        // handler (unquoted they produce a JS syntax error and dead buttons).
         container.innerHTML = items
           .map((n) => {
             const dt = new Date(n.created_at);
-            const ts = dt.toLocaleString();
+            const ts = escapeHtml(dt.toLocaleString());
             const safeContent = escapeHtml(n.content);
+            const safeId = escapeHtml(String(n.id));
             return (
               '<div class="users-row" style="display:flex; align-items:flex-start; justify-content:space-between; padding:10px 12px; border-bottom:1px solid var(--border);">' +
               '<div>' +
               '<div class="small" style="color:var(--muted);">' + ts + '</div>' +
-              '<div class="admin-news-content" data-news-id="' + n.id + '">' + safeContent + '</div>' +
+              '<div class="admin-news-content" data-news-id="' + safeId + '">' + safeContent + '</div>' +
               '</div>' +
               '<div style="display:flex; gap:6px; flex-shrink:0; margin-left:12px;">' +
-              '<button class="action-btn" onclick="editNews(' + n.id + ')">Edit</button>' +
-              '<button class="action-btn btn-delete" onclick="deleteNewsItem(' + n.id + ')">Delete</button>' +
+              '<button class="action-btn btn-game" onclick="editNews(\'' + safeId + '\')">Edit</button>' +
+              '<button class="action-btn btn-delete" onclick="deleteNewsItem(\'' + safeId + '\')">Delete</button>' +
               '</div>' +
               '</div>'
             );
@@ -1137,20 +1212,24 @@
           return;
         }
 
+        // Escape every user-supplied value and pass member data via a data
+        // attribute — names with quotes must not break the markup or handlers.
         tbody.innerHTML = members.map(m => `
           <tr>
-            <td><strong>${m.username}</strong></td>
-            <td>${m.full_name || '<span style="color:var(--muted)">—</span>'}</td>
+            <td><strong>${escapeHtml(m.username)}</strong></td>
+            <td>${m.full_name ? escapeHtml(m.full_name) : '<span style="color:var(--muted)">—</span>'}</td>
             <td>${m.graduation_year || '<span style="color:var(--muted)">—</span>'}</td>
             <td>${m.track
-              ? `<span class="badge" style="background:${m.track==='Quant'?'rgba(26,189,156,0.15)':'rgba(108,92,231,0.15)'};color:${m.track==='Quant'?'#1abc9c':'var(--brand)'}">${m.track}</span>`
+              ? `<span class="badge" style="background:${m.track==='Quant'?'rgba(26,189,156,0.15)':'rgba(108,92,231,0.15)'};color:${m.track==='Quant'?'#1abc9c':'var(--brand)'}">${escapeHtml(m.track)}</span>`
               : '<span style="color:var(--muted)">—</span>'}</td>
             <td>${m.cv_uploaded
               ? '<span class="badge badge-active">✓ Uploaded</span>'
               : '<span class="badge badge-blacklisted">✗ Missing</span>'}</td>
             <td>
-              <button class="action-btn btn-game" onclick="openCvModal('${m.id}','${m.full_name||''}',${m.graduation_year||'null'},'${m.track||''}')">Edit</button>
-              ${m.cv_uploaded ? `<button class="action-btn btn-delete" onclick="adminDeleteCv('${m.id}')">Remove CV</button>` : ''}
+              <button class="action-btn btn-game" data-member="${escapeHtml(JSON.stringify({
+                id: m.id, full_name: m.full_name || '', graduation_year: m.graduation_year, track: m.track || ''
+              }))}" onclick="openCvModalFromBtn(this)">Edit</button>
+              ${m.cv_uploaded ? `<button class="action-btn btn-delete" onclick="adminDeleteCv('${escapeHtml(m.id)}')">Remove CV</button>` : ''}
             </td>
           </tr>
         `).join('');
@@ -1190,11 +1269,17 @@
       }
     }
 
-    function openCvModal(userId, fullName, gradYear, track) {
-      document.getElementById('editUserId').value = userId;
-      document.getElementById('editFullName').value = fullName;
-      document.getElementById('editGradYear').value = gradYear !== 'null' ? gradYear : '';
-      document.getElementById('editTrack').value = track || '';
+    function openCvModalFromBtn(btn) {
+      let m;
+      try {
+        m = JSON.parse(btn.dataset.member);
+      } catch (_) {
+        return;
+      }
+      document.getElementById('editUserId').value = m.id;
+      document.getElementById('editFullName').value = m.full_name || '';
+      document.getElementById('editGradYear').value = m.graduation_year ?? '';
+      document.getElementById('editTrack').value = m.track || '';
       const modal = document.getElementById('cvEditModal');
       modal.style.display = 'flex';
     }

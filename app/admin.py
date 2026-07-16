@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from app import db as db_module
-from google.cloud.firestore import FieldFilter, Or
 from app.auth import current_user
 from app.models import User, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
@@ -9,8 +8,9 @@ from pathlib import Path
 from pydantic import BaseModel
 import datetime as dt
 import io
+import uuid
 from decimal import Decimal
-from typing import Optional
+from typing import Dict, Optional
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -48,131 +48,119 @@ def require_admin(user: User = Depends(current_user)):
     return user
 
 
-async def calculate_user_pnl(user_id: str) -> float:
-    """Calculate P&L for a user considering expected values for custom games"""
+def _pnl_apply_buy(pos: dict, price: Decimal, qty: Decimal) -> None:
+    """Apply a buy fill to a {qty, total_cost, realized_pnl} position dict."""
+    if pos["qty"] >= 0:
+        # Opening/adding to long
+        pos["total_cost"] += price * qty
+        pos["qty"] += qty
+    else:
+        # Covering short
+        close_qty = min(qty, abs(pos["qty"]))
+        avg_short = abs(pos["total_cost"] / pos["qty"])
+        pos["realized_pnl"] += (avg_short - price) * close_qty
+
+        pos["qty"] += qty
+        remaining = qty - close_qty
+
+        if pos["qty"] > 0:
+            pos["total_cost"] = price * remaining
+        elif pos["qty"] == 0:
+            pos["total_cost"] = Decimal("0")
+        else:
+            # Partial cover: remove the covered portion from cost basis
+            pos["total_cost"] -= avg_short * close_qty
+
+
+def _pnl_apply_sell(pos: dict, price: Decimal, qty: Decimal) -> None:
+    """Apply a sell fill to a {qty, total_cost, realized_pnl} position dict."""
+    if pos["qty"] <= 0:
+        # Opening/adding to short
+        pos["total_cost"] += price * qty
+        pos["qty"] -= qty
+    else:
+        # Closing long
+        close_qty = min(qty, pos["qty"])
+        avg_long = pos["total_cost"] / pos["qty"]
+        pos["realized_pnl"] += (price - avg_long) * close_qty
+
+        pos["qty"] -= qty
+        remaining = qty - close_qty
+
+        if pos["qty"] < 0:
+            pos["total_cost"] = price * remaining
+        elif pos["qty"] == 0:
+            pos["total_cost"] = Decimal("0")
+        else:
+            # Partial close: remove the sold portion from cost basis
+            pos["total_cost"] -= avg_long * close_qty
+
+
+async def calculate_all_user_stats() -> tuple[Dict[str, float], Dict[str, int]]:
+    """
+    Single pass over all trades (in chronological order) to compute every
+    user's P&L and trade count at once, instead of re-querying per user.
+    Custom games are marked to their expected value; stocks to the live ref price.
+    """
     from app.market_data import get_ref_price
-    import logging
 
-    log = logging.getLogger("admin")
+    # Expected values for custom games
+    g_docs = await db_module.db.collection("custom_games").get()
+    game_expected_values = {}
+    for d in g_docs:
+        data = d.to_dict()
+        sym = data.get("symbol")
+        if sym:
+            game_expected_values[sym] = float(data.get("expected_value") or 0.0)
 
-    # Get all trades for this user
-    trades_ref = db_module.db.collection("trades")
-    filter_buy = FieldFilter("buyer_id", "==", user_id)
-    filter_sell = FieldFilter("seller_id", "==", user_id)
-    q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell]))
-    docs = await q.get()
-    
-    trades = [Trade(id=d.id, **d.to_dict()) for d in docs]
+    t_docs = await db_module.db.collection("trades").get()
+    trades = [Trade(id=d.id, **d.to_dict()) for d in t_docs]
+    # Cost-basis accounting is order-dependent; make it deterministic
+    trades.sort(key=lambda t: t.created_at or dt.datetime.min.replace(tzinfo=dt.timezone.utc))
 
-    log.info(f"Calculating P&L for user {user_id}, found {len(trades)} trades")
+    positions: Dict[str, Dict[str, dict]] = {}   # user_id -> symbol -> position
+    trade_counts: Dict[str, int] = {}
 
-    # Get all custom games with their expected values
-    games_ref = db_module.db.collection("custom_games")
-    # Assuming small number of games, fetching all
-    g_docs = await games_ref.get()
-    games = [CustomGame(id=d.id, **d.to_dict()) for d in g_docs]
-    
-    game_expected_values = {game.symbol: float(game.expected_value) for game in games}
-
-    log.info(f"Game expected values: {game_expected_values}")
-
-    # Track positions
-    positions = {}
+    def _pos(uid: str, sym: str) -> dict:
+        return positions.setdefault(uid, {}).setdefault(sym, {
+            "qty": Decimal("0"),
+            "total_cost": Decimal("0"),
+            "realized_pnl": Decimal("0"),
+        })
 
     for trade in trades:
-        symbol = trade.symbol
         price = Decimal(trade.price)
         qty = Decimal(trade.qty)
+        _pnl_apply_buy(_pos(trade.buyer_id, trade.symbol), price, qty)
+        _pnl_apply_sell(_pos(trade.seller_id, trade.symbol), price, qty)
+        trade_counts[trade.buyer_id] = trade_counts.get(trade.buyer_id, 0) + 1
+        trade_counts[trade.seller_id] = trade_counts.get(trade.seller_id, 0) + 1
 
-        if symbol not in positions:
-            positions[symbol] = {
-                "qty": Decimal("0"),
-                "total_cost": Decimal("0"),
-                "realized_pnl": Decimal("0")
-            }
+    pnls: Dict[str, float] = {}
+    for uid, syms in positions.items():
+        total_pnl = Decimal("0")
+        for symbol, pos in syms.items():
+            qty = pos["qty"]
+            total_cost = pos["total_cost"]
 
-        pos = positions[symbol]
-
-        # User is buyer
-        if trade.buyer_id == user_id:
-            if pos["qty"] >= 0:
-                # Opening/adding to long
-                pos["total_cost"] += price * qty
-                pos["qty"] += qty
+            if symbol in game_expected_values:
+                ref_price = Decimal(str(game_expected_values[symbol]))
             else:
-                # Covering short
-                close_qty = min(qty, abs(pos["qty"]))
-                if pos["qty"] != 0:
-                    avg_short = abs(pos["total_cost"] / pos["qty"])
-                    pos["realized_pnl"] += (avg_short - price) * close_qty
+                market_ref = get_ref_price(symbol)
+                ref_price = Decimal(str(market_ref)) if market_ref else Decimal("0")
 
-                pos["qty"] += qty
-                remaining = qty - close_qty
+            unrealized = Decimal("0")
+            if qty != 0 and ref_price > 0:
+                avg_cost = total_cost / abs(qty)
+                if qty > 0:
+                    unrealized = (ref_price - avg_cost) * qty
+                else:
+                    unrealized = (avg_cost - ref_price) * abs(qty)
 
-                if pos["qty"] > 0:
-                    pos["total_cost"] = price * remaining
-                elif pos["qty"] == 0:
-                    pos["total_cost"] = Decimal("0")
+            total_pnl += pos["realized_pnl"] + unrealized
+        pnls[uid] = float(total_pnl)
 
-        # User is seller
-        if trade.seller_id == user_id:
-            if pos["qty"] <= 0:
-                # Opening/adding to short
-                pos["total_cost"] += price * qty
-                pos["qty"] -= qty
-            else:
-                # Closing long
-                close_qty = min(qty, pos["qty"])
-                if pos["qty"] != 0:
-                    avg_long = pos["total_cost"] / pos["qty"]
-                    pos["realized_pnl"] += (price - avg_long) * close_qty
-
-                pos["qty"] -= qty
-                remaining = qty - close_qty
-
-                if pos["qty"] < 0:
-                    pos["total_cost"] = price * remaining
-                elif pos["qty"] == 0:
-                    pos["total_cost"] = Decimal("0")
-
-    log.info(f"User {user_id} positions: {positions}")
-
-    # Calculate total P&L
-    total_pnl = Decimal("0")
-
-    for symbol, pos in positions.items():
-        qty = pos["qty"]
-        total_cost = pos["total_cost"]
-        realized = pos["realized_pnl"]
-
-        # Determine reference price: use expected value for games, market price for equities
-        if symbol in game_expected_values:
-            ref_price = Decimal(str(game_expected_values[symbol]))
-        else:
-            market_ref = get_ref_price(symbol)
-            ref_price = Decimal(str(market_ref)) if market_ref else Decimal("0")
-
-        log.info(f"Symbol {symbol}: qty={qty}, total_cost={total_cost}, ref_price={ref_price}")
-
-        # Calculate unrealized P&L
-        unrealized = Decimal("0")
-        if qty != 0 and ref_price > 0:
-            avg_cost = total_cost / abs(qty)
-
-            if qty > 0:
-                # Long position: profit if ref_price > avg_cost
-                unrealized = (ref_price - avg_cost) * qty
-            else:
-                # Short position: profit if avg_cost > ref_price
-                unrealized = (avg_cost - ref_price) * abs(qty)
-
-        log.info(f"Symbol {symbol}: realized={realized}, unrealized={unrealized}")
-
-        total_pnl += realized + unrealized
-
-    log.info(f"User {user_id} total P&L: {total_pnl}")
-
-    return float(total_pnl)
+    return pnls, trade_counts
 
 
 @router.get("/admin", response_class=HTMLResponse)
@@ -186,37 +174,29 @@ async def admin_dashboard(
     u_docs = await users_ref.get()
     users = [User(id=d.id, **d.to_dict()) for d in u_docs]
 
-    # Calculate stats for each user
+    # One pass over all trades: P&L + trade counts for every user
+    pnls, trade_counts = await calculate_all_user_stats()
+
+    # One projected query for order counts (only user_id is transferred)
+    o_docs = await db_module.db.collection("orders").select(["user_id"]).get()
+    order_counts: Dict[str, int] = {}
+    for d in o_docs:
+        ouid = d.get("user_id")
+        if ouid:
+            order_counts[ouid] = order_counts.get(ouid, 0) + 1
+
+    total_trades = sum(trade_counts.values()) // 2  # each trade has a buyer and a seller
+
     user_stats = []
-    
-    # Pre-fetch all trades and orders might be better if strict, but expensive.
-    # For now, looping (slow for many users but ok for toy app).
     for u in users:
         uid = str(u.id)
-        # Count orders
-        orders_ref = db_module.db.collection("orders")
-        o_q = orders_ref.where("user_id", "==", uid).count()
-        o_agg = await o_q.get()
-        orders_count = o_agg[0][0].value
-
-        # Count trades
-        trades_ref = db_module.db.collection("trades")
-        filter_buy = FieldFilter("buyer_id", "==", uid)
-        filter_sell = FieldFilter("seller_id", "==", uid)
-        t_q = trades_ref.where(filter=Or(filters=[filter_buy, filter_sell])).count()
-        t_agg = await t_q.get()
-        trades_count = t_agg[0][0].value
-
-        # Calculate P&L using expected values for games
-        pnl = await calculate_user_pnl(uid)
-
         user_stats.append({
             "id": uid,
             "username": u.username,
             "balance": u.balance,
-            "pnl": pnl,
-            "orders": orders_count,
-            "trades": trades_count,
+            "pnl": pnls.get(uid, 0.0),
+            "orders": order_counts.get(uid, 0),
+            "trades": trade_counts.get(uid, 0),
             "is_admin": u.is_admin,
             "is_blacklisted": u.is_blacklisted,
             "created_at": u.created_at
@@ -267,8 +247,20 @@ async def admin_dashboard(
                 "created_at": data.get("created_at"),
             })
 
-    # Sort newest first; treat missing created_at as epoch
-    games.sort(key=lambda g: g.get("created_at") or dt.datetime.min, reverse=True)
+    # Sort newest first; treat missing created_at as epoch.
+    # Firestore timestamps are timezone-aware, so the fallback must be too,
+    # otherwise mixing them in one sort raises TypeError.
+    _epoch = dt.datetime.min.replace(tzinfo=dt.timezone.utc)
+
+    def _created_key(g):
+        ts = g.get("created_at")
+        if ts is None:
+            return _epoch
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=dt.timezone.utc)
+        return ts
+
+    games.sort(key=_created_key, reverse=True)
 
     return templates.TemplateResponse("admin.html", {
         "request": request,
@@ -276,6 +268,7 @@ async def admin_dashboard(
         "users": user_stats,
         "leaderboard": leaderboard,
         "total_users": len(users),
+        "total_trades": total_trades,
         "games": games
     })
 
@@ -661,9 +654,11 @@ async def reset_all_users(
     await delete_all_in_collection("trades")
     await delete_all_in_collection("orders")
 
-    # Clear in-memory order book
+    # Clear in-memory order book and cached positions
     from app.order_book import clear_all_orders
     clear_all_orders()
+    from app import main as main_module
+    main_module.positions.clear()
 
     return {"ok": True, "message": "All users reset to initial state"}
 

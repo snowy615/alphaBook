@@ -31,7 +31,7 @@ from app.models import User, Order as DBOrder, Trade as DBTrade # explicit impor
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
-from app.market_maker import start_market_maker
+from app.market_maker import start_market_maker, BOT_USER_ID as MM_BOT_USER_ID
 
 
 @asynccontextmanager
@@ -214,13 +214,15 @@ async def _bot_fill_handler(symbol: str, fills: list) -> None:
                 trade.model_dump(exclude={"id"}),
             )
 
-            # Mark the swept user order as FILLED
+            # Mark the swept user order as FILLED. The sweep always takes the
+            # entire remaining quantity, so total filled == original quantity
+            # (not just this sweep's qty, which undercounts partially filled orders).
             maker_oid = tr.get("maker_order_id")
             if maker_oid:
                 order_ref = db_module.db.collection("orders").document(maker_oid)
                 batch.update(order_ref, {
                     "status": "FILLED",
-                    "filled_qty": str(q),
+                    "filled_qty": str(tr.get("maker_orig_qty", q)),
                     "updated_at": dt.datetime.utcnow(),
                 })
 
@@ -247,7 +249,11 @@ def _apply_buy(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["realized"] = realized + (avg - price) * close
         q += qty
         pos["qty"] = q
-        pos["avg"] = Decimal("0") if q == 0 else price
+        if q > 0:
+            pos["avg"] = price       # flipped to long: basis is this trade's price
+        elif q == 0:
+            pos["avg"] = Decimal("0")
+        # still short after a partial cover: keep the original short avg
 
 
 def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
@@ -261,7 +267,11 @@ def _apply_sell(pos: Dict[str, Decimal], price: Decimal, qty: Decimal):
         pos["realized"] = realized + (price - avg) * close
         q -= qty
         pos["qty"] = q
-        pos["avg"] = Decimal("0") if q == 0 else price
+        if q < 0:
+            pos["avg"] = price       # flipped to short: basis is this trade's price
+        elif q == 0:
+            pos["avg"] = Decimal("0")
+        # still long after a partial close: keep the original long avg
 
 
 def _metrics_for(user_id: str):
@@ -637,6 +647,7 @@ async def submit_order(
     for tr in fills:
         px, q = tr["price"], tr["qty"]
         buyer_id, seller_id = str(tr["buyer_id"]), str(tr["seller_id"])
+        maker_oid = tr.get("maker_order_id", "")
 
         # Save trade to database
         trade_id = str(uuid.uuid4())
@@ -646,12 +657,24 @@ async def submit_order(
             seller_id=seller_id,
             price=str(px),
             qty=str(q),
-            buy_order_id=order_id if order_in.side == "BUY" else "",
-            sell_order_id=order_id if order_in.side == "SELL" else "",
+            buy_order_id=order_id if order_in.side == "BUY" else maker_oid,
+            sell_order_id=order_id if order_in.side == "SELL" else maker_oid,
             created_at=dt.datetime.utcnow()
         )
         trade_ref = db_module.db.collection("trades").document(trade_id)
         batch.set(trade_ref, trade.model_dump(exclude={"id"}))
+
+        # Keep the resting (maker) order's Firestore record in sync.
+        # Bot orders live only in memory and have no DB record.
+        if maker_oid and tr.get("maker_user_id") != MM_BOT_USER_ID:
+            maker_filled = tr["maker_orig_qty"] - tr["maker_remaining"]
+            maker_update = {
+                "filled_qty": str(maker_filled),
+                "updated_at": dt.datetime.utcnow(),
+            }
+            if tr["maker_remaining"] <= 0:
+                maker_update["status"] = "FILLED"
+            batch.update(db_module.db.collection("orders").document(maker_oid), maker_update)
 
         # Update positions
         # Ensure positions exist
