@@ -141,7 +141,9 @@
       lastMid = price;
     }
 
-    el.textContent = fmt(price);
+    // Two decimals for the big header price — extra digits just flicker
+    el.textContent = (price === null || price === undefined || !isFinite(+price))
+      ? "--" : (+price).toFixed(2);
 
     if (!isNaN(old) && !isNaN(price)) {
       el.classList.remove("up", "down", "blink");

@@ -89,7 +89,7 @@ async def lifespan(application: FastAPI):
 
     # Start market data engine
     log.info("🔄 Starting market data engine...")
-    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=1.5, official_period=180))
+    asyncio.create_task(start_ref_engine(DEFAULT_SYMBOLS, fast_tick=3.0, official_period=180))
     log.info("✅ Market data engine started")
 
     # Reload open orders from Firestore into in-memory order book
@@ -150,6 +150,19 @@ app = FastAPI(title="AlphaBook", lifespan=lifespan)
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.middleware("http")
+async def _static_cache_control(request: Request, call_next):
+    """Force browsers to revalidate static assets (cheap 304s via ETag).
+
+    Without an explicit Cache-Control, browsers apply heuristic caching to
+    long-unchanged files, so users keep running stale JS after deploys.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 
 DEFAULT_SYMBOLS: List[str] = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"]
 TOP_DEPTH: int = 10

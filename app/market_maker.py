@@ -47,25 +47,30 @@ log = logging.getLogger("uvicorn.error")
 BOT_USER_ID = "__MM_BOT__"
 
 # ── Quoting parameters ────────────────────────────────────────────────────────
+# Pacing is deliberately human-like: this bot exists so students always have
+# a counterparty, not to look like an HFT. Keep the ladder visually stable.
 LEVELS: int             = 5      # price levels per side
 HALF_SPREAD_BPS: int    = 8      # innermost level offset from mid (basis points)
 LEVEL_STEP_BPS: int     = 5      # gap between consecutive levels (bps)
-LEVEL_TOLERANCE_BPS: float = 1.5 # skip update if within this many bps of target
+LEVEL_TOLERANCE_BPS: float = 5.0 # skip update if within this many bps of target
 BASE_QTY: int           = 30     # shares at the tightest (innermost) level
 QTY_STEP: int           = 8      # extra shares per outer level
 QTY_JITTER: int         = 7      # ±random variation on each level
 
 # ── Update pacing ─────────────────────────────────────────────────────────────
-TICK_SEC: float             = 0.9   # how often the loop runs per symbol
-MAX_UPDATES_PER_TICK: int   = 2     # max level changes (cancel+replace) per tick
-BROADCAST_EVERY_N_TICKS: int = 6    # heartbeat broadcast even with no changes (~5s)
+TICK_SEC: float             = 3.0   # how often the loop runs per symbol
+MAX_UPDATES_PER_TICK: int   = 1     # max price-adjustment moves per tick
+MAX_REFILLS_PER_TICK: int   = 4     # missing/consumed levels replaced per tick
+BROADCAST_EVERY_N_TICKS: int = 3    # heartbeat broadcast even with no changes (~9s)
 
 # ── Sweep parameters ──────────────────────────────────────────────────────────
 SWEEP_THRESHOLD_BPS: int = 55    # bps off-market before a user order is flagged
 SWEEP_DELAY_SEC: float   = 5.0   # seconds flagged before actually swept
 
 # ── Simulated flow (bot prints) ───────────────────────────────────────────────
-PRINT_PROB: float = 0.20         # chance per tick of a liquidity-taking print
+# ~0.15 per 3s tick ≈ one print every ~20s, roughly the cadence of a
+# human clicking around the ladder.
+PRINT_PROB: float = 0.15         # chance per tick of a liquidity-taking print
 PRINT_QTY_MIN: int = 2
 PRINT_QTY_MAX: int = 14
 
@@ -178,10 +183,19 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
     # Most urgent first
     candidates.sort(key=lambda x: x[0], reverse=True)
 
+    # Missing/consumed levels refill quickly (an empty ladder looks broken);
+    # price adjustments are throttled hard so the book stays visually calm.
     updates = 0
-    for _, side, i, target_px in candidates:
-        if updates >= MAX_UPDATES_PER_TICK:
-            break
+    refills = 0
+    adjustments = 0
+    for score, side, i, target_px in candidates:
+        is_refill = score >= 1e9 - 1
+        if is_refill:
+            if refills >= MAX_REFILLS_PER_TICK:
+                continue
+        else:
+            if adjustments >= MAX_UPDATES_PER_TICK:
+                continue
 
         state_list = bids_state if side == "BUY" else asks_state
 
@@ -194,6 +208,10 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
         # Place fresh order
         state_list[i] = _place_bot_order(book, side, target_px, i)
         updates += 1
+        if is_refill:
+            refills += 1
+        else:
+            adjustments += 1
 
     return updates
 

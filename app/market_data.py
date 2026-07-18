@@ -28,9 +28,11 @@ _official_info: Dict[str, Dict[str, str]] = {}
 _started = False
 
 # ── Synthetic engine tunables ──────────────────────────────────────────────────
-ALPHA            = 0.20   # mean-reversion speed per tick toward target
-NOISE_BP         = 3      # random noise per tick in basis points
-MAX_TICK_MOVE_BP = 20     # hard cap on a single tick's move
+# Kept calm on purpose: the displayed price should drift like a quiet stock,
+# not vibrate every refresh.
+ALPHA            = 0.15   # mean-reversion speed per tick toward target
+NOISE_BP         = 1.2    # random noise per tick in basis points
+MAX_TICK_MOVE_BP = 10     # hard cap on a single tick's move
 DEFAULT_SEED     = 100.0
 
 # Updated to real prices as of May 2026 — used only as startup fallback
