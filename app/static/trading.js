@@ -49,22 +49,29 @@
   let pollingInterval = null;
 
   async function pollBook() {
+    let hasMid = false;
     try {
       const book = await fetchJSON(`/book/${SYMBOL}`);
       if (book) {
         renderLadder(book);
+        hasMid = Array.isArray(book.bids) && book.bids.length > 0
+              && Array.isArray(book.asks) && book.asks.length > 0;
         setMeta(`updated ${new Date().toLocaleTimeString()}`);
       }
     } catch (e) {
       console.error('[Poll] Error fetching book:', e);
     }
-    try {
-      const refData = await fetchJSON(`/reference/${SYMBOL}`);
-      if (refData && refData.price !== undefined) {
-        setRef(refData.price);
+    // The header price is the book mid (set inside renderLadder); the
+    // reference price is only a fallback while the book is one-sided/empty.
+    if (!hasMid) {
+      try {
+        const refData = await fetchJSON(`/reference/${SYMBOL}`);
+        if (refData && refData.price !== undefined) {
+          setRef(refData.price);
+        }
+      } catch (e) {
+        // reference price is optional
       }
-    } catch (e) {
-      // reference price is optional
     }
   }
 
@@ -209,8 +216,9 @@
 
     console.log('[renderLadder] Best ask:', bestAsk, 'Best bid:', bestBid, 'Mid:', mid);
 
-    // For custom games, update the price display with mid price
-    if (IS_CUSTOM_GAME && mid !== null) {
+    // The displayed price is always the traded market's mid, never the raw
+    // external API price (the bot's quoting keeps the mid near reality).
+    if (mid !== null) {
       setRef(mid);
     }
 

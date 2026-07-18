@@ -37,7 +37,7 @@ from decimal import Decimal
 from typing import Callable, Coroutine, Dict, List, Optional, Tuple
 
 from app import trade_tape
-from app.market_data import get_ref_price
+from app.market_data import get_official_price, get_ref_price
 from app.order_book import Order as BookOrder
 from app.state import books, locks
 
@@ -73,6 +73,18 @@ SWEEP_DELAY_SEC: float   = 5.0   # seconds flagged before actually swept
 PRINT_PROB: float = 0.15         # chance per tick of a liquidity-taking print
 PRINT_QTY_MIN: int = 2
 PRINT_QTY_MAX: int = 14
+PRINT_BIAS_MAX: float = 0.35     # max tilt of buy/sell odds from the fair-value gap
+
+# ── Quote center dynamics ─────────────────────────────────────────────────────
+# The bot quotes around its own opinion of the market (the "center"), not
+# directly on the API price. Each tick the center is pulled toward the real
+# quote a little, so the book converges to reality smoothly instead of
+# snapping, and carries its own small random walk so the market has life.
+FAIR_PULL: float          = 0.25  # fraction of the fair-value gap closed per tick
+MAX_DRIFT_BP_PER_TICK: float = 6  # normal cap on center movement per tick
+CATCHUP_DRIFT_BP: float   = 25    # faster cap while the gap is > CATCHUP_GAP_BP
+CATCHUP_GAP_BP: float     = 50
+CENTER_NOISE_BP: float    = 1.0   # random walk noise per tick
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 STARTUP_DELAY_SEC: float = 10.0  # wait for yfinance prices before quoting
@@ -91,6 +103,7 @@ _bot_asks: Dict[str, List[Optional[_Level]]] = {}
 _pending_sweeps: Dict[str, Dict[str, float]] = defaultdict(dict)  # {order_id: sweep_at}
 _tick_counter: Dict[str, int] = defaultdict(int)
 _last_tick: Dict[str, float] = defaultdict(float)
+_quote_center: Dict[str, float] = {}   # the bot's own market, per symbol
 
 _broadcast_fn: Optional[Callable] = None
 _fill_handler: Optional[Callable[..., Coroutine]] = None
@@ -303,6 +316,56 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
     return fills
 
 
+# ── Quote center ──────────────────────────────────────────────────────────────
+
+def _fair_value(symbol: str) -> Optional[float]:
+    """Real API quote when available, synthetic/seed price otherwise."""
+    return get_official_price(symbol) or get_ref_price(symbol)
+
+
+def _update_center(symbol: str) -> Optional[float]:
+    """
+    Advance the bot's quoting center one tick: capped pull toward the real
+    quote plus a small random walk. Returns the new center (or None if no
+    price information exists yet).
+    """
+    fair = _fair_value(symbol)
+    center = _quote_center.get(symbol)
+
+    if center is None or center <= 0:
+        if fair is None or fair <= 0:
+            return None
+        _quote_center[symbol] = float(fair)
+        return _quote_center[symbol]
+
+    step = 0.0
+    if fair is not None and fair > 0:
+        gap_bp = abs(fair - center) / center * 10_000
+        cap_bp = CATCHUP_DRIFT_BP if gap_bp > CATCHUP_GAP_BP else MAX_DRIFT_BP_PER_TICK
+        cap = center * cap_bp / 10_000
+        step = max(-cap, min(cap, FAIR_PULL * (fair - center)))
+
+    noise = center * (CENTER_NOISE_BP / 10_000) * (random.random() - 0.5) * 2.0
+    center = max(1e-6, center + step + noise)
+    _quote_center[symbol] = center
+    return center
+
+
+def _print_side(symbol: str) -> str:
+    """
+    Choose the aggressor side for a print, tilted by the fair-value gap:
+    when the book trades below the real quote the bot buys more often
+    (and vice versa), so its flow pushes the market toward reality.
+    """
+    p_buy = 0.5
+    fair = get_official_price(symbol)
+    center = _quote_center.get(symbol)
+    if fair and center and center > 0:
+        gap_bp = (fair - center) / center * 10_000
+        p_buy += max(-PRINT_BIAS_MAX, min(PRINT_BIAS_MAX, gap_bp / 40.0))
+    return "BUY" if random.random() < p_buy else "SELL"
+
+
 # ── Simulated liquidity-taking prints ─────────────────────────────────────────
 
 def _maybe_bot_print(symbol: str, book) -> Optional[dict]:
@@ -319,7 +382,7 @@ def _maybe_bot_print(symbol: str, book) -> Optional[dict]:
     if random.random() > PRINT_PROB:
         return None
 
-    side = random.choice(["BUY", "SELL"])          # taker side
+    side = _print_side(symbol)                     # taker side, fair-value tilted
     levels = book.asks if side == "BUY" else book.bids
     if not levels:
         return None
@@ -365,7 +428,7 @@ async def _tick_symbol(symbol: str) -> None:
     """One full market-maker tick: requote, sweep, maybe print, broadcast."""
     _last_tick[symbol] = time.time()
     try:
-        mid = get_ref_price(symbol)
+        mid = _update_center(symbol)
         if mid is None or mid <= 0:
             return
 

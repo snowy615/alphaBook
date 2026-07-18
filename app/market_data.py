@@ -131,6 +131,11 @@ def get_ref_price(symbol: str) -> Optional[float]:
     return _synth.get(sym) or _official.get(sym) or _mid_hint.get(sym)
 
 
+def get_official_price(symbol: str) -> Optional[float]:
+    """Last real quote from the market data API (no synthetic blending)."""
+    return _official.get(symbol.upper())
+
+
 def get_official_info() -> Dict[str, Dict[str, str]]:
     return _official_info
 
