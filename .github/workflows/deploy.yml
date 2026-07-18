@@ -20,10 +20,14 @@ jobs:
 
       - name: Deploy to Cloud Run
         run: |
+          # max-instances MUST stay 1: the order book and market-maker bot
+          # live in instance memory, so multiple instances would each serve
+          # a different, conflicting book.
           gcloud run deploy alphabook-api \
             --source . \
             --region us-central1 \
             --allow-unauthenticated \
+            --max-instances 1 \
             --quiet
 
       - name: Deploy to Firebase Hosting

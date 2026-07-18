@@ -71,8 +71,55 @@
   function startPolling() {
     setMeta("live");
     pollBook();
+    pollTrades();
     if (!pollingInterval) {
       pollingInterval = setInterval(pollBook, 2000);
+      setInterval(pollTrades, 2500);
+    }
+  }
+
+  // ---- Recent trades feed ----
+  const escapeHtml = (s) => String(s ?? "")
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+  function participantHtml(name) {
+    const safe = escapeHtml(name);
+    return name === "Market Bot"
+      ? `<span class="bot-name">🤖 Bot</span>`
+      : `<strong>${safe}</strong>`;
+  }
+
+  async function pollTrades() {
+    const box = $("#recent-trades-list");
+    if (!box) return;
+    try {
+      const data = await fetchJSON(`/trades/${SYMBOL}`);
+      const trades = Array.isArray(data.trades) ? data.trades : [];
+
+      if (!trades.length) {
+        box.innerHTML = `
+          <div class="small" style="text-align: center; color: var(--muted); padding: 20px;">
+            No trades yet — be the first!
+          </div>`;
+        return;
+      }
+
+      box.innerHTML = trades.map(t => {
+        const time = new Date(t.ts).toLocaleTimeString([], { hour12: false });
+        const side = (t.side || "").toUpperCase();
+        const sideCls = side === "BUY" ? "buy" : side === "SELL" ? "sell" : "na";
+        const sideLabel = side === "BUY" ? "B" : side === "SELL" ? "S" : "·";
+        return `
+          <div class="trade-item kind-${escapeHtml(t.kind || "user")}">
+            <span class="trade-time">${time}</span>
+            <span class="trade-side ${sideCls}">${sideLabel}</span>
+            <span class="trade-px">${fmt(t.qty)} @ ${fmt(t.price)}</span>
+            <span class="trade-who">${participantHtml(t.buyer)} ← ${participantHtml(t.seller)}</span>
+          </div>`;
+      }).join("");
+    } catch (e) {
+      console.error("[Trades] Error fetching trades:", e);
     }
   }
 

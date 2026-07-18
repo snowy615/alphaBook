@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Callable, Coroutine, Dict, List, Optional, Tuple
 
+from app import trade_tape
 from app.market_data import get_ref_price
 from app.order_book import Order as BookOrder
 from app.state import books, locks
@@ -63,6 +64,11 @@ BROADCAST_EVERY_N_TICKS: int = 6    # heartbeat broadcast even with no changes (
 SWEEP_THRESHOLD_BPS: int = 55    # bps off-market before a user order is flagged
 SWEEP_DELAY_SEC: float   = 5.0   # seconds flagged before actually swept
 
+# ── Simulated flow (bot prints) ───────────────────────────────────────────────
+PRINT_PROB: float = 0.20         # chance per tick of a liquidity-taking print
+PRINT_QTY_MIN: int = 2
+PRINT_QTY_MAX: int = 14
+
 # ── Startup ───────────────────────────────────────────────────────────────────
 STARTUP_DELAY_SEC: float = 10.0  # wait for yfinance prices before quoting
 
@@ -79,6 +85,10 @@ _bot_bids: Dict[str, List[Optional[_Level]]] = {}   # symbol → [level0 … lev
 _bot_asks: Dict[str, List[Optional[_Level]]] = {}
 _pending_sweeps: Dict[str, Dict[str, float]] = defaultdict(dict)  # {order_id: sweep_at}
 _tick_counter: Dict[str, int] = defaultdict(int)
+_last_tick: Dict[str, float] = defaultdict(float)
+
+_broadcast_fn: Optional[Callable] = None
+_fill_handler: Optional[Callable[..., Coroutine]] = None
 
 _started = False
 
@@ -230,6 +240,7 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
                         "seller_id": BOT_USER_ID,
                         "maker_order_id": oid,
                         "maker_orig_qty": order.orig_qty,
+                        "maker_remaining": Decimal("0"),
                     })
                     dq.remove(order)
                     if not dq:
@@ -261,6 +272,7 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
                         "seller_id": order.user_id,
                         "maker_order_id": oid,
                         "maker_orig_qty": order.orig_qty,
+                        "maker_remaining": Decimal("0"),
                     })
                     dq.remove(order)
                     if not dq:
@@ -273,50 +285,136 @@ def _check_pending_sweeps(symbol: str, book, mid: float) -> List[dict]:
     return fills
 
 
-# ── Per-symbol loop ───────────────────────────────────────────────────────────
+# ── Simulated liquidity-taking prints ─────────────────────────────────────────
 
-async def _run_mm_for_symbol(
-    symbol: str,
-    broadcast_fn: Callable,
-    fill_handler: Callable[..., Coroutine],
-) -> None:
-    # Stagger startup: real prices need time to arrive from yfinance
+def _maybe_bot_print(symbol: str, book) -> Optional[dict]:
+    """
+    With probability PRINT_PROB, the bot takes liquidity at the touch:
+    it fills the head order of the best price level (price-time priority),
+    exactly like an incoming marketable order would.
+
+    Returns None if no print happened, otherwise a dict:
+      - the head order was a bot quote  → {"kind": "bot", price, qty, side}
+      - the head order was a user order → {"kind": "user_fill", fill: {...}}
+        (a real execution the caller must persist via the fill handler)
+    """
+    if random.random() > PRINT_PROB:
+        return None
+
+    side = random.choice(["BUY", "SELL"])          # taker side
+    levels = book.asks if side == "BUY" else book.bids
+    if not levels:
+        return None
+
+    best_px = min(levels) if side == "BUY" else max(levels)
+    dq = levels.get(best_px)
+    if not dq:
+        return None
+    head = dq[0]
+
+    qty = Decimal(str(random.randint(PRINT_QTY_MIN, PRINT_QTY_MAX)))
+    fill = min(qty, head.qty)
+    if fill <= 0:
+        return None
+
+    head.qty -= fill
+    if head.qty <= 0:
+        dq.popleft()
+        if not dq:
+            del levels[best_px]
+
+    if head.user_id == BOT_USER_ID:
+        return {"kind": "bot", "price": best_px, "qty": fill, "side": side}
+
+    # The bot traded against a real resting user order
+    if side == "BUY":
+        buyer_id, seller_id = BOT_USER_ID, head.user_id
+    else:
+        buyer_id, seller_id = head.user_id, BOT_USER_ID
+    return {"kind": "user_fill", "fill": {
+        "price": best_px, "qty": fill,
+        "buyer_id": buyer_id, "seller_id": seller_id,
+        "maker_order_id": head.id,
+        "maker_orig_qty": head.orig_qty,
+        "maker_remaining": head.qty,
+        "taker_side": side,
+    }}
+
+
+# ── Per-symbol tick ───────────────────────────────────────────────────────────
+
+async def _tick_symbol(symbol: str) -> None:
+    """One full market-maker tick: requote, sweep, maybe print, broadcast."""
+    _last_tick[symbol] = time.time()
+    try:
+        mid = get_ref_price(symbol)
+        if mid is None or mid <= 0:
+            return
+
+        book  = books[symbol]
+        lock  = locks[symbol]
+
+        async with lock:
+            n_updates    = _update_quotes(symbol, book, mid)
+            sweep_fills  = _check_pending_sweeps(symbol, book, mid)
+            print_event  = _maybe_bot_print(symbol, book)
+            tick_n       = _tick_counter[symbol]
+            _tick_counter[symbol] = (tick_n + 1) % BROADCAST_EVERY_N_TICKS
+            need_broadcast = (n_updates > 0 or bool(sweep_fills)
+                              or print_event is not None or tick_n == 0)
+            snap = book.snapshot(depth=10) if need_broadcast else None
+
+        user_fills = list(sweep_fills)
+        if print_event is not None:
+            if print_event["kind"] == "bot":
+                trade_tape.record(
+                    symbol,
+                    price=print_event["price"], qty=print_event["qty"],
+                    buyer_name="Market Bot", seller_name="Market Bot",
+                    taker_side=print_event["side"], kind="bot",
+                )
+            else:
+                user_fills.append(print_event["fill"])
+
+        if user_fills and _fill_handler is not None:
+            asyncio.create_task(_fill_handler(symbol, user_fills))
+
+        if snap is not None and _broadcast_fn is not None:
+            await _broadcast_fn(symbol, {
+                "type": "snapshot",
+                "symbol": symbol,
+                "book": snap,
+                "ref_price": mid,
+            })
+
+    except Exception:
+        log.error("[MM] %s error:\n%s", symbol, traceback.format_exc())
+
+
+async def request_tick(symbol: str) -> None:
+    """
+    Opportunistic tick, called from request handlers (e.g. /book polling).
+
+    Cloud Run throttles CPU between requests, which stalls the background
+    loops in production; ticking from the polling requests themselves keeps
+    the bot quoting and printing whenever someone is watching the book.
+    """
+    sym = symbol.upper()
+    if sym not in _bot_bids:
+        return
+    if time.time() - _last_tick[sym] < TICK_SEC:
+        return
+    await _tick_symbol(sym)
+
+
+async def _run_mm_for_symbol(symbol: str) -> None:
+    # Stagger startup: give the quote bootstrap time to fetch real prices
     await asyncio.sleep(STARTUP_DELAY_SEC + random.uniform(0, 3))
     log.info("[MM] %s: market-maker loop started", symbol)
 
     while True:
-        try:
-            mid = get_ref_price(symbol)
-            if mid is None or mid <= 0:
-                await asyncio.sleep(TICK_SEC)
-                continue
-
-            book  = books[symbol]
-            lock  = locks[symbol]
-
-            async with lock:
-                n_updates    = _update_quotes(symbol, book, mid)
-                sweep_fills  = _check_pending_sweeps(symbol, book, mid)
-                tick_n       = _tick_counter[symbol]
-                _tick_counter[symbol] = (tick_n + 1) % BROADCAST_EVERY_N_TICKS
-                need_broadcast = (n_updates > 0 or bool(sweep_fills)
-                                  or tick_n == 0)
-                snap = book.snapshot(depth=10) if need_broadcast else None
-
-            if sweep_fills:
-                asyncio.create_task(fill_handler(symbol, sweep_fills))
-
-            if snap is not None:
-                await broadcast_fn(symbol, {
-                    "type": "snapshot",
-                    "symbol": symbol,
-                    "book": snap,
-                    "ref_price": mid,
-                })
-
-        except Exception:
-            log.error("[MM] %s error:\n%s", symbol, traceback.format_exc())
-
+        if time.time() - _last_tick[symbol] >= TICK_SEC:
+            await _tick_symbol(symbol)
         await asyncio.sleep(TICK_SEC)
 
 
@@ -335,10 +433,12 @@ async def start_market_maker(
         broadcast_fn:   async (symbol, payload) → broadcasts WS updates
         fill_handler:   async (symbol, fills)   → records bot fills in DB
     """
-    global _started
+    global _started, _broadcast_fn, _fill_handler
     if _started:
         return
     _started = True
+    _broadcast_fn = broadcast_fn
+    _fill_handler = fill_handler
 
     market_syms = [s.upper() for s in symbols if not s.upper().startswith("GAME")]
     log.info("[MM] Launching market maker for %s", market_syms)
@@ -346,5 +446,5 @@ async def start_market_maker(
     for sym in market_syms:
         _bot_bids[sym] = [None] * LEVELS
         _bot_asks[sym] = [None] * LEVELS
-        asyncio.create_task(_run_mm_for_symbol(sym, broadcast_fn, fill_handler))
+        asyncio.create_task(_run_mm_for_symbol(sym))
         await asyncio.sleep(0.4)   # stagger symbol starts

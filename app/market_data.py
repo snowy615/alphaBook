@@ -179,6 +179,82 @@ async def _bootstrap_all(symbols: List[str]) -> None:
     log.warning("[MARKET] bootstrap incomplete for %s; using static seeds", remaining)
 
 
+_last_synth_step: Dict[str, float] = {}
+_last_official_fetch: Dict[str, float] = {}
+_fetch_inflight: set = set()
+_fast_tick_sec: float = 1.5
+_official_period_sec: int = 180
+
+
+def _synth_step(sym: str) -> None:
+    """Advance one symbol's synthetic price a single micro-tick (rate-limited)."""
+    now = time.time()
+    if now - _last_synth_step.get(sym, 0.0) < _fast_tick_sec:
+        return
+    _last_synth_step[sym] = now
+
+    s_px = _synth.get(sym)
+    o    = _official.get(sym)
+    m    = _mid_hint.get(sym)
+
+    if o is not None and m is not None:
+        target = 0.7 * o + 0.3 * m
+    elif o is not None:
+        target = o
+    elif m is not None:
+        target = m
+    else:
+        _synth.setdefault(sym, STATIC_SEEDS.get(sym, DEFAULT_SEED))
+        return
+
+    if s_px is None:
+        _synth[sym] = target
+        return
+
+    step = ALPHA * (target - s_px)
+    max_move = (MAX_TICK_MOVE_BP / 10_000.0) * max(s_px, 1e-9)
+    step = max(-max_move, min(max_move, step))
+    noise = (NOISE_BP / 10_000.0) * s_px * (random.random() - 0.5) * 2.0
+    new_px = s_px + step + noise
+    if new_px > 0:
+        _synth[sym] = new_px
+
+
+async def _refresh_official(sym: str) -> None:
+    try:
+        price = await _fetch_quote(sym)
+        if price:
+            _official[sym] = price
+            _synth.setdefault(sym, price)
+            fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+            _official_info[sym] = {"source": "yahoo", "fetched_at": fetched_at}
+    finally:
+        _fetch_inflight.discard(sym)
+
+
+def request_refresh(symbol: str) -> None:
+    """
+    Opportunistic engine advance, called from request handlers.
+
+    On Cloud Run, CPU is throttled to ~zero between requests, so pure
+    background loops stall in production. Driving the engine from the
+    polling requests themselves keeps prices moving whenever anyone is
+    actually watching (and costs nothing when nobody is).
+    """
+    sym = symbol.upper()
+    if sym.startswith("GAME"):
+        return
+
+    _synth_step(sym)
+
+    now = time.time()
+    if (now - _last_official_fetch.get(sym, 0.0) >= _official_period_sec
+            and sym not in _fetch_inflight):
+        _last_official_fetch[sym] = now
+        _fetch_inflight.add(sym)
+        asyncio.create_task(_refresh_official(sym))
+
+
 async def _official_rotator(symbols: List[str], per_symbol_period_sec: int) -> None:
     """
     Cycle through symbols, refreshing each from the quote API every
@@ -187,19 +263,17 @@ async def _official_rotator(symbols: List[str], per_symbol_period_sec: int) -> N
     i = 0
     while True:
         sym = symbols[i % len(symbols)].upper()
-        price = await _fetch_quote(sym)
-        if price:
-            _official[sym] = price
-            _synth.setdefault(sym, price)
-            fetched_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
-            _official_info[sym] = {"source": "yahoo", "fetched_at": fetched_at}
+        if sym not in _fetch_inflight:
+            _last_official_fetch[sym] = time.time()
+            _fetch_inflight.add(sym)
+            await _refresh_official(sym)
         i += 1
         await asyncio.sleep(per_symbol_period_sec)
 
 
 async def _fast_synth_loop(symbols: List[str], tick_sec: float) -> None:
     """
-    Generate smooth intra-second micro-movements between quote refreshes.
+    Generate smooth micro-movements between quote refreshes.
 
     Target = 70% official + 30% order-book mid (so user trading activity
     creates realistic short-term pressure on the price).
@@ -207,33 +281,7 @@ async def _fast_synth_loop(symbols: List[str], tick_sec: float) -> None:
     random.seed(time.time())
     while True:
         for s in symbols:
-            sym = s.upper()
-            s_px = _synth.get(sym)
-            o    = _official.get(sym)
-            m    = _mid_hint.get(sym)
-
-            if o is not None and m is not None:
-                target = 0.7 * o + 0.3 * m
-            elif o is not None:
-                target = o
-            elif m is not None:
-                target = m
-            else:
-                _synth.setdefault(sym, STATIC_SEEDS.get(sym, DEFAULT_SEED))
-                continue
-
-            if s_px is None:
-                _synth[sym] = target
-                continue
-
-            step = ALPHA * (target - s_px)
-            max_move = (MAX_TICK_MOVE_BP / 10_000.0) * max(s_px, 1e-9)
-            step = max(-max_move, min(max_move, step))
-            noise = (NOISE_BP / 10_000.0) * s_px * (random.random() - 0.5) * 2.0
-            new_px = s_px + step + noise
-            if new_px > 0:
-                _synth[sym] = new_px
-
+            _synth_step(s.upper())
         await asyncio.sleep(tick_sec)
 
 
@@ -250,10 +298,12 @@ async def start_ref_engine(
         fast_tick:       seconds between synthetic micro-ticks
         official_period: seconds between quote refreshes per symbol
     """
-    global _started
+    global _started, _fast_tick_sec, _official_period_sec
     if _started:
         return
     _started = True
+    _fast_tick_sec = fast_tick
+    _official_period_sec = official_period
 
     market_syms = [s for s in symbols if not s.upper().startswith("GAME")]
     log.info("[MARKET] Starting quote engine for %s", market_syms)

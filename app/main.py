@@ -31,6 +31,9 @@ from app.models import User, Order as DBOrder, Trade as DBTrade # explicit impor
 from app.me import router as me_router
 from app.state import books, locks
 from app import admin
+from app import trade_tape
+from app import market_maker
+from app.market_data import request_refresh as market_data_refresh
 from app.market_maker import start_market_maker, BOT_USER_ID as MM_BOT_USER_ID
 
 
@@ -153,9 +156,26 @@ TOP_DEPTH: int = 10
 
 subscribers: Dict[str, Set[WebSocket]] = defaultdict(set)
 
-positions: Dict[int, Dict[str, Dict[str, Decimal]]] = defaultdict(
+positions: Dict[str, Dict[str, Dict[str, Decimal]]] = defaultdict(
     lambda: defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0"), "realized": Decimal("0")})
 )
+
+# user_id → display name, for the recent-trades tape
+_username_cache: Dict[str, str] = {MM_BOT_USER_ID: "Market Bot"}
+
+
+async def _resolve_username(user_id: str) -> str:
+    name = _username_cache.get(user_id)
+    if name:
+        return name
+    try:
+        doc = await db_module.db.collection("users").document(user_id).get()
+        name = (doc.to_dict() or {}).get("username") if doc.exists else None
+    except Exception:
+        name = None
+    name = name or f"user-{user_id[:6]}"
+    _username_cache[user_id] = name
+    return name
 
 class NewsOut(BaseModel):
     id: str # ObjectId string
@@ -214,21 +234,34 @@ async def _bot_fill_handler(symbol: str, fills: list) -> None:
                 trade.model_dump(exclude={"id"}),
             )
 
-            # Mark the swept user order as FILLED. The sweep always takes the
-            # entire remaining quantity, so total filled == original quantity
-            # (not just this sweep's qty, which undercounts partially filled orders).
+            # Sync the user order's Firestore record. Sweeps take the whole
+            # remaining quantity; bot prints may take only part of it.
             maker_oid = tr.get("maker_order_id")
             if maker_oid:
-                order_ref = db_module.db.collection("orders").document(maker_oid)
-                batch.update(order_ref, {
-                    "status": "FILLED",
-                    "filled_qty": str(tr.get("maker_orig_qty", q)),
+                remaining = tr.get("maker_remaining", Decimal("0"))
+                orig = tr.get("maker_orig_qty", q)
+                order_update = {
+                    "filled_qty": str(orig - remaining),
                     "updated_at": dt.datetime.utcnow(),
-                })
+                }
+                if remaining <= 0:
+                    order_update["status"] = "FILLED"
+                order_ref = db_module.db.collection("orders").document(maker_oid)
+                batch.update(order_ref, order_update)
 
             # Update in-memory positions
             _apply_buy(positions[buyer_id][symbol], px, q)
             _apply_sell(positions[seller_id][symbol], px, q)
+
+            # Recent-trades tape
+            trade_tape.record(
+                symbol,
+                price=px, qty=q,
+                buyer_name=await _resolve_username(buyer_id),
+                seller_name=await _resolve_username(seller_id),
+                taker_side=tr.get("taker_side"),
+                kind="sweep" if "taker_side" not in tr else "user",
+            )
 
         await batch.commit()
         log.info("[MM] Recorded %d sweep fill(s) for %s", len(fills), symbol)
@@ -476,12 +509,58 @@ def health():
 
 @app.get("/reference/{symbol}", response_model=PriceOut)
 def get_reference(symbol: str):
+    market_data_refresh(symbol)
     return PriceOut(symbol=symbol, price=get_ref_price(symbol))
 
 
 @app.get("/book/{symbol}")
-def get_book(symbol: str):
-    return books[symbol].snapshot(depth=TOP_DEPTH)
+async def get_book(symbol: str):
+    # Advance the price engine and market maker opportunistically: on Cloud
+    # Run, background loops are CPU-throttled between requests, so the
+    # frontend's book polling is what actually drives the simulation.
+    sym = symbol.upper()
+    market_data_refresh(sym)
+    await market_maker.request_tick(sym)
+    return books[sym].snapshot(depth=TOP_DEPTH)
+
+
+@app.get("/trades/{symbol}")
+async def recent_trades(symbol: str, limit: int = 40):
+    """Recent executions for a symbol, newest first, with display names."""
+    sym = symbol.upper()
+
+    # First request after a restart: seed the tape from Firestore history
+    if trade_tape.needs_seed(sym):
+        trade_tape.mark_seeded(sym)
+        try:
+            q = db_module.db.collection("trades") \
+                .order_by("created_at", direction=firestore_module.Query.DESCENDING) \
+                .limit(200)
+            docs = await q.get()
+            rows = []
+            for d in docs:
+                data = d.to_dict()
+                if data.get("symbol") != sym:
+                    continue
+                rows.append(data)
+                if len(rows) >= 30:
+                    break
+            for data in reversed(rows):   # oldest first so the deque ends newest
+                created = data.get("created_at")
+                ts_ms = int(created.timestamp() * 1000) if created else None
+                trade_tape.record(
+                    sym,
+                    price=float(data.get("price") or 0),
+                    qty=float(data.get("qty") or 0),
+                    buyer_name=await _resolve_username(data.get("buyer_id", "")),
+                    seller_name=await _resolve_username(data.get("seller_id", "")),
+                    kind="history",
+                    ts_ms=ts_ms,
+                )
+        except Exception:
+            log.warning("Failed to seed trade tape for %s", sym, exc_info=True)
+
+    return {"symbol": sym, "trades": trade_tape.get_tape(sym, limit=max(1, min(limit, 100)))}
 
 
 # ---- Auth protected ----
@@ -683,6 +762,16 @@ async def submit_order(
         
         _apply_buy(positions[buyer_id][symbol], px, q)
         _apply_sell(positions[seller_id][symbol], px, q)
+
+        # Recent-trades tape (taker side = this order's side)
+        trade_tape.record(
+            symbol,
+            price=px, qty=q,
+            buyer_name=await _resolve_username(buyer_id),
+            seller_name=await _resolve_username(seller_id),
+            taker_side=order_in.side,
+            kind="user",
+        )
 
         total_filled += q
 

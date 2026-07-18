@@ -654,11 +654,13 @@ async def reset_all_users(
     await delete_all_in_collection("trades")
     await delete_all_in_collection("orders")
 
-    # Clear in-memory order book and cached positions
+    # Clear in-memory order book, cached positions, and the trades tape
     from app.order_book import clear_all_orders
     clear_all_orders()
     from app import main as main_module
     main_module.positions.clear()
+    from app import trade_tape
+    trade_tape.clear_all()
 
     return {"ok": True, "message": "All users reset to initial state"}
 
