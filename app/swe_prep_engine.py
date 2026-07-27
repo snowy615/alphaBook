@@ -1,29 +1,27 @@
 """
-Market Simulation Py — the market engine (client-side execution model).
-=======================================================================
+SWE Prep — the simulation engine.
+=============================================
 
-An algo-trading contest where **no player code ever runs on the server**.
-Players run their strategy on their own machine and reach the market only
-through the authenticated, rate-limited HTTP order gateway
-(:mod:`app.market_sim_py`). The server owns the trusted half: the items, the
-order books, the house bots, the fair-value marks, the position limit, and the
-clock. It matches whatever orders arrive — it never executes a strategy.
+A self-contained algo-trading contest.  Every player submits a Python strategy
+(see :mod:`app.swe_prep_sandbox`); the engine calls each one once per tick for ten
+minutes while house bots quote and take on the other side.  Whoever ends with
+the best mark-to-market P&L wins.
 
-Why this shape
---------------
-* **No sandbox.** Untrusted code lives on the players' machines, so the whole
-  class of code-execution and denial-of-service risks simply does not exist on
-  our side. The server only ever sees orders (validated JSON), never code.
-* **Continuous matching.** Orders match on arrival against the live book, the
-  way a real exchange works. Fairness comes from a per-user rate limit in the
-  gateway, not from batching.
-* **Fair-value marking.** P&L marks positions at each item's hidden fair value,
-  not the book mid, so quoting a silly price to yourself can't manufacture
-  profit.
-* **Request-driven clock.** Cloud Run throttles the CPU between requests, so the
-  market's heartbeat (fair-value walk + bot quoting) is advanced from the same
-  polls the clients make, via :meth:`Run.advance`. ``advance`` never awaits, so
-  concurrent pollers can't interleave a half-finished tick.
+Deliberate design choices
+-------------------------
+* **Isolated from the live game.**  Its own books, its own fictional items, its
+  own Firestore collection.  Nothing here touches the AAPL/MSFT order book that
+  human traders use.
+* **Fair-value marking.**  P&L marks unrealised positions at each item's hidden
+  fair value, not at the book mid.  Marking at mid would let a player print a
+  silly quote against themselves and manufacture profit.
+* **Request-driven, like the rest of AlphaBook.**  Cloud Run throttles the CPU
+  between requests, so background loops stall in production.  :meth:`Run.advance`
+  catches up however many ticks have elapsed and is called from the state
+  endpoint that the front end polls.
+* **`advance()` never awaits.**  It is a plain synchronous function, so the
+  event loop runs it to completion and concurrent pollers cannot interleave
+  half-finished ticks.
 """
 
 from __future__ import annotations
@@ -38,6 +36,12 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from app.swe_prep_sandbox import (
+    SandboxError,
+    Strategy,
+    StrategyTimeout,
+    compile_strategy,
+)
 from app.order_book import Order as BookOrder, OrderBook
 
 log = logging.getLogger("uvicorn.error")
@@ -45,19 +49,27 @@ log = logging.getLogger("uvicorn.error")
 # ── Contest rules ────────────────────────────────────────────────────────────
 POSITION_LIMIT: int = 1000        # absolute position cap, per item, per player
 RUN_SECONDS: int = 600            # ten minutes
-TICK_SECONDS: float = 1.0         # market heartbeat (fair-value walk + bots)
+TICK_SECONDS: float = 1.0
 TOTAL_TICKS: int = int(RUN_SECONDS / TICK_SECONDS)
 
-MAX_PARTICIPANTS: int = 50        # humans per run
-MAX_CATCHUP_TICKS: int = 60       # heartbeat ticks replayed in one advance() call
+MAX_PARTICIPANTS: int = 24        # keeps the worst-case tick cost bounded
+MAX_ORDERS_PER_TICK: int = 20
+# Hard ceiling on the returned list length. A strategy can build a huge list
+# cheaply with ``[x] * N`` (one bytecode, so the line budget never sees it);
+# without this guard, ``_apply_orders`` would then copy the whole thing. We
+# refuse to even measure past this by checking len() — O(1) on a list — first.
+MAX_ORDER_LIST: int = 1000
+MAX_CATCHUP_TICKS: int = 60       # ticks replayed in a single advance() call
 
-# ── Order gateway limits ─────────────────────────────────────────────────────
-# The contest's timing fairness lives here: a bot may send at most ORDER_RATE
-# orders per second (with a small burst), so a faster connection can't turn the
-# game into a latency race.
-ORDER_RATE_PER_SEC: int = 10
-ORDER_BURST: int = 10
-MAX_ORDERS_PER_REQUEST: int = 20  # a single POST /orders may carry this many
+# ── Strategy budgets ─────────────────────────────────────────────────────────
+# A tick has to stay cheap: advance() runs on the event loop, so the worst case
+# is MAX_PARTICIPANTS × STRATEGY_TIMEOUT_SEC of blocking. A well-behaved
+# strategy costs well under a millisecond.
+STRATEGY_TIMEOUT_SEC: float = 0.08
+STRATEGY_LOAD_TIMEOUT_SEC: float = 1.0
+MAX_TIMEOUTS: int = 3             # timeouts tolerated before disqualification
+MAX_ERRORS: int = 25              # exceptions tolerated before disqualification
+LOG_LINES: int = 200              # per-player log ring buffer
 
 # ── Market microstructure ────────────────────────────────────────────────────
 PRICE_DP: int = 2
@@ -69,10 +81,12 @@ MM_STEP_BPS: float = 12.0
 MM_BASE_QTY: int = 30
 MM_QTY_STEP: int = 20
 MM_NOISE_BPS: float = 4.0
-# The maker quotes around its own lagging, noisy estimate of fair value, not the
-# real one — otherwise it would be unbeatable and there would be no edge to find.
+# The maker quotes around its own lagging opinion of fair value, not the real
+# one. Without this it would be unbeatable, and there would be no edge for a
+# strategy to find; with it, price discovery is the whole game.
 MM_FAIR_PULL: float = 0.15
-# Quotes lean away from the maker's inventory so it works back toward flat.
+# Quotes lean away from the maker's inventory, so it works its position back
+# toward flat instead of parking at the limit and going one-sided.
 MM_SKEW_BPS: float = 70.0
 
 FLOW_PROB: float = 0.35           # chance per item per tick of a bot print
@@ -80,23 +94,76 @@ FLOW_QTY_MIN: int = 5
 FLOW_QTY_MAX: int = 40
 FLOW_BIAS_MAX: float = 0.40       # how far mispricing tilts the bot's side
 
-MM_BOT_ID = "__ALGO_MM__"
-FLOW_BOT_ID = "__ALGO_FLOW__"
+MM_BOT_ID = "__SWE_MM__"
+FLOW_BOT_ID = "__SWE_FLOW__"
 
 # ── The tradable items ───────────────────────────────────────────────────────
 # Fictional on purpose: no real ticker means no outside data to look up, so the
 # contest is decided by what a strategy does with the book in front of it.
 ITEM_SPECS: List[Dict[str, Any]] = [
-    {"symbol": "WIDGET", "name": "Widget Co",         "start": 100.00, "vol_bps": 12.0, "drift_bps": 0.0},
-    {"symbol": "GADGET", "name": "Gadget Industries", "start": 50.00,  "vol_bps": 22.0, "drift_bps": 0.4},
-    {"symbol": "GIZMO",  "name": "Gizmo Holdings",    "start": 250.00, "vol_bps": 8.0,  "drift_bps": -0.2},
-    {"symbol": "DOODAD", "name": "Doodad PLC",        "start": 20.00,  "vol_bps": 35.0, "drift_bps": 0.0},
+    {"symbol": "WIDGET", "name": "Widget Co",       "start": 100.00, "vol_bps": 12.0, "drift_bps": 0.0},
+    {"symbol": "GADGET", "name": "Gadget Industries", "start": 50.00, "vol_bps": 22.0, "drift_bps": 0.4},
+    {"symbol": "GIZMO",  "name": "Gizmo Holdings",  "start": 250.00, "vol_bps": 8.0,  "drift_bps": -0.2},
+    {"symbol": "DOODAD", "name": "Doodad PLC",      "start": 20.00,  "vol_bps": 35.0, "drift_bps": 0.0},
 ]
 ITEM_SYMBOLS: List[str] = [spec["symbol"] for spec in ITEM_SPECS]
 
 
-class OrderRejected(ValueError):
-    """An order failed validation or the position-limit check."""
+STARTER_CODE = '''\
+# SWE Prep — starter strategy
+#
+# on_tick(ctx) is called once per second for ten minutes.
+# Return a list of orders; each one is a dict:
+#
+#   {"item": "WIDGET", "side": "BUY", "price": 99.95, "qty": 10}   resting limit
+#   {"item": "WIDGET", "side": "SELL", "qty": 10}                  market order
+#   {"action": "cancel_all"}                                       pull everything
+#   {"action": "cancel_all", "item": "WIDGET"}                     pull one item
+#
+# Position limit: 1000 per item, long or short. Resting orders count toward it.
+# P&L marks your position at each item's hidden fair value.
+#
+# Available without importing: math, stats (mean/median/stdev/clamp), random.
+
+LOOKBACK = 20
+
+
+def on_tick(ctx):
+    orders = [{"action": "cancel_all"}]
+    history = ctx["memory"].setdefault("mids", {})
+
+    for item in ctx["items"]:
+        quote = ctx["market"][item]
+        mid = quote["mid"]
+        if mid is None:
+            continue
+
+        # Keep a rolling window of mids for this item.
+        window = history.setdefault(item, [])
+        window.append(mid)
+        if len(window) > LOOKBACK:
+            window.pop(0)
+        if len(window) < 5:
+            continue
+
+        # Simple mean reversion: fade moves away from the recent average.
+        average = stats.mean(window)
+        edge = (average - mid) / mid
+        position = ctx["position"][item]
+        room = ctx["limit"] - abs(position)
+        if room < 10:
+            continue
+
+        size = int(stats.clamp(abs(edge) * 40000, 5, 50))
+        size = min(size, room)
+
+        if edge > 0.0008:
+            orders.append({"item": item, "side": "BUY", "price": round(quote["bid"], 2), "qty": size})
+        elif edge < -0.0008:
+            orders.append({"item": item, "side": "SELL", "price": round(quote["ask"], 2), "qty": size})
+
+    return orders
+'''
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -109,15 +176,26 @@ class Participant:
     name: str
     is_bot: bool = False
 
+    code: str = ""
+    strategy: Optional[Strategy] = None
+    status: str = "no_code"           # no_code | ready | error | disqualified
+    error: str = ""
+
     cash: float = 0.0
     pos: Dict[str, float] = field(default_factory=lambda: {s: 0.0 for s in ITEM_SYMBOLS})
+    memory: Dict[str, Any] = field(default_factory=dict)
 
     fills: int = 0
     volume: float = 0.0
     orders_accepted: int = 0
     orders_rejected: int = 0
     last_reject: str = ""
-    last_seen: float = 0.0        # monotonic clock of the last API call
+    timeouts: int = 0
+    errors: int = 0
+    logs: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=LOG_LINES))
+
+    def note(self, tick: int, text: str, kind: str = "print") -> None:
+        self.logs.append({"tick": tick, "text": text, "kind": kind})
 
     def pnl(self, fair: Dict[str, float]) -> float:
         mark = sum(self.pos[s] * fair[s] for s in ITEM_SYMBOLS)
@@ -137,7 +215,7 @@ class Item:
     drift_bps: float
     last: Optional[float] = None
     open_price: float = 0.0
-    mm_centre: float = 0.0        # the market maker's lagging estimate of fair
+    mm_centre: float = 0.0      # the market maker's lagging estimate of fair
 
     def step(self, rng: random.Random) -> None:
         """One geometric random-walk step of the hidden fair value."""
@@ -150,7 +228,7 @@ class Item:
 # ─────────────────────────────────────────────────────────────────────────────
 
 class Run:
-    """One ten-minute contest: its items, books, players, bots and clock."""
+    """One ten-minute contest: its items, books, players and clock."""
 
     def __init__(self, run_id: str, join_code: str, name: str, creator_id: str, seed: Optional[int] = None):
         self.id = run_id
@@ -197,24 +275,71 @@ class Run:
             return existing
         if len(self.players) >= MAX_PARTICIPANTS:
             raise ValueError(f"this run is full ({MAX_PARTICIPANTS} players)")
-        if self.status == "finished":
-            raise ValueError("this run has already finished")
+        if self.status != "lobby":
+            raise ValueError("this run has already started")
         p = Participant(uid=uid, name=username)
         self.participants[uid] = p
         return p
 
-    def member(self, uid: str) -> Optional[Participant]:
+    def set_code(self, uid: str, code: str) -> None:
         p = self.participants.get(uid)
-        return p if (p is not None and not p.is_bot) else None
+        if p is None or p.is_bot:
+            raise ValueError("you have not joined this run")
+        if self.status != "lobby":
+            raise ValueError("strategies are locked once the run starts")
+        # Compile now so the author sees sandbox errors immediately, then throw
+        # the handle away — the real one is built fresh at start().
+        compile_strategy(code).load(timeout=STRATEGY_LOAD_TIMEOUT_SEC)
+        p.code = code
+        p.status = "ready"
+        p.error = ""
 
     # -- lifecycle -------------------------------------------------------
     def start(self) -> None:
         if self.status != "lobby":
             raise ValueError("run has already started")
+        ready = [p for p in self.players if p.code]
+        if not ready:
+            raise ValueError("no strategies submitted yet")
+
+        for p in self.players:
+            if not p.code:
+                p.status = "no_code"
+                continue
+            self._build_strategy(p)
+
         self.status = "running"
         self.started_at = dt.datetime.utcnow()
         self._t0 = time.monotonic()
         self.tick = 0
+
+    def _build_strategy(self, p: Participant) -> None:
+        """Compile the player's code into the handle used for the whole run."""
+        def on_print(text: str, _p: Participant = p) -> None:
+            _p.note(self.tick, text, "print")
+
+        try:
+            strategy = compile_strategy(p.code, on_print=on_print, seed=self.rng.randrange(1 << 30))
+            strategy.load(timeout=STRATEGY_LOAD_TIMEOUT_SEC)
+            if not strategy.has("on_tick"):
+                raise SandboxError("strategy must define on_tick(ctx)")
+        except (SandboxError, StrategyTimeout) as e:
+            p.status = "error"
+            p.error = str(e)
+            p.note(0, str(e), "error")
+            return
+        except Exception as e:  # noqa: BLE001 - author's own error
+            p.status = "error"
+            p.error = f"{type(e).__name__}: {e}"
+            p.note(0, p.error, "error")
+            return
+
+        p.strategy = strategy
+        p.status = "ready"
+        if strategy.has("on_start"):
+            orders = self._invoke(p, "on_start", self._context(p))
+            if orders is not None:
+                self._apply_orders(p, orders)
 
     @property
     def seconds_left(self) -> float:
@@ -225,12 +350,11 @@ class Run:
         return max(0.0, RUN_SECONDS - self.tick * TICK_SECONDS)
 
     def advance(self, now: Optional[float] = None) -> int:
-        """Replay the market heartbeat ticks the wall clock says are due.
+        """Replay whichever ticks the wall clock says are due.
 
-        Only the *market* advances here — fair-value walk and the two house
-        bots. Player orders are matched on arrival in :meth:`submit_orders`,
-        not on this clock. Synchronous on purpose: with no awaits, two
-        concurrent pollers can never interleave partial ticks.
+        Synchronous on purpose: the caller is an async endpoint, and keeping
+        this free of awaits means two concurrent pollers can never interleave
+        partial ticks.  Returns the number of ticks executed.
         """
         if self.status != "running" or self._t0 is None:
             return 0
@@ -240,7 +364,7 @@ class Run:
         target = min(due, TOTAL_TICKS)
         executed = 0
         while self.tick < target and executed < MAX_CATCHUP_TICKS:
-            self._heartbeat()
+            self._run_tick()
             self.tick += 1
             executed += 1
 
@@ -258,93 +382,153 @@ class Run:
             book.clear_all_orders()
         self.results = self.leaderboard()
 
-    # -- the market heartbeat -------------------------------------------
-    def _heartbeat(self) -> None:
+    # -- one tick --------------------------------------------------------
+    def _run_tick(self) -> None:
         for item in self.items.values():
             item.step(self.rng)
+
+        # Bots go first so a strategy always sees a two-sided market.
         self._bot_quote()
         self._bot_flow()
 
-    # ── Order gateway (called per API request, matched on arrival) ──────
+        # Randomise the order players act in each tick. Otherwise the first to
+        # join would always quote into a fresh book ahead of everyone else —
+        # a small but real edge that has nothing to do with strategy quality.
+        active = [p for p in self.players if p.status == "ready" and p.strategy is not None]
+        self.rng.shuffle(active)
+        for p in active:
+            orders = self._invoke(p, "on_tick", self._context(p))
+            if orders is not None:
+                self._apply_orders(p, orders)
 
-    def submit_orders(self, uid: str, orders: List[dict], allowance: int) -> Dict[str, Any]:
-        """Apply up to ``allowance`` of a player's orders, matching each on arrival.
+    def _invoke(self, p: Participant, fn_name: str, ctx: Dict[str, Any]) -> Optional[Any]:
+        """Call one of the author's functions, absorbing whatever it does wrong."""
+        try:
+            return p.strategy.call(fn_name, ctx, timeout=STRATEGY_TIMEOUT_SEC)
+        except StrategyTimeout as e:
+            p.timeouts += 1
+            p.note(self.tick, str(e), "error")
+            if p.timeouts >= MAX_TIMEOUTS:
+                self._disqualify(p, f"timed out {p.timeouts} times")
+        except SandboxError as e:
+            self._disqualify(p, str(e))
+        except Exception as e:  # noqa: BLE001 - author's own error
+            p.errors += 1
+            p.note(self.tick, f"{type(e).__name__}: {e}", "error")
+            if p.errors >= MAX_ERRORS:
+                self._disqualify(p, f"raised {p.errors} errors")
+        return None
 
-        ``allowance`` is how many orders the rate limiter granted this request;
-        any beyond it are reported as rate-limited rather than applied. Returns
-        a per-order result list plus the player's resulting book state.
-        """
-        p = self.member(uid)
-        if p is None:
-            raise OrderRejected("you have not joined this run")
-        if self.status != "running":
-            raise OrderRejected("this run is not currently live")
-        p.last_seen = time.monotonic()
+    def _disqualify(self, p: Participant, reason: str) -> None:
+        p.status = "disqualified"
+        p.error = reason
+        p.note(self.tick, f"disqualified: {reason}", "error")
+        for symbol in ITEM_SYMBOLS:
+            self.books[symbol].cancel_all_for_user(p.uid)
 
-        results: List[Dict[str, Any]] = []
-        for i, raw in enumerate(orders[:MAX_ORDERS_PER_REQUEST]):
-            if i >= allowance:
-                results.append({"ok": False, "error": "rate limited — slow down (max "
-                                f"{ORDER_RATE_PER_SEC}/s)", "rate_limited": True})
-                p.orders_rejected += 1
-                continue
-            try:
-                results.append({"ok": True, **self._apply_one(p, raw)})
-                p.orders_accepted += 1
-            except OrderRejected as e:
-                results.append({"ok": False, "error": str(e)})
-                p.orders_rejected += 1
-                p.last_reject = str(e)
-
-        if len(orders) > MAX_ORDERS_PER_REQUEST:
-            results.append({"ok": False,
-                            "error": f"only {MAX_ORDERS_PER_REQUEST} orders per request are accepted"})
+    # -- strategy-facing view -------------------------------------------
+    def _context(self, p: Participant) -> Dict[str, Any]:
+        market = {}
+        open_orders = {}
+        for symbol in ITEM_SYMBOLS:
+            book = self.books[symbol]
+            bid, ask = self._touch(book)
+            resting_buy, resting_sell = self._resting(book, p.uid)
+            market[symbol] = {
+                "bid": bid,
+                "ask": ask,
+                "bid_qty": self._qty_at(book.bids, bid),
+                "ask_qty": self._qty_at(book.asks, ask),
+                "mid": None if bid is None or ask is None else round((bid + ask) / 2, 4),
+                "spread": None if bid is None or ask is None else round(ask - bid, 4),
+                "last": self.items[symbol].last,
+            }
+            open_orders[symbol] = {"buy": resting_buy, "sell": resting_sell}
 
         fair = {s: item.fair for s, item in self.items.items()}
         return {
-            "results": results,
+            "tick": self.tick,
+            "seconds_left": round(self.seconds_left, 1),
+            "limit": POSITION_LIMIT,
+            "items": list(ITEM_SYMBOLS),
+            "market": market,
             "position": dict(p.pos),
+            "open_orders": open_orders,
             "cash": round(p.cash, 4),
             "pnl": round(p.pnl(fair), 4),
+            "memory": p.memory,
         }
 
-    def cancel(self, uid: str, item: Optional[str] = None) -> int:
-        """Cancel a player's resting orders (one item, or all). Returns count."""
-        p = self.member(uid)
-        if p is None:
-            raise OrderRejected("you have not joined this run")
-        p.last_seen = time.monotonic()
-        symbols = [item] if item else list(ITEM_SYMBOLS)
-        removed = 0
-        for symbol in symbols:
-            if symbol not in self.books:
-                raise OrderRejected(f"unknown item {symbol!r}")
-            removed += self.books[symbol].cancel_all_for_user(uid)
-        return removed
+    @staticmethod
+    def _touch(book: OrderBook) -> Tuple[Optional[float], Optional[float]]:
+        best_bid = max(book.bids.keys(), default=None)
+        best_ask = min(book.asks.keys(), default=None)
+        return (
+            float(best_bid) if best_bid is not None else None,
+            float(best_ask) if best_ask is not None else None,
+        )
 
-    def _apply_one(self, p: Participant, raw: Any) -> Dict[str, Any]:
+    @staticmethod
+    def _qty_at(side: Dict[Decimal, Any], price: Optional[float]) -> float:
+        if price is None:
+            return 0.0
+        dq = side.get(Decimal(str(price)))
+        return float(sum(o.qty for o in dq)) if dq else 0.0
+
+    @staticmethod
+    def _resting(book: OrderBook, uid: str) -> Tuple[float, float]:
+        """Live quantity this participant has resting on each side."""
+        buy = sum(float(o.qty) for dq in book.bids.values() for o in dq if o.user_id == uid)
+        sell = sum(float(o.qty) for dq in book.asks.values() for o in dq if o.user_id == uid)
+        return buy, sell
+
+    # -- order handling --------------------------------------------------
+    def _apply_orders(self, p: Participant, orders: Any) -> None:
+        if isinstance(orders, dict):
+            orders = [orders]
+        if not isinstance(orders, (list, tuple)):
+            self._reject(p, "on_tick must return a list of order dicts")
+            return
+        # Bail before touching the contents if the list itself is absurd, so a
+        # cheaply-built giant list can never be copied or iterated.
+        if len(orders) > MAX_ORDER_LIST:
+            self._reject(p, f"returned {len(orders)} orders; the limit is {MAX_ORDER_LIST} per tick")
+            return
+        for raw in orders[:MAX_ORDERS_PER_TICK]:
+            try:
+                self._apply_one(p, raw)
+            except ValueError as e:
+                self._reject(p, str(e))
+        if len(orders) > MAX_ORDERS_PER_TICK:
+            self._reject(p, f"only the first {MAX_ORDERS_PER_TICK} orders of a tick are accepted")
+
+    def _reject(self, p: Participant, reason: str) -> None:
+        p.orders_rejected += 1
+        p.last_reject = reason
+        p.note(self.tick, reason, "reject")
+
+    def _apply_one(self, p: Participant, raw: Any) -> None:
         if not isinstance(raw, dict):
-            raise OrderRejected("each order must be an object")
+            raise ValueError("each order must be a dict")
 
         action = raw.get("action")
         if action == "cancel_all":
             symbols = [raw["item"]] if raw.get("item") else list(ITEM_SYMBOLS)
-            removed = 0
             for symbol in symbols:
                 if symbol not in self.books:
-                    raise OrderRejected(f"unknown item {symbol!r}")
-                removed += self.books[symbol].cancel_all_for_user(p.uid)
-            return {"action": "cancel_all", "cancelled": removed}
+                    raise ValueError(f"unknown item {symbol!r}")
+                self.books[symbol].cancel_all_for_user(p.uid)
+            return
         if action:
-            raise OrderRejected(f"unknown action {action!r}")
+            raise ValueError(f"unknown action {action!r}")
 
         symbol = raw.get("item")
         if symbol not in self.books:
-            raise OrderRejected(f"unknown item {symbol!r}")
+            raise ValueError(f"unknown item {symbol!r}")
 
         side = str(raw.get("side", "")).upper()
         if side not in ("BUY", "SELL"):
-            raise OrderRejected("side must be 'BUY' or 'SELL'")
+            raise ValueError("side must be 'BUY' or 'SELL'")
 
         qty = self._coerce_qty(raw.get("qty"))
         price = raw.get("price")
@@ -352,33 +536,24 @@ class Run:
         limit_price = self._market_price(symbol, side) if is_market else self._coerce_price(price)
 
         if not self._within_limit(p, symbol, side, qty):
-            raise OrderRejected(
+            raise ValueError(
                 f"{side} {qty} {symbol} would breach the {POSITION_LIMIT} position limit "
                 f"(position {p.pos[symbol]:.0f}, resting orders count)"
             )
 
-        filled, resting, order_id = self._place(p, symbol, side, limit_price, qty, cancel_remainder=is_market)
-        return {
-            "order_id": order_id,
-            "item": symbol,
-            "side": side,
-            "type": "market" if is_market else "limit",
-            "filled": filled,
-            "resting": resting,
-            "position": p.pos[symbol],
-        }
+        self._submit(p, symbol, side, limit_price, qty, cancel_remainder=is_market)
+        p.orders_accepted += 1
 
-    # -- validation helpers ---------------------------------------------
     @staticmethod
     def _coerce_qty(value: Any) -> int:
         try:
             qty = int(value)
         except (TypeError, ValueError):
-            raise OrderRejected(f"qty must be a whole number, got {value!r}") from None
+            raise ValueError(f"qty must be a whole number, got {value!r}") from None
         if qty <= 0:
-            raise OrderRejected("qty must be positive")
+            raise ValueError("qty must be positive")
         if qty > POSITION_LIMIT:
-            raise OrderRejected(f"qty may not exceed the {POSITION_LIMIT} position limit")
+            raise ValueError(f"qty may not exceed the {POSITION_LIMIT} position limit")
         return qty
 
     @staticmethod
@@ -386,11 +561,11 @@ class Run:
         try:
             px = float(value)
         except (TypeError, ValueError):
-            raise OrderRejected(f"price must be a number, got {value!r}") from None
+            raise ValueError(f"price must be a number, got {value!r}") from None
         if px != px or px in (float("inf"), float("-inf")):
-            raise OrderRejected("price must be finite")
+            raise ValueError("price must be finite")
         if px <= 0 or px > MAX_PRICE:
-            raise OrderRejected(f"price must be between 0 and {MAX_PRICE:,.0f}")
+            raise ValueError(f"price must be between 0 and {MAX_PRICE:,.0f}")
         return Decimal(str(round(px, PRICE_DP)))
 
     def _market_price(self, symbol: str, side: str) -> Decimal:
@@ -399,7 +574,7 @@ class Run:
         bid, ask = self._touch(book)
         reference = ask if side == "BUY" else bid
         if reference is None:
-            raise OrderRejected(f"no {'offer' if side == 'BUY' else 'bid'} to hit in {symbol}")
+            raise ValueError(f"no {'offer' if side == 'BUY' else 'bid'} to hit in {symbol}")
         through = reference * (1.05 if side == "BUY" else 0.95)
         return Decimal(str(round(min(through, MAX_PRICE), PRICE_DP)))
 
@@ -411,8 +586,7 @@ class Run:
             return position + resting_buy + qty <= POSITION_LIMIT
         return position - resting_sell - qty >= -POSITION_LIMIT
 
-    # -- matching --------------------------------------------------------
-    def _place(
+    def _submit(
         self,
         p: Participant,
         symbol: str,
@@ -420,8 +594,7 @@ class Run:
         price: Decimal,
         qty: int,
         cancel_remainder: bool = False,
-    ) -> Tuple[float, float, str]:
-        """Add an order to the book, settle fills. Returns (filled, resting, id)."""
+    ) -> None:
         book = self.books[symbol]
         order = BookOrder(
             id=str(uuid.uuid4()),
@@ -432,13 +605,10 @@ class Run:
             orig_qty=Decimal(qty),
         )
         fills = book.add(order)
-        remainder = float(order.qty)
         if cancel_remainder and order.qty > 0:
             book.cancel(order.id, p.uid)
-            remainder = 0.0
         for fill in fills:
             self._settle(symbol, fill, taker_side=side)
-        return qty - remainder, remainder, order.id
 
     def _settle(self, symbol: str, fill: Dict[str, Any], taker_side: str) -> None:
         price = float(fill["price"])
@@ -469,33 +639,13 @@ class Run:
             "taker_side": taker_side,
         })
 
-    # -- book helpers ----------------------------------------------------
-    @staticmethod
-    def _touch(book: OrderBook) -> Tuple[Optional[float], Optional[float]]:
-        best_bid = max(book.bids.keys(), default=None)
-        best_ask = min(book.asks.keys(), default=None)
-        return (
-            float(best_bid) if best_bid is not None else None,
-            float(best_ask) if best_ask is not None else None,
-        )
-
-    @staticmethod
-    def _qty_at(side: Dict[Decimal, Any], price: Optional[float]) -> float:
-        if price is None:
-            return 0.0
-        dq = side.get(Decimal(str(price)))
-        return float(sum(o.qty for o in dq)) if dq else 0.0
-
-    @staticmethod
-    def _resting(book: OrderBook, uid: str) -> Tuple[float, float]:
-        """Live quantity a participant has resting on each side of one book."""
-        buy = sum(float(o.qty) for dq in book.bids.values() for o in dq if o.user_id == uid)
-        sell = sum(float(o.qty) for dq in book.asks.values() for o in dq if o.user_id == uid)
-        return buy, sell
-
     # -- house bots ------------------------------------------------------
     def _bot_quote(self) -> None:
-        """Re-post the market maker's ladder around its own lagging estimate."""
+        """Wipe and re-post the market maker's ladder.
+
+        The ladder is centred on the maker's own lagging, noisy estimate of
+        fair value, tilted against whatever inventory it is carrying.
+        """
         bot = self.participants[MM_BOT_ID]
         for symbol, item in self.items.items():
             book = self.books[symbol]
@@ -515,7 +665,7 @@ class Run:
                     if not self._within_limit(bot, symbol, side, qty):
                         continue
                     price = self._coerce_price(centre * (1 + sign * offset))
-                    self._place(bot, symbol, side, price, qty)
+                    self._submit(bot, symbol, side, price, qty)
 
     def _bot_flow(self) -> None:
         """Occasional liquidity-taking prints, tilted toward the mispricing."""
@@ -537,12 +687,35 @@ class Run:
                 continue
             try:
                 price = self._market_price(symbol, side)
-            except OrderRejected:
+            except ValueError:
                 continue
-            self._place(bot, symbol, side, price, qty, cancel_remainder=True)
+            self._submit(bot, symbol, side, price, qty, cancel_remainder=True)
 
-    # -- views -----------------------------------------------------------
-    def market_snapshot(self, reveal_fair: bool = False) -> List[Dict[str, Any]]:
+    # -- reporting -------------------------------------------------------
+    def leaderboard(self) -> List[Dict[str, Any]]:
+        fair = {s: item.fair for s, item in self.items.items()}
+        rows = []
+        for p in self.participants.values():
+            rows.append({
+                "user_id": p.uid,
+                "username": p.name,
+                "is_bot": p.is_bot,
+                "status": "bot" if p.is_bot else p.status,
+                "pnl": round(p.pnl(fair), 2),
+                "cash": round(p.cash, 2),
+                "fills": p.fills,
+                "volume": round(p.volume, 0),
+                "orders_accepted": p.orders_accepted,
+                "orders_rejected": p.orders_rejected,
+                "positions": {s: round(p.pos[s], 0) for s in ITEM_SYMBOLS},
+                "error": p.error,
+            })
+        rows.sort(key=lambda r: r["pnl"], reverse=True)
+        for rank, row in enumerate(rows, start=1):
+            row["rank"] = rank
+        return rows
+
+    def market_view(self, reveal_fair: bool = False) -> List[Dict[str, Any]]:
         out = []
         for symbol in ITEM_SYMBOLS:
             item = self.items[symbol]
@@ -556,7 +729,6 @@ class Run:
                 "bid_qty": self._qty_at(book.bids, bid),
                 "ask_qty": self._qty_at(book.asks, ask),
                 "mid": None if bid is None or ask is None else round((bid + ask) / 2, PRICE_DP),
-                "spread": None if bid is None or ask is None else round(ask - bid, PRICE_DP),
                 "last": item.last,
                 "open": item.open_price,
             }
@@ -566,15 +738,14 @@ class Run:
         return out
 
     def player_view(self, uid: str) -> Optional[Dict[str, Any]]:
-        p = self.member(uid)
-        if p is None:
+        p = self.participants.get(uid)
+        if p is None or p.is_bot:
             return None
         fair = {s: item.fair for s, item in self.items.items()}
-        open_orders = {}
-        for symbol in ITEM_SYMBOLS:
-            rb, rs = self._resting(self.books[symbol], uid)
-            open_orders[symbol] = {"buy": rb, "sell": rs}
         return {
+            "status": p.status,
+            "error": p.error,
+            "has_code": bool(p.code),
             "cash": round(p.cash, 2),
             "pnl": round(p.pnl(fair), 2),
             "fills": p.fills,
@@ -582,31 +753,8 @@ class Run:
             "orders_rejected": p.orders_rejected,
             "last_reject": p.last_reject,
             "positions": {s: round(p.pos[s], 0) for s in ITEM_SYMBOLS},
-            "open_orders": open_orders,
+            "logs": list(p.logs)[-60:],
         }
-
-    def leaderboard(self) -> List[Dict[str, Any]]:
-        fair = {s: item.fair for s, item in self.items.items()}
-        rows = []
-        now = time.monotonic()
-        for p in self.participants.values():
-            rows.append({
-                "user_id": p.uid,
-                "username": p.name,
-                "is_bot": p.is_bot,
-                "pnl": round(p.pnl(fair), 2),
-                "cash": round(p.cash, 2),
-                "fills": p.fills,
-                "volume": round(p.volume, 0),
-                "orders_accepted": p.orders_accepted,
-                "orders_rejected": p.orders_rejected,
-                "positions": {s: round(p.pos[s], 0) for s in ITEM_SYMBOLS},
-                "connected": (not p.is_bot) and (now - p.last_seen < 10.0),
-            })
-        rows.sort(key=lambda r: r["pnl"], reverse=True)
-        for rank, row in enumerate(rows, start=1):
-            row["rank"] = rank
-        return rows
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -626,7 +774,7 @@ def _new_join_code() -> str:
 
 def create_run(name: str, creator_id: str, seed: Optional[int] = None) -> Run:
     run_id = str(uuid.uuid4())
-    run = Run(run_id, _new_join_code(), name or "Market Simulation Py", creator_id, seed=seed)
+    run = Run(run_id, _new_join_code(), name or "SWE Prep", creator_id, seed=seed)
     _runs[run_id] = run
     _prune()
     return run

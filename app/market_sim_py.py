@@ -1,32 +1,40 @@
 """
-Market Simulation Py — HTTP routes.
-===================================
+Market Simulation Py — HTTP order gateway.
+==========================================
 
-Thin layer over :mod:`app.algo_engine`: pages, lobby management, strategy
-submission and the polled state endpoint that drives the simulation forward.
+The public face of the client-side algo game. Players run their strategy on
+their own machine (see ``client/algo_client.py``) and reach the market only
+through these endpoints:
 
-Ticks are advanced from ``GET /market-sim-py/run/{id}/state`` rather than a
-background task, because Cloud Run throttles the CPU between requests and
-background loops stall there.  The front end polls once a second while a run is
-live, and :meth:`Run.advance` replays whatever the clock says is due — so a run
-stays correct even if every browser goes away for a while.
+* ``POST /run/{id}/orders``  — submit up to a batch of orders, matched on
+  arrival; rate-limited to ``ORDER_RATE_PER_SEC`` per user.
+* ``POST /run/{id}/cancel``  — pull resting orders.
+* ``GET  /run/{id}/market``  — the market snapshot a bot polls each loop.
+* ``GET  /run/{id}/token``   — mint the bearer token a client authenticates with.
+
+No player code runs on the server, so there is no sandbox — the gateway only
+ever validates and matches orders. The market's heartbeat (fair-value walk +
+house bots) is advanced request-driven from the poll endpoints, the same way
+the rest of AlphaBook copes with Cloud Run's between-request CPU throttling.
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import logging
+import time
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
 from app import algo_engine as engine
 from app import db as db_module
-from app.algo_sandbox import SandboxError, StrategyTimeout, check_strategy
-from app.auth import current_user
+from app.algo_engine import OrderRejected
+from app.algo_ratelimit import RateLimiter
+from app.auth import create_token, current_user
 from app.models import User
 
 log = logging.getLogger("uvicorn.error")
@@ -36,6 +44,9 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 RESULTS_COLLECTION = "algo_sim_runs"
+
+# One shared limiter: orders cost tokens, reads do not.
+_order_limiter = RateLimiter(rate=engine.ORDER_RATE_PER_SEC, burst=engine.ORDER_BURST)
 
 # Runs whose results have already been written to Firestore.
 _persisted: set[str] = set()
@@ -50,8 +61,20 @@ class JoinRequest(BaseModel):
     join_code: str
 
 
-class CodeRequest(BaseModel):
-    code: str
+class OrderIn(BaseModel):
+    item: Optional[str] = None
+    side: Optional[str] = None
+    qty: Optional[float] = None
+    price: Optional[float] = None
+    action: Optional[str] = None
+
+
+class OrdersRequest(BaseModel):
+    orders: List[OrderIn] = Field(default_factory=list)
+
+
+class CancelRequest(BaseModel):
+    item: Optional[str] = None
 
 
 # ---- Helpers ----
@@ -63,14 +86,21 @@ def _require_run(run_id: str) -> engine.Run:
 
 
 def _require_member(run: engine.Run, user: User) -> engine.Participant:
-    p = run.participants.get(str(user.id))
-    if p is None or p.is_bot:
+    p = run.member(str(user.id))
+    if p is None:
         raise HTTPException(status_code=403, detail="You have not joined this run")
     return p
 
 
 def _can_control(run: engine.Run, user: User) -> bool:
     return user.is_admin or run.creator_id == str(user.id)
+
+
+async def _advance_and_maybe_persist(run: engine.Run) -> None:
+    was_running = run.status == "running"
+    run.advance()
+    if was_running and run.status == "finished":
+        await _persist_results(run)
 
 
 async def _persist_results(run: engine.Run) -> None:
@@ -99,51 +129,43 @@ async def _persist_results(run: engine.Run) -> None:
 # ---- Pages ----
 @router.get("", include_in_schema=False)
 async def rules_page(request: Request):
-    """Rules, strategy editor and lobby entry point."""
+    """Rules, lobby entry point, and how to connect a bot."""
     return templates.TemplateResponse("market_sim_py_rules.html", {
         "request": request,
         "app_name": "AlphaBook",
         "position_limit": engine.POSITION_LIMIT,
         "run_minutes": engine.RUN_SECONDS // 60,
-        "tick_seconds": engine.TICK_SECONDS,
-        "total_ticks": engine.TOTAL_TICKS,
-        "items": [
-            {"symbol": s["symbol"], "name": s["name"]} for s in engine.ITEM_SPECS
-        ],
+        "order_rate": engine.ORDER_RATE_PER_SEC,
+        "items": [{"symbol": s["symbol"], "name": s["name"]} for s in engine.ITEM_SPECS],
     })
+
+
+@router.get("/client.py", include_in_schema=False)
+async def download_client():
+    """Serve the strategy client so players can grab it from the run page."""
+    path = BASE_DIR.parent / "client" / "algo_client.py"
+    try:
+        source = path.read_text()
+    except OSError:
+        raise HTTPException(status_code=404, detail="Client not found") from None
+    return Response(
+        content=source,
+        media_type="text/x-python",
+        headers={"Content-Disposition": 'attachment; filename="algo_client.py"'},
+    )
 
 
 @router.get("/run/{run_id}", include_in_schema=False)
 async def run_page(run_id: str, request: Request):
-    """Live run page: leaderboard, market, and your strategy's output."""
+    """Live run page: leaderboard, market, and connect-your-bot panel."""
     _require_run(run_id)
     return templates.TemplateResponse("market_sim_py_game.html", {
         "request": request,
         "app_name": "AlphaBook",
         "run_id": run_id,
         "position_limit": engine.POSITION_LIMIT,
+        "order_rate": engine.ORDER_RATE_PER_SEC,
     })
-
-
-# ---- Strategy authoring ----
-@router.get("/starter")
-async def starter_code():
-    """The template new players start from."""
-    return {
-        "code": engine.STARTER_CODE,
-        "position_limit": engine.POSITION_LIMIT,
-        "items": engine.ITEM_SYMBOLS,
-        "tick_seconds": engine.TICK_SECONDS,
-        "run_seconds": engine.RUN_SECONDS,
-        "max_orders_per_tick": engine.MAX_ORDERS_PER_TICK,
-    }
-
-
-@router.post("/check")
-async def check_code(req: CodeRequest, user: User = Depends(current_user)):
-    """Compile a strategy against the sandbox without joining a run."""
-    problems = check_strategy(req.code or "")
-    return {"ok": not problems, "problems": problems}
 
 
 # ---- Lobby ----
@@ -157,7 +179,6 @@ async def create_run(req: CreateRunRequest, user: User = Depends(current_user)):
 
 @router.get("/open")
 async def list_open_runs(user: User = Depends(current_user)):
-    """Runs currently in a lobby or mid-flight, so players can find one."""
     return {
         "runs": [
             {
@@ -183,30 +204,6 @@ async def join_run(req: JoinRequest, user: User = Depends(current_user)):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from None
     return {"ok": True, "run_id": run.id}
-
-
-@router.post("/run/{run_id}/strategy")
-async def submit_strategy(run_id: str, req: CodeRequest, user: User = Depends(current_user)):
-    """Attach a strategy to your seat. Validated now so errors surface early."""
-    run = _require_run(run_id)
-    _require_member(run, user)
-    try:
-        run.set_code(str(user.id), req.code or "")
-    except (SandboxError, StrategyTimeout) as e:
-        raise HTTPException(status_code=400, detail=str(e)) from None
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from None
-    except Exception as e:  # noqa: BLE001 - author's own error, reported as text
-        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from None
-    return {"ok": True}
-
-
-@router.get("/run/{run_id}/strategy")
-async def my_strategy(run_id: str, user: User = Depends(current_user)):
-    """Your currently attached code, so the editor can reload it."""
-    run = _require_run(run_id)
-    p = _require_member(run, user)
-    return {"code": p.code, "status": p.status, "error": p.error}
 
 
 @router.post("/run/{run_id}/start")
@@ -235,17 +232,96 @@ async def stop_run(run_id: str, user: User = Depends(current_user)):
     return {"ok": True, "status": run.status}
 
 
-# ---- Live state (this is what drives the simulation) ----
+# ---- The order gateway (what a player's client talks to) ----
+@router.get("/run/{run_id}/token")
+async def issue_token(run_id: str, user: User = Depends(current_user)):
+    """Mint a bearer token the player's client authenticates with.
+
+    Equivalent capability to the site session, but explicit: the player copies
+    this into their bot so it can trade on their behalf.
+    """
+    _require_run(run_id)
+    return {
+        "token": create_token(str(user.id)),
+        "run_id": run_id,
+        "username": user.username,
+        "order_rate": engine.ORDER_RATE_PER_SEC,
+        "position_limit": engine.POSITION_LIMIT,
+        "items": engine.ITEM_SYMBOLS,
+    }
+
+
+@router.get("/run/{run_id}/market")
+async def market(run_id: str, user: User = Depends(current_user)):
+    """The market snapshot a bot polls each loop. Advances the heartbeat.
+
+    Reads aren't rate-limited (they're cheap), but they do drive the clock, so
+    even a spectator's polling keeps the market alive.
+    """
+    run = _require_run(run_id)
+    await _advance_and_maybe_persist(run)
+    finished = run.status == "finished"
+    p = run.member(str(user.id))
+    if p is not None:
+        p.last_seen = time.monotonic()
+    return {
+        "status": run.status,
+        "tick": run.tick,
+        "total_ticks": engine.TOTAL_TICKS,
+        "seconds_left": round(run.seconds_left, 1),
+        "position_limit": engine.POSITION_LIMIT,
+        "items": engine.ITEM_SYMBOLS,
+        "market": run.market_snapshot(reveal_fair=finished),
+        "me": run.player_view(str(user.id)),
+    }
+
+
+@router.post("/run/{run_id}/orders")
+async def submit_orders(run_id: str, req: OrdersRequest, user: User = Depends(current_user)):
+    """Submit a batch of orders. Each costs one token; the batch is matched on
+    arrival. Orders beyond the current token allowance come back marked
+    ``rate_limited`` rather than applied."""
+    run = _require_run(run_id)
+    _require_member(run, user)
+    await _advance_and_maybe_persist(run)
+
+    orders = [o.model_dump(exclude_none=True) for o in req.orders]
+    if not orders:
+        raise HTTPException(status_code=400, detail="No orders supplied")
+
+    allowance = _order_limiter.take(str(user.id), min(len(orders), engine.MAX_ORDERS_PER_REQUEST))
+    try:
+        result = run.submit_orders(str(user.id), orders, allowance)
+    except OrderRejected as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+
+    result["status"] = run.status
+    result["seconds_left"] = round(run.seconds_left, 1)
+    if allowance < min(len(orders), engine.MAX_ORDERS_PER_REQUEST):
+        result["retry_after"] = round(_order_limiter.retry_after(str(user.id)), 3)
+    return result
+
+
+@router.post("/run/{run_id}/cancel")
+async def cancel_orders(run_id: str, req: CancelRequest, user: User = Depends(current_user)):
+    """Cancel resting orders (one item, or all). Costs one token."""
+    run = _require_run(run_id)
+    _require_member(run, user)
+    await _advance_and_maybe_persist(run)
+    if not _order_limiter.allow(str(user.id)):
+        raise HTTPException(status_code=429, detail=f"Rate limited — max {engine.ORDER_RATE_PER_SEC}/s")
+    try:
+        removed = run.cancel(str(user.id), req.item)
+    except OrderRejected as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"ok": True, "cancelled": removed}
+
+
+# ---- Spectator / leaderboard state (the web run page polls this) ----
 @router.get("/run/{run_id}/state")
 async def run_state(run_id: str, user: User = Depends(current_user)):
     run = _require_run(run_id)
-    uid = str(user.id)
-
-    was_running = run.status == "running"
-    ticks = run.advance()
-    if was_running and run.status == "finished":
-        await _persist_results(run)
-
+    await _advance_and_maybe_persist(run)
     finished = run.status == "finished"
     return {
         "run_id": run.id,
@@ -255,23 +331,17 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
         "tick": run.tick,
         "total_ticks": engine.TOTAL_TICKS,
         "seconds_left": round(run.seconds_left, 1),
-        "ticks_advanced": ticks,
         "can_control": _can_control(run, user),
         "position_limit": engine.POSITION_LIMIT,
         "players": [
-            {
-                "user_id": p.uid,
-                "username": p.name,
-                "status": p.status,
-                "has_code": bool(p.code),
-            }
+            {"user_id": p.uid, "username": p.name,
+             "connected": (time.monotonic() - p.last_seen) < 10.0}
             for p in run.players
         ],
-        # Fair values stay hidden while the contest is live.
-        "market": run.market_view(reveal_fair=finished),
+        "market": run.market_snapshot(reveal_fair=finished),
         "leaderboard": run.leaderboard(),
         "tape": list(run.tape)[:25],
-        "me": run.player_view(uid),
+        "me": run.player_view(str(user.id)),
     }
 
 

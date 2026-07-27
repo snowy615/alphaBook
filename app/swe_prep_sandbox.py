@@ -2,7 +2,7 @@
 Restricted Python sandbox for user-submitted trading strategies.
 ===============================================================
 
-Students upload a strategy for the "Market Simulation Py" game and the engine
+Students upload a strategy for the "SWE Prep" game and the engine
 calls it once per tick.  That code is untrusted, so it never reaches a plain
 ``exec``.  Three layers stand between a submission and the interpreter:
 

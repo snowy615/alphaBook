@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Market Simulation Py - {{ app_name }}</title>
+  <title>SWE Prep - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
@@ -15,7 +15,7 @@
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Market Simulation Py</div>
+          <div class="subtitle">SWE Prep</div>
         </div>
       </a>
     </div>
@@ -29,12 +29,12 @@
 
   <div class="container">
     <div class="msp-hero">
-      <h2>Write a trading bot. Run it on your machine. See who wins.</h2>
+      <h2>SWE Prep — write Python in the browser, run it against a live market.</h2>
       <p>
-        You write a strategy in Python (or any language) and run it on your own computer. It connects to a live
-        <strong>{{ run_minutes }}-minute</strong> market over our API, and every bot — plus two house bots — trades the
-        same order book. Orders match the instant they arrive, just like a real exchange. Best mark-to-market P&amp;L at
-        the bell takes it.
+        A coding sandbox for interview practice: you write a Python strategy in the editor and the server runs it
+        safely for <strong>{{ run_minutes }} minutes</strong>, calling it once every <strong>{{ tick_seconds }}s</strong>
+        while two house bots trade the same books. No setup, no installs — just write code, submit, and watch it run.
+        A hands-on way to sharpen Python and algorithmic thinking under a clock.
       </p>
     </div>
 
@@ -79,28 +79,6 @@
 
     <div class="card msp-panel">
       <div class="head">
-        <h3>How it works</h3>
-      </div>
-      <div class="msp-panel-body msp-docs">
-        <p>
-          Nothing you write runs on our servers — your strategy runs on <em>your</em> machine and only ever sends us
-          orders. That means you can use any language, any library, and any amount of compute you like; the server is
-          just the exchange.
-        </p>
-        <ol class="msp-steps">
-          <li>Join or create a run. On the run page, open <strong>Connect your bot</strong>.</li>
-          <li>Download the ready-made Python client (<code>algo_client.py</code>) — plain standard-library Python, no
-            installs — and paste in your run id and API token.</li>
-          <li>Run it: <code>python algo_client.py</code>. It polls the market, calls your <code>on_tick</code>, and
-            posts the orders you return.</li>
-          <li>Edit <code>on_tick</code>, re-run, iterate. Prefer another language? Hit the same REST endpoints
-            yourself.</li>
-        </ol>
-      </div>
-    </div>
-
-    <div class="card msp-panel">
-      <div class="head">
         <h3>The items</h3>
         <span class="msp-muted">position limit {{ position_limit }} each, long or short</span>
       </div>
@@ -123,36 +101,44 @@
 
     <div class="card msp-panel">
       <div class="head">
-        <h3>The API</h3>
+        <h3>Writing a strategy</h3>
       </div>
       <div class="msp-panel-body msp-docs">
-        <p>The client wraps these, but here they are if you want to roll your own. Authenticate with
-          <code>Authorization: Bearer &lt;token&gt;</code> from the Connect panel.</p>
-        <pre class="msp-pre">GET  /market-sim-py/run/{id}/market      # snapshot: books, your position, pnl, seconds_left
-POST /market-sim-py/run/{id}/orders      # {"orders": [ ... ]}  — matched on arrival
-POST /market-sim-py/run/{id}/cancel      # {"item": "WIDGET"}   — or {} for all
-GET  /market-sim-py/run/{id}/token       # your bearer token</pre>
+        <p>Define <code>on_tick(ctx)</code>. It runs once per tick and returns a list of orders. An
+          <code>on_start(ctx)</code> function is optional and runs once before the first tick.</p>
 
-        <h4>An order looks like</h4>
-        <pre class="msp-pre">{"item": "WIDGET", "side": "BUY",  "price": 99.95, "qty": 10}   # resting limit order
+        <h4>What you get in <code>ctx</code></h4>
+        <pre class="msp-pre">ctx["tick"]           # 0, 1, 2, … up to {{ total_ticks }}
+ctx["seconds_left"]   # time remaining in the run
+ctx["items"]          # ["WIDGET", "GADGET", "GIZMO", "DOODAD"]
+ctx["limit"]          # {{ position_limit }}
+ctx["market"][item]   # {"bid", "ask", "bid_qty", "ask_qty", "mid", "spread", "last"}
+                      #   any price may be None if that side of the book is empty
+ctx["position"][item] # your signed position, negative is short
+ctx["open_orders"][item]  # {"buy": qty, "sell": qty} still resting
+ctx["cash"]           # cash from your fills so far
+ctx["pnl"]            # cash + position marked at fair value
+ctx["memory"]         # a dict that survives between ticks — put your state here</pre>
+
+        <h4>What you return</h4>
+        <pre class="msp-pre">{"item": "WIDGET", "side": "BUY", "price": 99.95, "qty": 10}   # resting limit order
 {"item": "WIDGET", "side": "SELL", "qty": 10}                  # market order, remainder pulled
 {"action": "cancel_all"}                                        # pull all your resting orders
 {"action": "cancel_all", "item": "WIDGET"}                      # pull one item's orders</pre>
+        <p class="msp-muted">Orders rest until filled or cancelled, so most strategies open the tick with a
+          <code>cancel_all</code> and re-quote. Up to 20 orders per tick.</p>
 
-        <h4>The market snapshot gives you</h4>
-        <pre class="msp-pre">market[item] = {"bid", "ask", "bid_qty", "ask_qty", "mid", "spread", "last"}
-             # any price may be null if that side of the book is empty
-me = {"positions", "open_orders", "cash", "pnl", "fills", "last_reject"}</pre>
-
-        <h4>The rules the exchange enforces</h4>
+        <h4>The rules your code runs under</h4>
         <ul class="msp-rules">
-          <li><strong>Position limit {{ position_limit }}</strong> per item, long or short. Resting orders count — an
-            order that <em>could</em> breach the limit if fully filled is rejected outright.</li>
-          <li><strong>Rate limit {{ order_rate }} orders/second</strong> per player (with a small burst). Send more and
-            the extra come back marked <code>rate_limited</code> rather than applied — so a fast connection can't turn
-            the game into a latency race. The client paces itself for you.</li>
-          <li><strong>Matched on arrival.</strong> Orders hit the live book the moment they land, first-come-first-served
-            within the rate limit.</li>
+          <li><strong>Position limit {{ position_limit }}</strong> per item, long or short. Resting orders count toward
+            it — an order that <em>could</em> breach the limit if fully filled is rejected outright.</li>
+          <li><strong>No imports.</strong> <code>math</code>, <code>stats</code> (<code>mean</code>,
+            <code>median</code>, <code>stdev</code>, <code>clamp</code>) and <code>random</code> are already in scope.
+          </li>
+          <li><strong>No file, network or system access</strong>, no <code>class</code>, no <code>eval</code>, no
+            <code>**</code> (use <code>pow(a, b)</code>). It is a computation-only sandbox.</li>
+          <li><strong>80ms per tick.</strong> Blow the budget three times and you are disqualified; raise 25 errors and
+            the same happens. <code>print()</code> goes to your own log on the run page.</li>
         </ul>
 
         <h4>The house bots</h4>
@@ -167,10 +153,10 @@ me = {"positions", "open_orders", "cash", "pnl", "fills", "last_reject"}</pre>
   </div>
 
   <div class="footer">
-    <p>{{ app_name }} • Market Simulation Py</p>
+    <p>{{ app_name }} • SWE Prep</p>
   </div>
 
-  <script src="/static/market_sim_py.js"></script>
+  <script src="/static/swe_prep.js"></script>
 </body>
 
 </html>

@@ -18,7 +18,8 @@ We use it to run live trading bootcamps and competitions for the Oxford student 
 ## The platform
 
 - **Market Simulation** — trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live limit order book anchored to real prices; an automated market-maker bot keeps the book liquid
-- **Market Simulation Py** — write a Python strategy, submit it, and watch it trade four synthetic items against everyone else's bots for ten minutes; sandboxed execution, 1000-lot position limits, P&L marked at hidden fair value
+- **Market Simulation Py** — write a trading bot, run it on your own machine, and trade four synthetic items over a rate-limited order API against everyone else's bots for ten minutes; no code runs on the server, 1000-lot position limits, P&L marked at hidden fair value
+- **SWE Prep** — the same market, but you write Python in the browser and the server runs it in a sandbox — a no-setup coding/interview-practice mode
 - **5Os** — estimate the five statistics (min, quartiles, median, max) of a hidden hand of cards; best calibration wins
 - **Headline Trading** — news hits the wire, prices move; trade a futures market on the story before time runs out
 - **Poker Auction** — sealed-bid second-price auctions for cards, then trade hands in a post-auction market
@@ -53,7 +54,7 @@ We are seeking grant funding to turn the simulator into an adaptive teaching pla
 
 Key modules in `app/`: `order_book.py` (matching engine: price-time priority, partial fills), `market_maker.py` (two-sided quoting with realistic depth and delayed sweeps), `market_data.py` (real quotes blended with synthetic ticks), `fiveos.py` / `headline.py` / `poker_auction.py` / `mental_math.py` (game engines), `admin.py` (games, news, leaderboard, users). Tests live in `tests/`; CI runs ruff + pytest on every push.
 
-Market Simulation Py adds `algo_sandbox.py` and `algo_engine.py`. The sandbox runs submitted strategies under an AST whitelist (no imports, no attribute escapes), a stripped `__builtins__`, and a trace-based deadline that kills runaway loops — it is a strong barrier against code execution and a best-effort one against denial of service, so run it on an instance you are willing to lose. The engine keeps its own books and fictional items, entirely separate from the live stock market, and advances on request like the rest of the simulation.
+**Market Simulation Py** (`algo_engine.py` + `market_sim_py.py`) is client-side: players run their bot on their own machine and reach the market only through an authenticated, rate-limited order gateway (`algo_ratelimit.py` caps it at ~10 orders/sec). No player code runs on the server, so there is nothing to sandbox — the engine only validates and matches orders on arrival. **SWE Prep** (`swe_prep_engine.py` + `swe_prep_sandbox.py`) is the server-run sibling for coding practice: submitted Python runs in a sandbox — an AST whitelist (no imports, no attribute escapes), a stripped `__builtins__`, and a trace-based deadline that kills runaway loops — which is safe for trusted audiences but not the open internet, which is exactly why Market Simulation Py is client-side. Both keep their own books and fictional items, separate from the live stock market. Full write-up — architecture, the API, and a strategy-writing guide with worked examples — in **[docs/market_sim_py.md](docs/market_sim_py.md)**.
 
 ## Run it locally
 

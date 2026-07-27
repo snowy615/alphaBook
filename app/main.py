@@ -888,3 +888,6 @@ app.include_router(mental_math.router)
 from app import market_sim_py
 app.include_router(market_sim_py.router)
 
+from app import swe_prep
+app.include_router(swe_prep.router)
+

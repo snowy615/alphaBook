@@ -88,6 +88,17 @@
     });
     grid.appendChild(algoCard);
 
+    // 7) SWE Prep card (in-browser Python editor, sandboxed)
+    const sweCard = createCard({
+      icon: "💻",
+      name: "SWE Prep",
+      subtitle: "Code Practice",
+      accentFrom: "#c3aefc",
+      accentTo: "#8e6cf0",
+      onClick: () => navigate("/swe-prep"),
+    });
+    grid.appendChild(sweCard);
+
 
     // 3) Custom games (each as its own card)
     const otherGames = groups.other || [];

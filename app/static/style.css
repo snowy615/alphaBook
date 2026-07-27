@@ -3639,6 +3639,86 @@ body {
   background: var(--red);
 }
 
+/* -- connect-your-bot panel -- */
+.msp-steps {
+  margin: 0 0 14px;
+  padding-left: 20px;
+  line-height: 1.7;
+}
+
+.msp-dl {
+  color: var(--brand);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 600;
+}
+
+.msp-creds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.msp-cred {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.msp-cred-key {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.msp-cred-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  background: rgba(0, 0, 0, .32);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.msp-token {
+  letter-spacing: .1em;
+}
+
+.msp-copy,
+.msp-cred .btn {
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
+.msp-run-cmd {
+  margin: 0 0 8px;
+  line-height: 1.6;
+}
+
+.msp-run-cmd code,
+.msp-cred-val code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.msp-token-warn {
+  line-height: 1.6;
+  margin: 0;
+}
+
+.msp-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(46, 204, 113, .6);
+}
+
 /* -- strategy log -- */
 .msp-log {
   max-height: 280px;

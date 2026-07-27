@@ -4,24 +4,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Market Simulation Py - {{ app_name }}</title>
+  <title>SWE Prep - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
 <body>
   <div class="topbar">
     <div class="brand">
-      <a href="/market-sim-py" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+      <a href="/swe-prep" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Market Simulation Py</div>
+          <div class="subtitle">SWE Prep</div>
         </div>
       </a>
     </div>
     <div class="actions">
       <span id="runClock" class="msp-clock hidden">10:00</span>
-      <a href="/market-sim-py" class="btn ghost">Rules</a>
+      <a href="/swe-prep" class="btn ghost">Rules</a>
       <a href="/profile" class="btn ghost">Profile</a>
       <span id="userName">user</span>
       <form method="post" action="/logout" style="display:inline"><button type="submit"
@@ -45,52 +45,26 @@
 
     <div id="msg" class="msp-msg hidden"></div>
 
-    <!-- ── Connect-your-bot panel (reused in lobby and live) ──────────── -->
-    <template id="connectTemplate">
-      <div class="card msp-panel msp-connect">
-        <div class="head">
-          <h3>Connect your bot</h3>
-          <span class="msp-muted">runs on your machine</span>
-        </div>
-        <div class="msp-panel-body">
-          <p class="msp-muted">
-            Your strategy runs on your own computer and trades this run over the API. Nothing you write is uploaded —
-            the server only ever receives your orders.
-          </p>
-          <ol class="msp-steps">
-            <li>Download the client: <a class="msp-dl" href="/market-sim-py/client.py" download="algo_client.py">algo_client.py</a>
-              <span class="msp-muted">(plain Python, no installs)</span></li>
-            <li>Paste these three values into the top of the file — or set them as environment variables:</li>
-          </ol>
-          <div class="msp-creds">
-            <div class="msp-cred">
-              <span class="msp-cred-key">ALPHABOOK_BASE</span>
-              <code class="msp-cred-val js-base"></code>
-              <button class="btn ghost msp-copy" data-copy="js-base">Copy</button>
-            </div>
-            <div class="msp-cred">
-              <span class="msp-cred-key">RUN_ID</span>
-              <code class="msp-cred-val js-run"></code>
-              <button class="btn ghost msp-copy" data-copy="js-run">Copy</button>
-            </div>
-            <div class="msp-cred">
-              <span class="msp-cred-key">TOKEN</span>
-              <code class="msp-cred-val msp-token js-token">••••••••••••••••</code>
-              <button class="btn ghost js-reveal">Reveal</button>
-              <button class="btn ghost msp-copy" data-copy="js-token">Copy</button>
-            </div>
-          </div>
-          <p class="msp-run-cmd">Then run <code>python algo_client.py</code> and edit <code>on_tick</code> to your heart's content.</p>
-          <p class="msp-muted msp-token-warn">Your token trades as you — keep it private. You may send up to
-            <strong>{{ order_rate }} orders/second</strong>; the limit is <strong>{{ position_limit }}</strong> per item.</p>
-        </div>
-      </div>
-    </template>
-
-    <!-- ── Lobby ──────────────────────────────────────────────────────── -->
+    <!-- ── Lobby: write and submit a strategy ─────────────────────────── -->
     <section id="lobbyView" class="hidden">
       <div class="msp-lobby-split">
-        <div id="lobbyConnect"></div>
+        <div class="card msp-panel msp-editor-card">
+          <div class="head">
+            <h3>Your strategy</h3>
+            <span id="codeStatus" class="msp-pill">not submitted</span>
+          </div>
+          <div class="msp-panel-body">
+            <textarea id="codeEditor" class="msp-editor" spellcheck="false" wrap="off"></textarea>
+            <div class="msp-editor-actions">
+              <button id="checkBtn" class="btn ghost">Check</button>
+              <button id="submitBtn" class="btn primary">Submit strategy</button>
+              <button id="resetBtn" class="btn ghost">Reset to starter</button>
+              <span class="msp-editor-hint">Tab indents · ⌘/Ctrl+Enter submits</span>
+            </div>
+            <div id="checkOut" class="msp-check hidden"></div>
+          </div>
+        </div>
+
         <div class="card msp-panel">
           <div class="head">
             <h3>Players</h3>
@@ -99,8 +73,8 @@
           <div class="msp-panel-body">
             <div id="playerList" class="msp-players"></div>
             <p class="msp-muted msp-lobby-note">
-              The run starts when the host starts it, then trades for ten minutes. You can connect your bot now or any
-              time during the run.
+              The run starts when the host starts it. Everyone's strategy is locked at that moment and runs for ten
+              minutes. Position limit is <strong>{{ position_limit }}</strong> per item.
             </p>
           </div>
         </div>
@@ -141,7 +115,15 @@
           </div>
         </div>
 
-        <div id="liveConnect"></div>
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Your strategy's output</h3>
+            <span class="msp-muted">print() and errors</span>
+          </div>
+          <div class="msp-panel-body msp-flush">
+            <div id="myLog" class="msp-log"></div>
+          </div>
+        </div>
 
         <div class="card msp-panel msp-tape-card">
           <div class="head">
@@ -156,14 +138,14 @@
   </div>
 
   <div class="footer">
-    <p>{{ app_name }} • Market Simulation Py</p>
+    <p>{{ app_name }} • SWE Prep</p>
   </div>
 
   <script>
     window.RUN_ID = "{{ run_id }}";
     window.POSITION_LIMIT = {{ position_limit }};
   </script>
-  <script src="/static/market_sim_py.js"></script>
+  <script src="/static/swe_prep.js"></script>
 </body>
 
 </html>

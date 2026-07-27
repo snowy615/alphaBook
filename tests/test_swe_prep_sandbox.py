@@ -1,4 +1,4 @@
-"""Tests for app.algo_sandbox — the restricted interpreter for player strategies.
+"""Tests for app.swe_prep_sandbox — the restricted interpreter for player strategies.
 
 The escape tests matter most: a submission that gets past these runs in the same
 process as the Firestore credentials, so each one pins down a route out that a
@@ -7,7 +7,7 @@ student (or an attacker with an account) would realistically reach for.
 
 import pytest
 
-from app.algo_sandbox import (
+from app.swe_prep_sandbox import (
     MAX_SOURCE_BYTES,
     SandboxError,
     StrategyTimeout,
