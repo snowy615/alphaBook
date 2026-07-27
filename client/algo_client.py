@@ -66,41 +66,66 @@ LOOP_SECONDS = 1.0
 #   ctx["cash"], ctx["pnl"]
 #   ctx["memory"]           -> a dict that PERSISTS between ticks; keep state here
 
-LOOKBACK = 20
+# This starter isn't clever — it's a tour of everything you can do, so you have
+# a working base to rip apart. Each tick it: CHECKS your account, MAKES a market
+# (quotes both sides), PLACES resting limit orders, and TAKES liquidity with a
+# market order when it's carrying too much inventory. Keep the total under ~10
+# orders per tick to stay inside the rate limit (1 cancel + 2 per item = 9).
+
+INVENTORY_TRIM = 100   # once |position| passes this, cross the spread to reduce
+QUOTE_SIZE = 15        # lots per side when making a market
+
+
+def check_account(ctx):
+    """CHECK — read and print your P&L, positions and resting orders."""
+    held = {k: int(v) for k, v in ctx["position"].items() if v}
+    resting = {
+        item: o for item, o in ctx["open_orders"].items()
+        if o.get("buy") or o.get("sell")
+    }
+    print(
+        f"t={ctx['tick']:>3} {ctx['seconds_left']:>4.0f}s | "
+        f"pnl={ctx['pnl']:>10.2f}  cash={ctx['cash']:>10.2f} | "
+        f"pos={held or 'flat'} | resting={resting or 'none'}"
+    )
 
 
 def on_tick(ctx):
-    """A simple mean-reversion example. Replace with your own idea."""
+    check_account(ctx)
+
+    # CANCEL — clear last tick's resting orders so we can re-quote fresh.
     orders = [{"action": "cancel_all"}]
-    history = ctx["memory"].setdefault("mids", {})
 
     for item in ctx["items"]:
         q = ctx["market"][item]
-        mid = q["mid"]
+        mid, bid, ask = q["mid"], q["bid"], q["ask"]
         if mid is None:
             continue
 
-        window = history.setdefault(item, [])
-        window.append(mid)
-        if len(window) > LOOKBACK:
-            window.pop(0)
-        if len(window) < 5:
-            continue
-
-        average = sum(window) / len(window)
-        edge = (average - mid) / mid              # positive => price looks cheap
         position = ctx["position"][item]
-        room = ctx["limit"] - abs(position)
-        if room < 10:
+        room = ctx["limit"] - abs(position)      # headroom before the limit
+        if room < QUOTE_SIZE:
             continue
 
-        size = max(5, min(50, int(abs(edge) * 40000)))
-        size = min(size, room)
+        # A spread ~10 bps wide (at least 2 cents), leaning against inventory so
+        # we naturally drift back toward flat.
+        half = max(mid * 0.001, 0.02)
+        skew = -position * (half * 0.02)
+        size = min(QUOTE_SIZE, room)
 
-        if edge > 0.0008:
-            orders.append({"item": item, "side": "BUY",  "price": round(q["bid"], 2), "qty": size})
-        elif edge < -0.0008:
-            orders.append({"item": item, "side": "SELL", "price": round(q["ask"], 2), "qty": size})
+        if position > INVENTORY_TRIM and ask is not None:
+            # TAKE — too long: cross the spread with a market SELL to cut risk,
+            # and keep a passive bid working to buy back cheaper.
+            orders.append({"item": item, "side": "SELL", "qty": 10})           # market order
+            orders.append({"item": item, "side": "BUY",  "price": round(mid - half + skew, 2), "qty": size})
+        elif position < -INVENTORY_TRIM and bid is not None:
+            # TAKE — too short: market BUY to cover, keep a passive ask working.
+            orders.append({"item": item, "side": "BUY",  "qty": 10})           # market order
+            orders.append({"item": item, "side": "SELL", "price": round(mid + half + skew, 2), "qty": size})
+        else:
+            # MAKE A MARKET — quote both sides with resting limit orders (PLACE).
+            orders.append({"item": item, "side": "BUY",  "price": round(mid - half + skew, 2), "qty": size})
+            orders.append({"item": item, "side": "SELL", "price": round(mid + half + skew, 2), "qty": size})
 
     return orders
 
@@ -200,11 +225,12 @@ def main():
 
         if orders:
             try:
+                # on_tick already printed the account line; here we only surface
+                # anything the exchange rejected (bad price, limit, rate limit…).
                 result = send_orders(orders)
                 rejects = [r for r in result.get("results", []) if not r.get("ok")]
-                note = f"  ({len(rejects)} rejected: {rejects[0]['error']})" if rejects else ""
-                print(f"t={ctx['tick']:>3}  pnl={result.get('pnl'):>10}  "
-                      f"sent {len(orders)}{note}")
+                if rejects:
+                    print(f"      ↳ {len(rejects)} rejected: {rejects[0]['error']}")
             except ApiError as e:
                 print(f"[orders] {e}")
 
