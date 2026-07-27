@@ -885,3 +885,6 @@ app.include_router(poker_auction.router)
 from app import mental_math
 app.include_router(mental_math.router)
 
+from app import market_sim_py
+app.include_router(market_sim_py.router)
+

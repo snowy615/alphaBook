@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Market Simulation Py - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/market-sim-py" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Market Simulation Py</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <span id="runClock" class="msp-clock hidden">10:00</span>
+      <a href="/market-sim-py" class="btn ghost">Rules</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+      <form method="post" action="/logout" style="display:inline"><button type="submit"
+          class="btn ghost">Logout</button></form>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="runHeader" class="msp-run-header">
+      <div>
+        <h2 id="runName">Loading…</h2>
+        <div class="msp-muted">Join code <span id="runCode" class="msp-code">------</span> ·
+          <span id="runStatus">connecting</span>
+        </div>
+      </div>
+      <div class="msp-run-actions">
+        <button id="startBtn" class="btn primary hidden">Start run</button>
+        <button id="stopBtn" class="btn ghost hidden">End early</button>
+      </div>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <!-- ── Lobby: write and submit a strategy ─────────────────────────── -->
+    <section id="lobbyView" class="hidden">
+      <div class="msp-lobby-split">
+        <div class="card msp-panel msp-editor-card">
+          <div class="head">
+            <h3>Your strategy</h3>
+            <span id="codeStatus" class="msp-pill">not submitted</span>
+          </div>
+          <div class="msp-panel-body">
+            <textarea id="codeEditor" class="msp-editor" spellcheck="false" wrap="off"></textarea>
+            <div class="msp-editor-actions">
+              <button id="checkBtn" class="btn ghost">Check</button>
+              <button id="submitBtn" class="btn primary">Submit strategy</button>
+              <button id="resetBtn" class="btn ghost">Reset to starter</button>
+              <span class="msp-editor-hint">Tab indents · ⌘/Ctrl+Enter submits</span>
+            </div>
+            <div id="checkOut" class="msp-check hidden"></div>
+          </div>
+        </div>
+
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Players</h3>
+            <span class="msp-muted" id="playerCount"></span>
+          </div>
+          <div class="msp-panel-body">
+            <div id="playerList" class="msp-players"></div>
+            <p class="msp-muted msp-lobby-note">
+              The run starts when the host starts it. Everyone's strategy is locked at that moment and runs for ten
+              minutes. Position limit is <strong>{{ position_limit }}</strong> per item.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Live / finished ───────────────────────────────────────────── -->
+    <section id="liveView" class="hidden">
+      <div class="msp-live-grid">
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Leaderboard</h3>
+            <span class="msp-muted">marked at fair value</span>
+          </div>
+          <div class="msp-panel-body msp-flush">
+            <table class="msp-table" id="leaderboard"></table>
+          </div>
+        </div>
+
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Market</h3>
+            <span class="msp-muted" id="fairNote">fair values revealed at the bell</span>
+          </div>
+          <div class="msp-panel-body msp-flush">
+            <table class="msp-table" id="marketTable"></table>
+          </div>
+        </div>
+
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Your book</h3>
+            <span class="msp-pill" id="myStatus">—</span>
+          </div>
+          <div class="msp-panel-body">
+            <div class="msp-stats" id="myStats"></div>
+            <table class="msp-table msp-positions" id="myPositions"></table>
+          </div>
+        </div>
+
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Your strategy's output</h3>
+            <span class="msp-muted">print() and errors</span>
+          </div>
+          <div class="msp-panel-body msp-flush">
+            <div id="myLog" class="msp-log"></div>
+          </div>
+        </div>
+
+        <div class="card msp-panel msp-tape-card">
+          <div class="head">
+            <h3>Prints</h3>
+          </div>
+          <div class="msp-panel-body msp-flush">
+            <table class="msp-table" id="tapeTable"></table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="footer">
+    <p>{{ app_name }} • Market Simulation Py</p>
+  </div>
+
+  <script>
+    window.RUN_ID = "{{ run_id }}";
+    window.POSITION_LIMIT = {{ position_limit }};
+  </script>
+  <script src="/static/market_sim_py.js"></script>
+</body>
+
+</html>

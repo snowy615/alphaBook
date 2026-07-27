@@ -18,6 +18,7 @@ We use it to run live trading bootcamps and competitions for the Oxford student 
 ## The platform
 
 - **Market Simulation** — trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live limit order book anchored to real prices; an automated market-maker bot keeps the book liquid
+- **Market Simulation Py** — write a Python strategy, submit it, and watch it trade four synthetic items against everyone else's bots for ten minutes; sandboxed execution, 1000-lot position limits, P&L marked at hidden fair value
 - **5Os** — estimate the five statistics (min, quartiles, median, max) of a hidden hand of cards; best calibration wins
 - **Headline Trading** — news hits the wire, prices move; trade a futures market on the story before time runs out
 - **Poker Auction** — sealed-bid second-price auctions for cards, then trade hands in a post-auction market
@@ -31,7 +32,6 @@ We are seeking grant funding to turn the simulator into an adaptive teaching pla
 
 - **LLM-driven agents** — market-maker bots that adapt their quoting to the student's skill level
 - **AI strategy coach** — post-session review of a student's fills: what a professional would have done differently
-- **Strategy API** — students write and backtest their own bots against the live book
 - **Session replay** — full order-flow recording so instructors can dissect a session tick by tick
 
 ## Team
@@ -52,6 +52,8 @@ We are seeking grant funding to turn the simulator into an adaptive teaching pla
 | Deploy | Docker → Cloud Run + Firebase Hosting |
 
 Key modules in `app/`: `order_book.py` (matching engine: price-time priority, partial fills), `market_maker.py` (two-sided quoting with realistic depth and delayed sweeps), `market_data.py` (real quotes blended with synthetic ticks), `fiveos.py` / `headline.py` / `poker_auction.py` / `mental_math.py` (game engines), `admin.py` (games, news, leaderboard, users). Tests live in `tests/`; CI runs ruff + pytest on every push.
+
+Market Simulation Py adds `algo_sandbox.py` and `algo_engine.py`. The sandbox runs submitted strategies under an AST whitelist (no imports, no attribute escapes), a stripped `__builtins__`, and a trace-based deadline that kills runaway loops — it is a strong barrier against code execution and a best-effort one against denial of service, so run it on an instance you are willing to lose. The engine keeps its own books and fictional items, entirely separate from the live stock market, and advances on request like the rest of the simulation.
 
 ## Run it locally
 

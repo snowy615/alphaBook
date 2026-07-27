@@ -77,6 +77,17 @@
     });
     grid.appendChild(mentalMathCard);
 
+    // 6) Market Simulation Py card
+    const algoCard = createCard({
+      icon: "🐍",
+      name: "Market Simulation Py",
+      subtitle: "Algo Trading",
+      accentFrom: "#7ee8fa",
+      accentTo: "#0984e3",
+      onClick: () => navigate("/market-sim-py"),
+    });
+    grid.appendChild(algoCard);
+
 
     // 3) Custom games (each as its own card)
     const otherGames = groups.other || [];
