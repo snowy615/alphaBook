@@ -10,11 +10,15 @@ the server only ever receives orders.
 
 Quick start
 -----------
-1. Open a run at https://alphabook.uk/market-sim-py and click "Connect a bot"
-   to get your RUN_ID and TOKEN.
-2. Fill them in below (or pass them as environment variables / CLI args).
-3. Run it:  ``python algo_client.py``
-4. Edit ``on_tick`` and re-run. That's the whole game.
+If you downloaded this from a run's "Connect your bot" panel, your run id and
+token are ALREADY filled in below — just run it:
+
+    python3 algo_client.py
+
+Then edit ``on_tick`` and re-run. That's the whole game.
+
+(Downloaded the blank version instead? Fill in RUN_ID and TOKEN below — from the
+Connect panel — or pass them as environment variables.)
 
 No third-party packages required — this uses only the Python standard library,
 so it runs anywhere Python 3.8+ is installed.

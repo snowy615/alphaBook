@@ -140,19 +140,45 @@ async def rules_page(request: Request):
     })
 
 
-@router.get("/client.py", include_in_schema=False)
-async def download_client():
-    """Serve the strategy client so players can grab it from the run page."""
+def _client_source() -> str:
     path = BASE_DIR.parent / "client" / "algo_client.py"
     try:
-        source = path.read_text()
+        return path.read_text()
     except OSError:
         raise HTTPException(status_code=404, detail="Client not found") from None
+
+
+def _request_origin(request: Request) -> str:
+    """The public origin this request arrived on (handles the Cloud Run proxy)."""
+    proto = request.headers.get("x-forwarded-proto") or request.url.scheme
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or request.url.netloc
+    return f"{proto}://{host}"
+
+
+def _as_download(source: str) -> Response:
     return Response(
         content=source,
         media_type="text/x-python",
         headers={"Content-Disposition": 'attachment; filename="algo_client.py"'},
     )
+
+
+@router.get("/client.py", include_in_schema=False)
+async def download_client():
+    """The blank client (placeholders) — for anyone grabbing it outside a run."""
+    return _as_download(_client_source())
+
+
+@router.get("/run/{run_id}/client.py", include_in_schema=False)
+async def download_run_client(run_id: str, request: Request, user: User = Depends(current_user)):
+    """The client with this run's id, the server origin, and a fresh token for
+    the signed-in user already filled in — download and run, no copy-paste."""
+    _require_run(run_id)
+    source = _client_source()
+    source = source.replace('"https://alphabook.uk")', f'"{_request_origin(request)}")', 1)
+    source = source.replace('"PASTE_YOUR_RUN_ID_HERE"', f'"{run_id}"')
+    source = source.replace('"PASTE_YOUR_TOKEN_HERE"', f'"{create_token(str(user.id))}"')
+    return _as_download(source)
 
 
 @router.get("/run/{run_id}", include_in_schema=False)

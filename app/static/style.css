@@ -3640,6 +3640,20 @@ body {
 }
 
 /* -- connect-your-bot panel -- */
+.msp-adv {
+  margin: 4px 0 14px;
+}
+
+.msp-adv summary {
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 0;
+}
+
+.msp-adv[open] summary {
+  margin-bottom: 10px;
+}
+
 .msp-steps {
   margin: 0 0 14px;
   padding-left: 20px;

@@ -58,31 +58,37 @@
             the server only ever receives your orders.
           </p>
           <ol class="msp-steps">
-            <li>Download the client: <a class="msp-dl" href="/market-sim-py/client.py" download="algo_client.py">algo_client.py</a>
-              <span class="msp-muted">(plain Python, no installs)</span></li>
-            <li>Paste these three values into the top of the file — or set them as environment variables:</li>
+            <li><a class="msp-dl" href="/market-sim-py/run/{{ run_id }}/client.py" download="algo_client.py">Download
+                your client</a> <span class="msp-muted">— your run id and token are already filled in</span></li>
+            <li>Open a terminal where it saved (usually <code>cd ~/Downloads</code>) and run:
+              <div class="msp-run-cmd"><code>python3 algo_client.py</code></div>
+            </li>
+            <li>That's it. Edit <code>on_tick</code> in the file and re-run to change your bot.</li>
           </ol>
-          <div class="msp-creds">
-            <div class="msp-cred">
-              <span class="msp-cred-key">ALPHABOOK_BASE</span>
-              <code class="msp-cred-val js-base"></code>
-              <button class="btn ghost msp-copy" data-copy="js-base">Copy</button>
+          <details class="msp-adv">
+            <summary class="msp-muted">Using another language, or want the raw values?</summary>
+            <div class="msp-creds">
+              <div class="msp-cred">
+                <span class="msp-cred-key">Base URL</span>
+                <code class="msp-cred-val js-base"></code>
+                <button class="btn ghost msp-copy" data-copy="js-base">Copy</button>
+              </div>
+              <div class="msp-cred">
+                <span class="msp-cred-key">RUN_ID</span>
+                <code class="msp-cred-val js-run"></code>
+                <button class="btn ghost msp-copy" data-copy="js-run">Copy</button>
+              </div>
+              <div class="msp-cred">
+                <span class="msp-cred-key">TOKEN</span>
+                <code class="msp-cred-val msp-token js-token">••••••••••••••••</code>
+                <button class="btn ghost js-reveal">Reveal</button>
+                <button class="btn ghost msp-copy" data-copy="js-token">Copy</button>
+              </div>
             </div>
-            <div class="msp-cred">
-              <span class="msp-cred-key">RUN_ID</span>
-              <code class="msp-cred-val js-run"></code>
-              <button class="btn ghost msp-copy" data-copy="js-run">Copy</button>
-            </div>
-            <div class="msp-cred">
-              <span class="msp-cred-key">TOKEN</span>
-              <code class="msp-cred-val msp-token js-token">••••••••••••••••</code>
-              <button class="btn ghost js-reveal">Reveal</button>
-              <button class="btn ghost msp-copy" data-copy="js-token">Copy</button>
-            </div>
-          </div>
-          <p class="msp-run-cmd">Then run <code>python algo_client.py</code> and edit <code>on_tick</code> to your heart's content.</p>
-          <p class="msp-muted msp-token-warn">Your token trades as you — keep it private. You may send up to
-            <strong>{{ order_rate }} orders/second</strong>; the limit is <strong>{{ position_limit }}</strong> per item.</p>
+          </details>
+          <p class="msp-muted msp-token-warn">The download contains your token — keep the file private. You may send up
+            to <strong>{{ order_rate }} orders/second</strong>; the limit is <strong>{{ position_limit }}</strong> per
+            item.</p>
         </div>
       </div>
     </template>
