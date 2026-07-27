@@ -159,6 +159,7 @@
     let lastStatus = null;
     let pollTimer = null;
     let creds = null;
+    const pnlHistory = [];   // {tick, pnl} points for the live chart
 
     async function ensureCreds() {
       if (creds) return creds;
@@ -313,6 +314,74 @@
       }
     }
 
+    // A dependency-free moving line chart of the player's P&L, drawn on a
+    // canvas each poll. Green above zero, red below, with a faded area fill.
+    function drawPnlChart() {
+      const canvas = $("#pnlChart");
+      if (!canvas || !pnlHistory.length) return;
+      const now = $("#pnlNow");
+      const latest = pnlHistory[pnlHistory.length - 1].pnl;
+      if (now) {
+        now.textContent = money(latest);
+        now.className = "msp-num " + (latest >= 0 ? "msp-up" : "msp-down");
+      }
+
+      const dpr = window.devicePixelRatio || 1;
+      const cssW = canvas.clientWidth || 600;
+      const cssH = canvas.clientHeight || 200;
+      canvas.width = cssW * dpr;
+      canvas.height = cssH * dpr;
+      const ctx = canvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, cssW, cssH);
+
+      const padX = 6, padTop = 12, padBot = 12;
+      const w = cssW - padX * 2;
+      const h = cssH - padTop - padBot;
+      const data = pnlHistory.map((p) => p.pnl);
+      let lo = Math.min(0, ...data);
+      let hi = Math.max(0, ...data);
+      if (hi === lo) { hi += 1; lo -= 1; }
+      const range = hi - lo;
+
+      const X = (i) => padX + (data.length === 1 ? w / 2 : (i / (data.length - 1)) * w);
+      const Y = (v) => padTop + (1 - (v - lo) / range) * h;
+
+      // zero baseline
+      ctx.strokeStyle = "rgba(255,255,255,.14)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padX, Y(0)); ctx.lineTo(padX + w, Y(0)); ctx.stroke();
+
+      const up = latest >= 0;
+      const stroke = up ? "#2ecc71" : "#ff6b6b";
+
+      // area fill down to the zero line
+      const grad = ctx.createLinearGradient(0, padTop, 0, padTop + h);
+      grad.addColorStop(0, up ? "rgba(46,204,113,.28)" : "rgba(255,107,107,.28)");
+      grad.addColorStop(1, "rgba(0,0,0,0)");
+      ctx.beginPath();
+      data.forEach((v, i) => { const x = X(i), y = Y(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.lineTo(X(data.length - 1), Y(0));
+      ctx.lineTo(X(0), Y(0));
+      ctx.closePath();
+      ctx.fillStyle = grad;
+      ctx.fill();
+
+      // the line itself
+      ctx.beginPath();
+      data.forEach((v, i) => { const x = X(i), y = Y(v); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 2;
+      ctx.lineJoin = "round";
+      ctx.stroke();
+
+      // marker on the latest point
+      ctx.fillStyle = stroke;
+      ctx.beginPath();
+      ctx.arc(X(data.length - 1), Y(latest), 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     function renderTape(tape) {
       const table = $("#tapeTable");
       if (!table) return;
@@ -369,6 +438,15 @@
         renderLeaderboard(state.leaderboard);
         renderMarket(state.market, state.status === "finished");
         renderMe(state.me, state.market, state.status);
+        if (state.me) {
+          const lastPoint = pnlHistory[pnlHistory.length - 1];
+          // one point per tick, so catching up multiple ticks still adds once
+          if (!lastPoint || lastPoint.tick !== state.tick) {
+            pnlHistory.push({ tick: state.tick, pnl: state.me.pnl });
+            if (pnlHistory.length > 600) pnlHistory.shift();
+          }
+          drawPnlChart();
+        }
         renderTape(state.tape);
         if (state.status === "finished" && lastStatus === "running") {
           showMsg(msg, "Run complete — fair values are revealed and the leaderboard is final.", "ok");

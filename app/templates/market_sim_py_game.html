@@ -149,11 +149,22 @@
 
         <div id="liveConnect"></div>
 
-        <div class="card msp-panel msp-tape-card">
+        <div class="card msp-panel msp-wide-card">
+          <div class="head">
+            <h3>Your P&amp;L</h3>
+            <span class="msp-num" id="pnlNow">—</span>
+          </div>
+          <div class="msp-panel-body">
+            <canvas id="pnlChart" class="msp-chart"></canvas>
+          </div>
+        </div>
+
+        <div class="card msp-panel msp-wide-card">
           <div class="head">
             <h3>Prints</h3>
+            <span class="msp-muted">most recent first</span>
           </div>
-          <div class="msp-panel-body msp-flush">
+          <div class="msp-panel-body msp-flush msp-scroll">
             <table class="msp-table" id="tapeTable"></table>
           </div>
         </div>

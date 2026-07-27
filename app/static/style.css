@@ -3523,9 +3523,10 @@ body {
   align-items: start;
 }
 
-/* The five live cards flow into whatever column count fits: leaderboard,
-   market and your book fill the first row, log and prints the second. */
-.msp-tape-card {
+/* Full-width cards (P&L chart, prints) break out of the auto-fit row and span
+   the whole grid so the moving graph and the tape have room. */
+.msp-wide-card {
+  grid-column: 1 / -1;
   min-width: 0;
 }
 
@@ -3592,16 +3593,43 @@ body {
   margin-top: 12px;
 }
 
+/* -- scrollable panel body (prints, etc.) with a sticky header -- */
+.msp-scroll {
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.msp-scroll .msp-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+  z-index: 1;
+}
+
+/* -- live P&L chart -- */
+.msp-chart {
+  display: block;
+  width: 100%;
+  height: 200px;
+}
+
+#pnlNow {
+  font-size: 18px;
+  font-weight: 700;
+}
+
 .msp-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  grid-template-columns: repeat(2, 1fr);
   gap: 12px;
 }
 
 .msp-stat {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: 4px;
+  min-height: 68px;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: 10px;
