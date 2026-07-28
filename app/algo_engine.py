@@ -682,7 +682,13 @@ class Run:
                 self._place(part, symbol, "SELL", self._coerce_price(ask), qty)
 
     def _bot_directional(self, bot: Bot, want_long: bool) -> None:
-        """Shared body for bull/bear: accumulate one way, trim near the cap."""
+        """Shared body for bull/bear: accumulate one way, trim near the cap.
+
+        A skilled directional bot only builds at prices its own estimate says
+        are *favourable* — a bull buys the bid only when the bid is below its
+        fair estimate — so a good bot enters cheap and a noob overpays. That is
+        what ties skill to P&L instead of just how hard it leans.
+        """
         p = SKILL_PARAMS[bot.skill]
         part = self.participants[bot.uid]
         build_side = "BUY" if want_long else "SELL"
@@ -699,11 +705,15 @@ class Run:
             bid, ask = self._touch(self.books[symbol])
             touch = bid if want_long else ask
             qty = int(p["size"])
-            if touch is not None and self._within_limit(part, symbol, build_side, qty):
+            # Only accumulate when the entry price is on the right side of fair.
+            favourable_rest = touch is not None and ((touch < est) if want_long else (touch > est))
+            if favourable_rest and self._within_limit(part, symbol, build_side, qty):
                 self._place(part, symbol, build_side, self._coerce_price(touch), qty)
-            mid = (bid + ask) / 2 if (bid is not None and ask is not None) else None
-            favourable = mid is not None and ((est > mid) if want_long else (est < mid))
-            if favourable and self.rng.random() < 0.3:
+            # Occasionally lift to build faster, but only if the offer/bid we'd
+            # cross is still favourable versus our estimate (never overpay).
+            cross = ask if want_long else bid
+            can_cross = cross is not None and ((cross < est) if want_long else (cross > est))
+            if can_cross and self.rng.random() < 0.3:
                 self._bot_take(bot, symbol, build_side, min(10, qty))
 
     def _bot_bull(self, bot: Bot) -> None:
@@ -713,21 +723,26 @@ class Run:
         self._bot_directional(bot, want_long=False)
 
     def _bot_taker(self, bot: Bot) -> None:
+        """Lift stale quotes. Only crosses when the *touch price* — the price it
+        would actually pay — is favourable versus its estimate, so paying the
+        spread is still +EV. A sharper estimate finds more of these safely."""
         p = SKILL_PARAMS[bot.skill]
+        # A small cushion beyond the touch covers noise; better bots need less.
+        margin = 1 + (p["edge_bps"] * 0.1) / 10_000.0
         for symbol in ITEM_SYMBOLS:
             est = self._bot_est(bot, symbol)
             if self.rng.random() > p["act_prob"]:
                 continue
             bid, ask = self._touch(self.books[symbol])
-            if bid is None or ask is None:
-                continue
-            gap_bps = (est - (bid + ask) / 2) / est * 10_000.0 if est else 0.0
-            if abs(gap_bps) < p["edge_bps"]:
-                continue
-            side = "BUY" if gap_bps > 0 else "SELL"
-            self._bot_take(bot, symbol, side, int(p["size"]) + self.rng.randint(0, max(1, int(p["size"]) // 2)))
+            qty = int(p["size"]) + self.rng.randint(0, max(1, int(p["size"]) // 2))
+            if ask is not None and est > ask * margin:
+                self._bot_take(bot, symbol, "BUY", qty)      # the offer is below fair → lift it
+            elif bid is not None and est < bid / margin:
+                self._bot_take(bot, symbol, "SELL", qty)     # the bid is above fair → hit it
 
     def _bot_momentum(self, bot: Bot) -> None:
+        """Chase the trend in its estimate, but still only cross when the touch
+        is on the right side of fair, so it doesn't bleed the spread."""
         p = SKILL_PARAMS[bot.skill]
         for symbol in ITEM_SYMBOLS:
             est = self._bot_est(bot, symbol)
@@ -738,8 +753,11 @@ class Run:
             chg_bps = (est - prev) / prev * 10_000.0 if prev else 0.0
             if abs(chg_bps) < p["edge_bps"] * 0.4:
                 continue
-            side = "BUY" if chg_bps > 0 else "SELL"
-            self._bot_take(bot, symbol, side, int(p["size"]))
+            bid, ask = self._touch(self.books[symbol])
+            if chg_bps > 0 and ask is not None and est > ask:
+                self._bot_take(bot, symbol, "BUY", int(p["size"]))
+            elif chg_bps < 0 and bid is not None and est < bid:
+                self._bot_take(bot, symbol, "SELL", int(p["size"]))
 
     # -- views -----------------------------------------------------------
     def market_snapshot(self, reveal_fair: bool = False) -> List[Dict[str, Any]]:

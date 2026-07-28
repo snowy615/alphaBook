@@ -3616,6 +3616,33 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+/* Pinned "your rank" strip at the top of the leaderboard. */
+.msp-lb-me {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(108, 92, 231, .12);
+}
+
+.msp-lb-rank {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.msp-lb-you {
+  font-weight: 600;
+  color: var(--brand);
+}
+
+.msp-me-row {
+  background: rgba(108, 92, 231, .1);
 }
 
 .msp-bot-row {
@@ -3912,4 +3939,51 @@ body {
   .msp-run-row {
     grid-template-columns: 1fr auto;
   }
+}
+
+/* ============================================================
+   Light / dark theme
+   ============================================================ */
+:root[data-theme="light"] {
+  --bg: #f4f6fb;
+  --panel: #ffffff;
+  --panel-2: #eef1f7;
+  --text: #1a2030;
+  --muted: #5b6472;
+  --brand: #6c5ce7;
+  --green: #15a34a;
+  --red: #dc2626;
+  --border: rgba(0, 0, 0, .12);
+  --shadow: 0 6px 20px rgba(20, 30, 60, .1);
+}
+
+:root[data-theme="light"] body {
+  background: linear-gradient(180deg, #eef1f7, #f4f6fb 20%, #f4f6fb);
+}
+
+:root[data-theme="light"] .topbar {
+  background: rgba(255, 255, 255, .75);
+}
+
+/* Theme toggle button (injected into the topbar by theme.js) */
+.theme-toggle {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+
+.theme-toggle:hover {
+  border-color: var(--brand);
+}
+
+.theme-toggle-float {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 50;
 }

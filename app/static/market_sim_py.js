@@ -230,14 +230,31 @@
         </div>`).join("") || `<p class="msp-muted">Nobody has joined yet.</p>`;
     }
 
-    function renderLeaderboard(rows) {
+    function renderLeaderboard(rows, myUid) {
       const table = $("#leaderboard");
       if (!table) return;
+
+      // Pin the player's own rank at the top so it's always visible.
+      const meRow = rows.find((r) => r.user_id === myUid);
+      const meEl = $("#lbMe");
+      if (meEl) {
+        if (meRow) {
+          meEl.classList.remove("hidden");
+          meEl.innerHTML = `
+            <span class="msp-lb-rank">#${meRow.rank}</span>
+            <span class="msp-lb-you">You</span>
+            <span class="msp-num ${meRow.pnl >= 0 ? "msp-up" : "msp-down"}">${money(meRow.pnl)}</span>
+            <span class="msp-num msp-muted">${meRow.fills} fills</span>`;
+        } else {
+          meEl.classList.add("hidden");
+        }
+      }
+
       table.innerHTML = `
         <thead><tr><th>#</th><th>Player</th><th class="msp-num">P&amp;L</th>
         <th class="msp-num">Fills</th><th></th></tr></thead>
         <tbody>${rows.map((r) => `
-          <tr class="${r.is_bot ? "msp-bot-row" : ""}">
+          <tr class="${r.is_bot ? "msp-bot-row" : ""} ${r.user_id === myUid ? "msp-me-row" : ""}">
             <td>${r.rank}</td>
             <td>${esc(r.username)}${r.is_bot ? ' <span class="msp-tag">bot</span>' : ""}</td>
             <td class="msp-num ${r.pnl >= 0 ? "msp-up" : "msp-down"}">${money(r.pnl)}</td>
@@ -544,7 +561,7 @@
         mountConnectInto("#liveConnect");
         renderClock(state.seconds_left);
         renderBots(state);
-        renderLeaderboard(state.leaderboard);
+        renderLeaderboard(state.leaderboard, state.my_uid);
         renderMarket(state.market, state.status === "finished");
         renderMe(state.me, state.market, state.status);
         if (state.me) {

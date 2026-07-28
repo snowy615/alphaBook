@@ -407,6 +407,7 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
         "total_ticks": engine.TOTAL_TICKS,
         "seconds_left": round(run.seconds_left, 1),
         "can_control": _can_control(run, user),
+        "my_uid": str(user.id),
         "position_limit": engine.POSITION_LIMIT,
         "players": [
             {"user_id": p.uid, "username": p.name,
