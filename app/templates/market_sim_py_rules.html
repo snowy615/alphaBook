@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Market Simulation Py - {{ app_name }}</title>
+  <title>Market Simulation Coding - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
@@ -15,7 +15,7 @@
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Market Simulation Py</div>
+          <div class="subtitle">Market Simulation Coding</div>
         </div>
       </a>
     </div>
@@ -157,17 +157,19 @@ me = {"positions", "open_orders", "cash", "pnl", "fills", "last_reject"}</pre>
 
         <h4>The house bots</h4>
         <p class="msp-muted">
-          The <strong>Market Maker Bot</strong> quotes a three-deep ladder around a lagging, noisy estimate of fair
-          value and leans its quotes against its own inventory — it is beatable, and finding where its estimate is
-          stale is most of the game. The <strong>Flow Bot</strong> takes liquidity in the direction of the real
-          mispricing, so passive quotes get adversely selected. Both respect the same {{ position_limit }} limit you do.
+          Every run starts with a market maker and a liquidity taker, but the host can add more from the run page —
+          different <strong>archetypes</strong> (market maker, conservative, mean-reversion, bull/long, bear/short,
+          liquidity taker, momentum) at four <strong>skill levels</strong> (noob → normal → good → cracked). A smarter
+          bot tracks the hidden fair value faster and quotes tighter, so it's a tougher opponent. Bots can be scheduled
+          to <strong>enter partway through</strong> a run, and all of them respect the same {{ position_limit }} limit
+          you do.
         </p>
       </div>
     </div>
   </div>
 
   <div class="footer">
-    <p>{{ app_name }} • Market Simulation Py</p>
+    <p>{{ app_name }} • Market Simulation Coding</p>
   </div>
 
   <script src="/static/market_sim_py.js"></script>

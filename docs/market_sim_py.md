@@ -18,7 +18,7 @@ Python but nothing about how the game is put together.
 
 You write a trading bot in Python and **run it on your own computer**. It
 connects to a live ten-minute market over AlphaBook's API, and every player's
-bot — plus two house bots — trades the same order book. Orders match the instant
+bot — plus house bots — trades the same order book. Orders match the instant
 they arrive, like a real exchange. Whoever finishes with the best
 profit-and-loss (P&L) wins.
 
@@ -53,7 +53,7 @@ The whole server is two files plus a downloadable client:
 
 | Component | Job |
 |---|---|
-| [`app/algo_engine.py`](../app/algo_engine.py) | **The market.** Items, the order books, the two house bots, the fair-value walk, P&L, the position limit, the clock. Matches orders on arrival. Runs **no** player code. |
+| [`app/algo_engine.py`](../app/algo_engine.py) | **The market.** Items, the order books, the house bots, the fair-value walk, P&L, the position limit, the clock. Matches orders on arrival. Runs **no** player code. |
 | [`app/market_sim_py.py`](../app/market_sim_py.py) | **The order gateway.** Authenticated, rate-limited HTTP endpoints a bot talks to. |
 | [`app/algo_ratelimit.py`](../app/algo_ratelimit.py) | The per-user token bucket that caps order rate. |
 | [`client/algo_client.py`](../client/algo_client.py) | **The runner you download.** Plain standard-library Python — no installs. Polls the market, calls your `on_tick`, posts orders. |
@@ -132,16 +132,27 @@ Trading uses AlphaBook's price-time-priority limit order book
   market's *heartbeat* (fair-value walk + bot re-quoting) advances on a one-second
   tick, but your orders hit the live book whenever they land.
 
-### The two house bots
+### The house bots
 
-- **Market Maker Bot** — posts a three-level ladder around its *own lagging,
-  noisy estimate* of fair value (not the true value), and skews its quotes against
-  its own inventory. When its estimate is stale, its quotes are mispriced — that's
-  your edge.
-- **Flow Bot** — occasionally takes liquidity in the direction of the *real*
-  mispricing, so passive quotes get adversely selected, just like a real market.
+Every run starts with a **Market Maker** and a **Liquidity Taker**, but the host
+can add more from the run page — and schedule them to **enter partway through**.
+Each bot is an **archetype** at one of four **skill levels** (`noob` → `normal`
+→ `good` → `cracked`); a higher skill tracks the hidden fair value faster and
+with less noise, quotes tighter, and needs a smaller edge before it acts, so it
+is a tougher opponent. No bot ever sees the true fair value.
 
-Both obey the same 1,000 position limit you do.
+| Archetype | What it does |
+|---|---|
+| Market Maker | Quotes a two-sided ladder around its own estimate of fair; earns the spread, skews against inventory. |
+| Conservative | A timid maker: small size, wide quotes, flattens inventory fast. |
+| Mean Reversion | Fades moves back toward its fair estimate with resting limit orders. |
+| Bull (long) | Accumulates and holds a long position; trims near the cap. |
+| Bear (short) | Accumulates and holds a short position; trims near the cap. |
+| Liquidity Taker | Lifts offers and hits bids that look mispriced versus its estimate. |
+| Momentum | Chases trends in its fair estimate by taking liquidity. |
+
+All bots obey the same 1,000 position limit you do. A stale maker's mispriced
+quotes are your edge — finding them is most of the game.
 
 ### P&L is marked at fair value
 

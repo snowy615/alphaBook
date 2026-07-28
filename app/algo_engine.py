@@ -63,25 +63,41 @@ MAX_ORDERS_PER_REQUEST: int = 20  # a single POST /orders may carry this many
 PRICE_DP: int = 2
 MAX_PRICE: float = 1_000_000.0
 
-MM_LEVELS: int = 3
-MM_HALF_SPREAD_BPS: float = 15.0
-MM_STEP_BPS: float = 12.0
-MM_BASE_QTY: int = 30
-MM_QTY_STEP: int = 20
-MM_NOISE_BPS: float = 4.0
-# The maker quotes around its own lagging, noisy estimate of fair value, not the
-# real one — otherwise it would be unbeatable and there would be no edge to find.
-MM_FAIR_PULL: float = 0.15
-# Quotes lean away from the maker's inventory so it works back toward flat.
-MM_SKEW_BPS: float = 70.0
+MM_LEVELS: int = 3          # depth of a market-making ladder
+MM_STEP_BPS: float = 12.0   # extra spread per deeper ladder level
+MM_SKEW_BPS: float = 70.0   # how hard quotes lean against inventory
 
-FLOW_PROB: float = 0.35           # chance per item per tick of a bot print
-FLOW_QTY_MIN: int = 5
-FLOW_QTY_MAX: int = 40
-FLOW_BIAS_MAX: float = 0.40       # how far mispricing tilts the bot's side
+MAX_BOTS: int = 12          # house bots per run
 
+# Default two-bot roster every run starts with (admins add more, or remove).
 MM_BOT_ID = "__ALGO_MM__"
 FLOW_BOT_ID = "__ALGO_FLOW__"
+
+# ── Bot skill levels ─────────────────────────────────────────────────────────
+# Skill scales how *good* a bot is. A better bot tracks the hidden fair value
+# faster and more cleanly (fair_lag up, noise_bps down), quotes tighter
+# (spread_bps down), needs less of an edge before it acts (edge_bps down),
+# trades bigger (size), and acts more often (act_prob). noob → cracked.
+SKILL_PARAMS: Dict[str, Dict[str, float]] = {
+    "noob":    {"fair_lag": 0.04, "noise_bps": 14.0, "spread_bps": 45.0, "edge_bps": 40.0, "size": 8,  "act_prob": 0.45},
+    "normal":  {"fair_lag": 0.15, "noise_bps": 6.0,  "spread_bps": 25.0, "edge_bps": 22.0, "size": 15, "act_prob": 0.75},
+    "good":    {"fair_lag": 0.35, "noise_bps": 2.5,  "spread_bps": 15.0, "edge_bps": 12.0, "size": 22, "act_prob": 0.92},
+    "cracked": {"fair_lag": 0.70, "noise_bps": 0.8,  "spread_bps": 9.0,  "edge_bps": 6.0,  "size": 30, "act_prob": 1.0},
+}
+SKILL_LEVELS: List[str] = ["noob", "normal", "good", "cracked"]
+
+# ── Bot archetypes ───────────────────────────────────────────────────────────
+# "phase" orders execution within a tick: makers (0) post their quotes before
+# takers (1) come through, so a taker always sees a two-sided book.
+BOT_ARCHETYPES: Dict[str, Dict[str, Any]] = {
+    "market_maker":   {"label": "Market Maker",    "phase": 0, "desc": "Quotes both sides around fair; earns the spread."},
+    "conservative":   {"label": "Conservative",    "phase": 0, "desc": "Small size, wide quotes, flattens inventory fast."},
+    "mean_reversion": {"label": "Mean Reversion",  "phase": 0, "desc": "Fades moves back toward fair with limit orders."},
+    "bull":           {"label": "Bull (long)",     "phase": 0, "desc": "Long-biased; accumulates and holds longs."},
+    "bear":           {"label": "Bear (short)",    "phase": 0, "desc": "Short-biased; accumulates and holds shorts."},
+    "taker":          {"label": "Liquidity Taker", "phase": 1, "desc": "Lifts offers and hits bids that look mispriced."},
+    "momentum":       {"label": "Momentum",        "phase": 1, "desc": "Chases trends by taking liquidity."},
+}
 
 # ── The tradable items ───────────────────────────────────────────────────────
 # Fictional on purpose: no real ticker means no outside data to look up, so the
@@ -137,12 +153,27 @@ class Item:
     drift_bps: float
     last: Optional[float] = None
     open_price: float = 0.0
-    mm_centre: float = 0.0        # the market maker's lagging estimate of fair
 
     def step(self, rng: random.Random) -> None:
         """One geometric random-walk step of the hidden fair value."""
         shock = rng.gauss(self.drift_bps, self.vol_bps) / 10_000.0
         self.fair = max(0.01, round(self.fair * (1.0 + shock), 4))
+
+
+@dataclass
+class Bot:
+    """A house bot's behaviour plus its private state.
+
+    Its cash/positions live in the matching Participant (``participants[uid]``);
+    this holds the strategy knobs, its own noisy fair-value estimate per item,
+    and any scratch memory the archetype needs between ticks.
+    """
+    uid: str
+    archetype: str
+    skill: str
+    activate_tick: int = 0
+    est: Dict[str, float] = field(default_factory=dict)
+    memory: Dict[str, Any] = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -170,21 +201,81 @@ class Run:
             spec["symbol"]: Item(
                 symbol=spec["symbol"], name=spec["name"], fair=spec["start"],
                 vol_bps=spec["vol_bps"], drift_bps=spec["drift_bps"],
-                open_price=spec["start"], mm_centre=spec["start"],
+                open_price=spec["start"],
             )
             for spec in ITEM_SPECS
         }
         self.books: Dict[str, OrderBook] = {s: OrderBook() for s in ITEM_SYMBOLS}
         self.participants: Dict[str, Participant] = {}
+        self.bots: List[Bot] = []
+        self._bot_seq = 0
         self.tape: Deque[Dict[str, Any]] = deque(maxlen=60)
         self.results: List[Dict[str, Any]] = []
 
-        self._add_bots()
+        self._add_default_bots()
 
-    # -- membership ------------------------------------------------------
-    def _add_bots(self) -> None:
-        self.participants[MM_BOT_ID] = Participant(uid=MM_BOT_ID, name="Market Maker Bot", is_bot=True)
-        self.participants[FLOW_BOT_ID] = Participant(uid=FLOW_BOT_ID, name="Flow Bot", is_bot=True)
+    # -- bots ------------------------------------------------------------
+    def _add_default_bots(self) -> None:
+        """Every run opens with a normal maker and a normal taker; admins tune."""
+        self.add_bot("market_maker", "normal", 0, name="Market Maker Bot", uid=MM_BOT_ID)
+        self.add_bot("taker", "normal", 0, name="Flow Bot", uid=FLOW_BOT_ID)
+
+    def add_bot(
+        self,
+        archetype: str,
+        skill: str,
+        activate_tick: int = 0,
+        name: Optional[str] = None,
+        uid: Optional[str] = None,
+    ) -> Bot:
+        """Register a house bot that starts acting once ``activate_tick`` is reached."""
+        if archetype not in BOT_ARCHETYPES:
+            raise ValueError(f"unknown bot type {archetype!r}")
+        if skill not in SKILL_PARAMS:
+            raise ValueError(f"unknown skill level {skill!r}")
+        if len(self.bots) >= MAX_BOTS:
+            raise ValueError(f"a run may have at most {MAX_BOTS} bots")
+        if uid is None:
+            self._bot_seq += 1
+            uid = f"__BOT_{self._bot_seq}__"
+        name = name or f"{BOT_ARCHETYPES[archetype]['label']} · {skill}"
+        self.participants[uid] = Participant(uid=uid, name=name, is_bot=True)
+        bot = Bot(uid=uid, archetype=archetype, skill=skill, activate_tick=max(0, int(activate_tick)))
+        self.bots.append(bot)
+        return bot
+
+    def remove_bot(self, uid: str) -> None:
+        """Remove a bot that has not entered yet (or any bot while in the lobby)."""
+        bot = next((b for b in self.bots if b.uid == uid), None)
+        if bot is None:
+            raise ValueError("no such bot in this run")
+        if self.status == "running" and self.tick >= bot.activate_tick:
+            raise ValueError("this bot has already entered and can't be removed")
+        for symbol in ITEM_SYMBOLS:
+            self.books[symbol].cancel_all_for_user(uid)
+        self.bots.remove(bot)
+        self.participants.pop(uid, None)
+
+    def bots_view(self) -> List[Dict[str, Any]]:
+        fair = {s: it.fair for s, it in self.items.items()}
+        out = []
+        for b in self.bots:
+            part = self.participants[b.uid]
+            meta = BOT_ARCHETYPES[b.archetype]
+            out.append({
+                "uid": b.uid,
+                "name": part.name,
+                "archetype": b.archetype,
+                "archetype_label": meta["label"],
+                "skill": b.skill,
+                "activate_tick": b.activate_tick,
+                "enters_at": int(round(b.activate_tick * TICK_SECONDS)),
+                "active": self.status != "lobby" and self.tick >= b.activate_tick,
+                "removable": self.status == "lobby" or self.tick < b.activate_tick,
+                "pnl": round(part.pnl(fair), 2),
+            })
+        out.sort(key=lambda r: (r["activate_tick"], r["name"]))
+        return out
 
     @property
     def players(self) -> List[Participant]:
@@ -262,8 +353,11 @@ class Run:
     def _heartbeat(self) -> None:
         for item in self.items.values():
             item.step(self.rng)
-        self._bot_quote()
-        self._bot_flow()
+        # Makers quote first (phase 0) so takers (phase 1) see a two-sided book.
+        active = [b for b in self.bots if self.tick >= b.activate_tick]
+        active.sort(key=lambda b: BOT_ARCHETYPES[b.archetype]["phase"])
+        for bot in active:
+            self._run_bot(bot)
 
     # ── Order gateway (called per API request, matched on arrival) ──────
 
@@ -494,52 +588,158 @@ class Run:
         return buy, sell
 
     # -- house bots ------------------------------------------------------
-    def _bot_quote(self) -> None:
-        """Re-post the market maker's ladder around its own lagging estimate."""
-        bot = self.participants[MM_BOT_ID]
-        for symbol, item in self.items.items():
-            book = self.books[symbol]
-            book.cancel_all_for_user(MM_BOT_ID)
+    def _run_bot(self, bot: Bot) -> None:
+        handler = {
+            "market_maker": self._bot_market_maker,
+            "conservative": self._bot_conservative,
+            "mean_reversion": self._bot_mean_reversion,
+            "bull": self._bot_bull,
+            "bear": self._bot_bear,
+            "taker": self._bot_taker,
+            "momentum": self._bot_momentum,
+        }.get(bot.archetype)
+        if handler is not None:
+            handler(bot)
 
-            item.mm_centre += (item.fair - item.mm_centre) * MM_FAIR_PULL
-            item.mm_centre *= 1 + self.rng.gauss(0, MM_NOISE_BPS) / 10_000.0
-            skew = -(bot.pos[symbol] / POSITION_LIMIT) * MM_SKEW_BPS / 10_000.0
-            centre = max(0.01, item.mm_centre * (1 + skew))
+    def _bot_est(self, bot: Bot, symbol: str) -> float:
+        """Advance and return the bot's own noisy, skill-scaled estimate of fair.
 
+        No bot ever sees the true fair value; a smarter bot's estimate simply
+        tracks it faster and with less noise. This is what makes them beatable.
+        """
+        p = SKILL_PARAMS[bot.skill]
+        item = self.items[symbol]
+        cur = bot.est.get(symbol, item.open_price)
+        cur += (item.fair - cur) * p["fair_lag"]
+        cur *= 1 + self.rng.gauss(0, p["noise_bps"]) / 10_000.0
+        cur = max(0.01, cur)
+        bot.est[symbol] = cur
+        return cur
+
+    def _bot_take(self, bot: Bot, symbol: str, side: str, qty: int) -> None:
+        """A bot crosses the spread with a market order (remainder pulled)."""
+        part = self.participants[bot.uid]
+        qty = int(qty)
+        if qty <= 0 or not self._within_limit(part, symbol, side, qty):
+            return
+        try:
+            price = self._market_price(symbol, side)
+        except OrderRejected:
+            return
+        self._place(part, symbol, side, price, qty, cancel_remainder=True)
+
+    def _bot_market_maker(
+        self, bot: Bot, size_mult: float = 1.0, spread_mult: float = 1.0, inv_aversion: float = 1.0
+    ) -> None:
+        p = SKILL_PARAMS[bot.skill]
+        part = self.participants[bot.uid]
+        for symbol in ITEM_SYMBOLS:
+            self.books[symbol].cancel_all_for_user(bot.uid)
+            # A market maker quotes continuously — it's the book's liquidity, so
+            # it never skips a tick (skill shows up in its spread and fair read,
+            # not in whether it shows up at all).
+            est = self._bot_est(bot, symbol)
+            skew = -(part.pos[symbol] / POSITION_LIMIT) * MM_SKEW_BPS * inv_aversion / 10_000.0
+            centre = max(0.01, est * (1 + skew))
+            base = max(1, int(p["size"] * size_mult))
+            half = p["spread_bps"] * spread_mult
             for level in range(MM_LEVELS):
-                offset = (MM_HALF_SPREAD_BPS + level * MM_STEP_BPS) / 10_000.0
-                qty = MM_BASE_QTY + level * MM_QTY_STEP + self.rng.randint(-5, 5)
+                offset = (half + level * MM_STEP_BPS) / 10_000.0
+                qty = base + level * max(1, base // 2) + self.rng.randint(-2, 2)
                 if qty <= 0:
                     continue
                 for side, sign in (("BUY", -1), ("SELL", 1)):
-                    if not self._within_limit(bot, symbol, side, qty):
+                    if not self._within_limit(part, symbol, side, qty):
                         continue
-                    price = self._coerce_price(centre * (1 + sign * offset))
-                    self._place(bot, symbol, side, price, qty)
+                    self._place(part, symbol, side, self._coerce_price(centre * (1 + sign * offset)), qty)
 
-    def _bot_flow(self) -> None:
-        """Occasional liquidity-taking prints, tilted toward the mispricing."""
-        bot = self.participants[FLOW_BOT_ID]
-        for symbol, item in self.items.items():
-            if self.rng.random() > FLOW_PROB:
+    def _bot_conservative(self, bot: Bot) -> None:
+        # A timid maker: small size, wide quotes, strong inventory aversion…
+        self._bot_market_maker(bot, size_mult=0.4, spread_mult=1.6, inv_aversion=2.5)
+        # …that also crosses the spread to cut risk when inventory builds up.
+        part = self.participants[bot.uid]
+        for symbol in ITEM_SYMBOLS:
+            pos = part.pos[symbol]
+            if abs(pos) > 150:
+                self._bot_take(bot, symbol, "SELL" if pos > 0 else "BUY", min(20, int(abs(pos) / 3)))
+
+    def _bot_mean_reversion(self, bot: Bot) -> None:
+        p = SKILL_PARAMS[bot.skill]
+        part = self.participants[bot.uid]
+        for symbol in ITEM_SYMBOLS:
+            self.books[symbol].cancel_all_for_user(bot.uid)
+            est = self._bot_est(bot, symbol)
+            if self.rng.random() > p["act_prob"]:
                 continue
-            book = self.books[symbol]
-            bid, ask = self._touch(book)
+            bid, ask = self._touch(self.books[symbol])
             if bid is None or ask is None:
                 continue
+            gap_bps = (est - (bid + ask) / 2) / est * 10_000.0
+            qty = int(p["size"])
+            if gap_bps > p["edge_bps"] * 0.5 and self._within_limit(part, symbol, "BUY", qty):
+                self._place(part, symbol, "BUY", self._coerce_price(bid), qty)
+            elif gap_bps < -p["edge_bps"] * 0.5 and self._within_limit(part, symbol, "SELL", qty):
+                self._place(part, symbol, "SELL", self._coerce_price(ask), qty)
 
-            mid = (bid + ask) / 2
-            gap = (item.fair - mid) / item.fair if item.fair else 0.0
-            bias = max(-FLOW_BIAS_MAX, min(FLOW_BIAS_MAX, gap * 40))
-            side = "BUY" if self.rng.random() < 0.5 + bias else "SELL"
-            qty = self.rng.randint(FLOW_QTY_MIN, FLOW_QTY_MAX)
-            if not self._within_limit(bot, symbol, side, qty):
+    def _bot_directional(self, bot: Bot, want_long: bool) -> None:
+        """Shared body for bull/bear: accumulate one way, trim near the cap."""
+        p = SKILL_PARAMS[bot.skill]
+        part = self.participants[bot.uid]
+        build_side = "BUY" if want_long else "SELL"
+        trim_side = "SELL" if want_long else "BUY"
+        for symbol in ITEM_SYMBOLS:
+            self.books[symbol].cancel_all_for_user(bot.uid)
+            est = self._bot_est(bot, symbol)
+            if self.rng.random() > p["act_prob"]:
                 continue
-            try:
-                price = self._market_price(symbol, side)
-            except OrderRejected:
+            signed = part.pos[symbol] if want_long else -part.pos[symbol]
+            if signed > POSITION_LIMIT * 0.9:
+                self._bot_take(bot, symbol, trim_side, min(20, int(p["size"])))
                 continue
-            self._place(bot, symbol, side, price, qty, cancel_remainder=True)
+            bid, ask = self._touch(self.books[symbol])
+            touch = bid if want_long else ask
+            qty = int(p["size"])
+            if touch is not None and self._within_limit(part, symbol, build_side, qty):
+                self._place(part, symbol, build_side, self._coerce_price(touch), qty)
+            mid = (bid + ask) / 2 if (bid is not None and ask is not None) else None
+            favourable = mid is not None and ((est > mid) if want_long else (est < mid))
+            if favourable and self.rng.random() < 0.3:
+                self._bot_take(bot, symbol, build_side, min(10, qty))
+
+    def _bot_bull(self, bot: Bot) -> None:
+        self._bot_directional(bot, want_long=True)
+
+    def _bot_bear(self, bot: Bot) -> None:
+        self._bot_directional(bot, want_long=False)
+
+    def _bot_taker(self, bot: Bot) -> None:
+        p = SKILL_PARAMS[bot.skill]
+        for symbol in ITEM_SYMBOLS:
+            est = self._bot_est(bot, symbol)
+            if self.rng.random() > p["act_prob"]:
+                continue
+            bid, ask = self._touch(self.books[symbol])
+            if bid is None or ask is None:
+                continue
+            gap_bps = (est - (bid + ask) / 2) / est * 10_000.0 if est else 0.0
+            if abs(gap_bps) < p["edge_bps"]:
+                continue
+            side = "BUY" if gap_bps > 0 else "SELL"
+            self._bot_take(bot, symbol, side, int(p["size"]) + self.rng.randint(0, max(1, int(p["size"]) // 2)))
+
+    def _bot_momentum(self, bot: Bot) -> None:
+        p = SKILL_PARAMS[bot.skill]
+        for symbol in ITEM_SYMBOLS:
+            est = self._bot_est(bot, symbol)
+            prev = bot.memory.get(symbol, est)
+            bot.memory[symbol] = est
+            if self.rng.random() > p["act_prob"]:
+                continue
+            chg_bps = (est - prev) / prev * 10_000.0 if prev else 0.0
+            if abs(chg_bps) < p["edge_bps"] * 0.4:
+                continue
+            side = "BUY" if chg_bps > 0 else "SELL"
+            self._bot_take(bot, symbol, side, int(p["size"]))
 
     # -- views -----------------------------------------------------------
     def market_snapshot(self, reveal_fair: bool = False) -> List[Dict[str, Any]]:
@@ -589,7 +789,11 @@ class Run:
         fair = {s: item.fair for s, item in self.items.items()}
         rows = []
         now = time.monotonic()
+        # A bot scheduled to enter later shouldn't sit on the board at 0 yet.
+        pending_bots = {b.uid for b in self.bots if self.tick < b.activate_tick}
         for p in self.participants.values():
+            if p.uid in pending_bots:
+                continue
             rows.append({
                 "user_id": p.uid,
                 "username": p.name,
@@ -626,7 +830,7 @@ def _new_join_code() -> str:
 
 def create_run(name: str, creator_id: str, seed: Optional[int] = None) -> Run:
     run_id = str(uuid.uuid4())
-    run = Run(run_id, _new_join_code(), name or "Market Simulation Py", creator_id, seed=seed)
+    run = Run(run_id, _new_join_code(), name or "Market Simulation Coding", creator_id, seed=seed)
     _runs[run_id] = run
     _prune()
     return run

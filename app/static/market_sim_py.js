@@ -159,7 +159,15 @@
     let lastStatus = null;
     let pollTimer = null;
     let creds = null;
+    let catalog = null;      // bot archetypes + skills, fetched once
     const pnlHistory = [];   // {tick, pnl} points for the live chart
+
+    async function ensureCatalog() {
+      if (!catalog) {
+        try { catalog = await api("/market-sim-py/bots/catalog"); } catch { catalog = null; }
+      }
+      return catalog;
+    }
 
     async function ensureCreds() {
       if (creds) return creds;
@@ -314,6 +322,103 @@
       }
     }
 
+    // -- house bots (admin roster + scheduled entry) ---------------------
+    const fmtTime = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+
+    function parseWhen(s) {
+      s = (s || "").trim().toLowerCase();
+      if (!s || s === "now") return 0;
+      if (s.includes(":")) {
+        const [m, sec] = s.split(":").map(Number);
+        return Math.max(0, (m || 0) * 60 + (sec || 0));
+      }
+      const n = Number(s);
+      return isFinite(n) ? Math.max(0, Math.round(n)) : 0;
+    }
+
+    function botRow(b, canControl) {
+      const entry = b.active
+        ? '<span class="msp-dot"></span> live'
+        : (b.enters_at === 0 ? "from start" : `enters ${fmtTime(b.enters_at)}`);
+      const pnl = b.active
+        ? `<span class="msp-num ${b.pnl >= 0 ? "msp-up" : "msp-down"}">${money(b.pnl)}</span>` : "<span></span>";
+      const rm = (canControl && b.removable)
+        ? `<button class="msp-bot-x" data-remove="${esc(b.uid)}" title="remove">×</button>` : "<span></span>";
+      return `<div class="msp-bot-row">
+        <span class="msp-bot-name">${esc(b.name)}</span>
+        <span class="msp-skill msp-skill-${esc(b.skill)}">${esc(b.skill)}</span>
+        <span class="msp-muted msp-bot-arch">${esc(b.archetype_label)}</span>
+        <span class="msp-muted msp-bot-entry">${entry}</span>
+        ${pnl}${rm}
+      </div>`;
+    }
+
+    function addFormHtml(cat) {
+      const arch = cat.archetypes
+        .map((a) => `<option value="${esc(a.key)}" title="${esc(a.desc)}">${esc(a.label)}</option>`).join("");
+      const skill = cat.skills
+        .map((s) => `<option value="${esc(s)}"${s === "normal" ? " selected" : ""}>${esc(s)}</option>`).join("");
+      return `<div class="msp-bot-form">
+        <select class="msp-input js-bot-arch">${arch}</select>
+        <select class="msp-input js-bot-skill">${skill}</select>
+        <label class="msp-bot-when">enters at
+          <input class="msp-input js-bot-when" type="text" value="now" placeholder="now or 2:30"></label>
+        <button class="btn primary js-bot-add-btn">Add bot</button>
+      </div>`;
+    }
+
+    async function addBot(root) {
+      const btn = root.querySelector(".js-bot-add-btn");
+      btn.disabled = true;
+      try {
+        await postJSON(`/market-sim-py/run/${runId}/bots`, {
+          archetype: root.querySelector(".js-bot-arch").value,
+          skill: root.querySelector(".js-bot-skill").value,
+          activate_seconds: parseWhen(root.querySelector(".js-bot-when").value),
+        });
+        poll();
+      } catch (err) {
+        showMsg(msg, err.message, "error");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function removeBot(uid) {
+      try {
+        await api(`/market-sim-py/run/${runId}/bots/${encodeURIComponent(uid)}`, { method: "DELETE" });
+        poll();
+      } catch (err) {
+        showMsg(msg, err.message, "error");
+      }
+    }
+
+    function renderBots(state) {
+      // Render into whichever bots card is visible (lobby or live).
+      const section = state.status === "lobby" ? $("#lobbyView") : $("#liveView");
+      const root = section ? section.querySelector(".msp-bots-card") : null;
+      if (!root) return;
+
+      const bots = state.bots || [];
+      const countEl = root.querySelector(".js-bots-count");
+      if (countEl) countEl.textContent = `${bots.length} bot${bots.length === 1 ? "" : "s"}`;
+
+      const listEl = root.querySelector(".js-bots-list");
+      listEl.innerHTML = bots.map((b) => botRow(b, state.can_control)).join("")
+        || '<p class="msp-muted">No bots in this run.</p>';
+      listEl.querySelectorAll("[data-remove]").forEach((b) =>
+        b.addEventListener("click", () => removeBot(b.dataset.remove)));
+
+      const addEl = root.querySelector(".js-bots-add");
+      if (state.can_control && catalog && !addEl.dataset.built) {
+        addEl.dataset.built = "1";
+        addEl.innerHTML = addFormHtml(catalog);
+        addEl.querySelector(".js-bot-add-btn").addEventListener("click", () => addBot(root));
+      } else if (!state.can_control) {
+        addEl.innerHTML = "";
+      }
+    }
+
     // A dependency-free moving line chart of the player's P&L, drawn on a
     // canvas each poll. Green above zero, red below, with a faded area fill.
     function drawPnlChart() {
@@ -428,13 +533,17 @@
       $("#startBtn").classList.toggle("hidden", !(inLobby && state.can_control));
       $("#stopBtn").classList.toggle("hidden", !(state.status === "running" && state.can_control));
 
+      if (state.can_control) await ensureCatalog();
+
       if (inLobby) {
         mountConnectInto("#lobbyConnect");
         renderPlayers(state.players);
+        renderBots(state);
         $("#runClock")?.classList.add("hidden");
       } else {
         mountConnectInto("#liveConnect");
         renderClock(state.seconds_left);
+        renderBots(state);
         renderLeaderboard(state.leaderboard);
         renderMarket(state.market, state.status === "finished");
         renderMe(state.me, state.market, state.status);

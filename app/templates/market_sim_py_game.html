@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Market Simulation Py - {{ app_name }}</title>
+  <title>Market Simulation Coding - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 
@@ -15,7 +15,7 @@
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Market Simulation Py</div>
+          <div class="subtitle">Market Simulation Coding</div>
         </div>
       </a>
     </div>
@@ -111,6 +111,18 @@
           </div>
         </div>
       </div>
+
+      <!-- House bots roster (add form is admin-only) -->
+      <div class="card msp-panel msp-bots-card">
+        <div class="head">
+          <h3>House bots</h3>
+          <span class="msp-muted js-bots-count"></span>
+        </div>
+        <div class="msp-panel-body">
+          <div class="js-bots-add"></div>
+          <div class="js-bots-list msp-bots"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ── Live / finished ───────────────────────────────────────────── -->
@@ -149,6 +161,17 @@
 
         <div id="liveConnect"></div>
 
+        <div class="card msp-panel msp-bots-card">
+          <div class="head">
+            <h3>House bots</h3>
+            <span class="msp-muted js-bots-count"></span>
+          </div>
+          <div class="msp-panel-body">
+            <div class="js-bots-add"></div>
+            <div class="js-bots-list msp-bots"></div>
+          </div>
+        </div>
+
         <div class="card msp-panel msp-wide-card">
           <div class="head">
             <h3>Your P&amp;L</h3>
@@ -173,7 +196,7 @@
   </div>
 
   <div class="footer">
-    <p>{{ app_name }} • Market Simulation Py</p>
+    <p>{{ app_name }} • Market Simulation Coding</p>
   </div>
 
   <script>

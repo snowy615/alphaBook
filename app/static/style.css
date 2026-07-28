@@ -3606,6 +3606,114 @@ body {
   z-index: 1;
 }
 
+/* -- house bots roster -- */
+.msp-bots-card {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.msp-bots {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.msp-bot-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.4fr) auto minmax(110px, 1fr) auto auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.msp-bot-name {
+  font-weight: 600;
+}
+
+.msp-bot-arch,
+.msp-bot-entry {
+  font-size: 13px;
+}
+
+.msp-bot-entry {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.msp-skill {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  justify-self: start;
+  white-space: nowrap;
+}
+
+.msp-skill-noob {
+  color: var(--muted);
+}
+
+.msp-skill-normal {
+  color: #7ec8ff;
+  border-color: rgba(126, 200, 255, .4);
+  background: rgba(126, 200, 255, .1);
+}
+
+.msp-skill-good {
+  color: var(--green);
+  border-color: rgba(46, 204, 113, .4);
+  background: rgba(46, 204, 113, .1);
+}
+
+.msp-skill-cracked {
+  color: #ffd479;
+  border-color: rgba(255, 212, 121, .45);
+  background: rgba(255, 212, 121, .12);
+}
+
+.msp-bot-x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 4px;
+}
+
+.msp-bot-x:hover {
+  color: var(--red);
+}
+
+.msp-bot-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.msp-bot-form .msp-input {
+  width: auto;
+  min-width: 130px;
+}
+
+.msp-bot-when {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.msp-bot-when .msp-input {
+  min-width: 90px;
+}
+
 /* -- live P&L chart -- */
 .msp-chart {
   display: block;

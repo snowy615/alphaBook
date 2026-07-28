@@ -77,6 +77,13 @@ class CancelRequest(BaseModel):
     item: Optional[str] = None
 
 
+class AddBotRequest(BaseModel):
+    archetype: str
+    skill: str
+    activate_seconds: int = 0
+    name: Optional[str] = Field(default=None, max_length=40)
+
+
 # ---- Helpers ----
 def _require_run(run_id: str) -> engine.Run:
     run = engine.get_run(run_id)
@@ -258,6 +265,48 @@ async def stop_run(run_id: str, user: User = Depends(current_user)):
     return {"ok": True, "status": run.status}
 
 
+# ---- Bots (admin) ----
+@router.get("/bots/catalog")
+async def bots_catalog():
+    """The archetypes and skill levels an admin can add to a run."""
+    return {
+        "archetypes": [
+            {"key": k, "label": v["label"], "desc": v["desc"]}
+            for k, v in engine.BOT_ARCHETYPES.items()
+        ],
+        "skills": engine.SKILL_LEVELS,
+        "max_bots": engine.MAX_BOTS,
+        "run_seconds": engine.RUN_SECONDS,
+    }
+
+
+@router.post("/run/{run_id}/bots")
+async def add_bot(run_id: str, req: AddBotRequest, user: User = Depends(current_user)):
+    """Add a house bot that enters at a chosen time (seconds from run start)."""
+    run = _require_run(run_id)
+    if not _can_control(run, user):
+        raise HTTPException(status_code=403, detail="Only the run's creator or an admin can manage bots")
+    activate_tick = max(0, int(req.activate_seconds / engine.TICK_SECONDS))
+    try:
+        bot = run.add_bot(req.archetype, req.skill, activate_tick, name=(req.name or None))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"ok": True, "uid": bot.uid, "bots": run.bots_view()}
+
+
+@router.delete("/run/{run_id}/bots/{bot_uid}")
+async def remove_bot(run_id: str, bot_uid: str, user: User = Depends(current_user)):
+    """Remove a bot that hasn't entered yet."""
+    run = _require_run(run_id)
+    if not _can_control(run, user):
+        raise HTTPException(status_code=403, detail="Only the run's creator or an admin can manage bots")
+    try:
+        run.remove_bot(bot_uid)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from None
+    return {"ok": True, "bots": run.bots_view()}
+
+
 # ---- The order gateway (what a player's client talks to) ----
 @router.get("/run/{run_id}/token")
 async def issue_token(run_id: str, user: User = Depends(current_user)):
@@ -366,6 +415,7 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
         ],
         "market": run.market_snapshot(reveal_fair=finished),
         "leaderboard": run.leaderboard(),
+        "bots": run.bots_view(),
         "tape": list(run.tape)[:25],
         "me": run.player_view(str(user.id)),
     }

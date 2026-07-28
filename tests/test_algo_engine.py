@@ -313,6 +313,74 @@ class TestViews:
         assert set(view["open_orders"]) == set(engine.ITEM_SYMBOLS)
 
 
+# ── House bots ──────────────────────────────────────────────────────────────
+
+
+class TestBots:
+    def test_default_roster_is_a_maker_and_a_taker(self, run: Run):
+        by_uid = {b.uid: b for b in run.bots}
+        assert by_uid[engine.MM_BOT_ID].archetype == "market_maker"
+        assert by_uid[engine.FLOW_BOT_ID].archetype == "taker"
+        assert len(run.bots) == 2
+
+    def test_add_bot_creates_a_bot_participant(self, run: Run):
+        bot = run.add_bot("momentum", "good", activate_tick=0, name="Chaser")
+        assert run.participants[bot.uid].is_bot
+        assert run.participants[bot.uid].name == "Chaser"
+        assert bot in run.bots
+
+    @pytest.mark.parametrize("archetype, skill, match", [
+        ("wizard", "normal", "unknown bot type"),
+        ("taker", "godlike", "unknown skill level"),
+    ])
+    def test_add_bot_validates(self, run: Run, archetype, skill, match):
+        with pytest.raises(ValueError, match=match):
+            run.add_bot(archetype, skill)
+
+    def test_bot_cap_is_enforced(self, run: Run):
+        while len(run.bots) < engine.MAX_BOTS:
+            run.add_bot("taker", "normal")
+        with pytest.raises(ValueError, match="at most"):
+            run.add_bot("taker", "normal")
+
+    def test_scheduled_bot_does_not_trade_before_entry(self, run: Run):
+        late = run.add_bot("market_maker", "cracked", activate_tick=30, name="Latecomer")
+        started(run, "idle")
+        heartbeat(run, 10)                       # before its entry
+        assert run.participants[late.uid].fills == 0
+        assert late.uid not in {r["user_id"] for r in run.leaderboard()}  # hidden until it enters
+        heartbeat(run, 40)                       # past its entry
+        assert late.uid in {r["user_id"] for r in run.leaderboard()}
+
+    def test_bots_view_reports_entry_and_active_state(self, run: Run):
+        run.add_bot("bull", "normal", activate_tick=120, name="Bull")
+        started(run, "idle")
+        heartbeat(run, 5)
+        view = {b["name"]: b for b in run.bots_view()}
+        assert view["Bull"]["enters_at"] == 120
+        assert view["Bull"]["active"] is False
+        assert view["Market Maker Bot"]["active"] is True
+
+    def test_remove_pending_bot_but_not_an_active_one(self, run: Run):
+        pending = run.add_bot("bear", "good", activate_tick=60, name="Bear")
+        started(run, "idle")
+        heartbeat(run, 5)
+        run.remove_bot(pending.uid)              # not entered yet → ok
+        assert pending.uid not in run.participants
+        with pytest.raises(ValueError, match="already entered"):
+            run.remove_bot(engine.MM_BOT_ID)     # live from the start
+
+    @pytest.mark.parametrize("archetype", list(engine.BOT_ARCHETYPES))
+    @pytest.mark.parametrize("skill", engine.SKILL_LEVELS)
+    def test_every_archetype_and_skill_respects_the_limit(self, run: Run, archetype, skill):
+        run.add_bot(archetype, skill, name=f"{archetype}-{skill}")
+        started(run, "idle")
+        heartbeat(run, 80)
+        for p in run.participants.values():
+            for item, qty in p.pos.items():
+                assert abs(qty) <= POSITION_LIMIT, (p.name, item, qty)
+
+
 # ── Registry ───────────────────────────────────────────────────────────────
 
 
