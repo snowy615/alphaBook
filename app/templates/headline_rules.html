@@ -12,21 +12,31 @@
 
 <body>
     <div class="topbar">
-        <a href="/"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></a>
-        <div id="loginBox" class="hidden"><a href="/login" class="btn small ghost">Login</a></div>
-        <div id="userBox" class="hidden"><a href="/profile" class="btn ghost">Profile</a><span id="userName"></span></div>
+        <div class="brand">
+            <a href="/" class="brand-link">
+                <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+                <div class="titles">
+                    <h1>AlphaBook</h1>
+                    <div class="subtitle">Headline Trading</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <div id="loginBox" class="hidden"><a href="/login" class="btn ghost">Login</a></div>
+            <div id="userBox" class="hidden actions"><a href="/profile" class="btn ghost">Profile</a><span id="userName"></span></div>
+        </div>
     </div>
 
     <div class="page-container" style="max-width: 720px;">
         <div class="section-card">
-            <h2>📰 Headline Trading Game</h2>
+            <h2>Headline Trading Game</h2>
             <p style="color: var(--muted); margin-bottom: 16px;">
                 Trade a single futures contract as breaking news headlines move the market.
                 Buy low, sell high — or short the top and ride it down. Your PnL updates live!
             </p>
 
             <div class="rules-section">
-                <h3>📋 How It Works</h3>
+                <h3>How It Works</h3>
                 <ol style="color: var(--text); line-height: 1.8; padding-left: 20px;">
                     <li><strong>Admin picks a scenario</strong> (Tech IPO, Oil, Crypto) and starts the game</li>
                     <li>Price starts at <strong>$100</strong> and moves every second via random walk</li>
@@ -38,7 +48,7 @@
             </div>
 
             <div class="rules-section">
-                <h3>💰 PnL Calculation</h3>
+                <h3>PnL Calculation</h3>
                 <p style="color: var(--text);">
                     Your PnL is calculated in real-time based on your trades:<br>
                     <code style="color: var(--brand);">PnL = Σ (contracts × (current_price - entry_price))</code><br>
@@ -53,7 +63,7 @@
             <!-- Admin: Create Game -->
             <div id="adminCreate" class="hidden">
                 <div class="rules-section" style="border-color: var(--brand);">
-                    <h3>🛠️ Admin — Create Game</h3>
+                    <h3>Admin — Create Game</h3>
                     <p>Choose a scenario template:</p>
                     <div id="templatePicker" style="display: flex; flex-direction: column; gap: 8px; margin: 12px 0;">
                     </div>
@@ -76,7 +86,7 @@
                 <p>Enter the 6-character code from your game admin:</p>
                 <div class="join-form">
                     <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
-                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 0; color: var(--text);">
                     <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
                 </div>
                 <p id="joinMsg" class="small" style="margin-top: 8px;"></p>

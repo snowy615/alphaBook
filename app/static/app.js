@@ -527,7 +527,7 @@
         datasets: [{
           label: "P&L",
           data: [],
-          borderColor: "#6c5ce7",
+          borderColor: "#4d9fd6",
           backgroundColor: "rgba(108, 92, 231, 0.1)",
           borderWidth: 2,
           fill: true,

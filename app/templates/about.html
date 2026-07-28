@@ -61,7 +61,7 @@
     .feature-card {
       background: linear-gradient(180deg, var(--panel), var(--panel-2));
       border: 1px solid var(--border);
-      border-radius: var(--radius);
+      border-radius: 0;
       padding: 28px 24px;
       transition: all 0.25s ease;
     }
@@ -73,9 +73,19 @@
     }
 
     .feature-icon {
-      font-size: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 52px;
+      height: 26px;
+      padding: 0 8px;
       margin-bottom: 14px;
-      display: block;
+      border: 1px solid var(--border-strong);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      color: var(--muted);
     }
 
     .feature-title {
@@ -104,7 +114,7 @@
       padding: 20px 24px;
       background: linear-gradient(180deg, var(--panel), var(--panel-2));
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 0;
       transition: border-color 0.2s ease;
     }
 
@@ -113,10 +123,18 @@
     }
 
     .mode-icon {
-      font-size: 32px;
       flex-shrink: 0;
-      width: 48px;
-      text-align: center;
+      width: 52px;
+      height: 26px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--border-strong);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .08em;
+      color: var(--muted);
     }
 
     .mode-body {
@@ -148,7 +166,7 @@
       gap: 1px;
       background: var(--border);
       border: 1px solid var(--border);
-      border-radius: var(--radius);
+      border-radius: 0;
       overflow: hidden;
       margin-bottom: 48px;
     }
@@ -181,7 +199,7 @@
 <body>
   <div class="topbar">
     <div class="brand">
-      <a href="/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit;">
+      <a href="/" class="brand-link">
         <div class="logo">
           <img src="/static/alphabook.png" alt="AlphaBook" class="logo-img">
         </div>
@@ -225,7 +243,7 @@
         <span class="stat-lbl">Live stocks</span>
       </div>
       <div class="stat-cell">
-        <span class="stat-num">4</span>
+        <span class="stat-num">7</span>
         <span class="stat-lbl">Game modes</span>
       </div>
       <div class="stat-cell">
@@ -243,37 +261,37 @@
     <h3 class="about-section-title">Why AlphaBook?</h3>
     <div class="features-grid">
       <div class="feature-card">
-        <span class="feature-icon">📊</span>
+        <span class="feature-icon">BOOK</span>
         <div class="feature-title">Live Order Book</div>
         <div class="feature-desc">Experience a real price-time priority matching engine. See bids and asks update in real
           time and place limit orders just like on a professional exchange.</div>
       </div>
       <div class="feature-card">
-        <span class="feature-icon">📈</span>
+        <span class="feature-icon">LIVE</span>
         <div class="feature-title">Real Market Prices</div>
         <div class="feature-desc">Market simulation uses live prices for AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA
           — so your trading decisions are anchored to actual market conditions.</div>
       </div>
       <div class="feature-card">
-        <span class="feature-icon">🎮</span>
+        <span class="feature-icon">GAME</span>
         <div class="feature-title">Structured Games</div>
         <div class="feature-desc">Purpose-built games teach probability estimation, news impact analysis, card-game
           pricing, and mental arithmetic under pressure.</div>
       </div>
       <div class="feature-card">
-        <span class="feature-icon">🏆</span>
+        <span class="feature-icon">RANK</span>
         <div class="feature-title">Competitive Leaderboard</div>
         <div class="feature-desc">Track your P&amp;L against other participants in real time. Compete to top the
           leaderboard and understand where your edge comes from.</div>
       </div>
       <div class="feature-card">
-        <span class="feature-icon">🛡️</span>
+        <span class="feature-icon">SAFE</span>
         <div class="feature-title">Zero Financial Risk</div>
         <div class="feature-desc">All balances are virtual. You get the full trading experience — market risk, position
           management, order flow — without putting real money on the line.</div>
       </div>
       <div class="feature-card">
-        <span class="feature-icon">⚡</span>
+        <span class="feature-icon">FAST</span>
         <div class="feature-title">Instant Setup</div>
         <div class="feature-desc">Sign up in seconds and jump straight into a trading session. No software to install,
           no configurations — just open a browser and start.</div>
@@ -287,7 +305,7 @@
     <h3 class="about-section-title">Game Modes</h3>
     <div class="modes-list">
       <div class="mode-row">
-        <div class="mode-icon">📉</div>
+        <div class="mode-icon">MKT</div>
         <div class="mode-body">
           <div class="mode-title">Market Simulation</div>
           <div class="mode-desc">Trade AAPL, MSFT, NVDA, AMZN, GOOGL, META, and TSLA on a live order book anchored to
@@ -297,7 +315,7 @@
         </div>
       </div>
       <div class="mode-row">
-        <div class="mode-icon">🃏</div>
+        <div class="mode-icon">5OS</div>
         <div class="mode-body">
           <div class="mode-title">5Os — Quartile Estimation</div>
           <div class="mode-desc">A trading-floor classic. Players estimate the five key statistics (minimum, 25th
@@ -306,7 +324,7 @@
         </div>
       </div>
       <div class="mode-row">
-        <div class="mode-icon">📰</div>
+        <div class="mode-icon">HDL</div>
         <div class="mode-body">
           <div class="mode-title">Headline Trading</div>
           <div class="mode-desc">News hits the wire and prices start moving. React to market-moving headlines, take
@@ -315,7 +333,7 @@
         </div>
       </div>
       <div class="mode-row">
-        <div class="mode-icon">🃏</div>
+        <div class="mode-icon">PKR</div>
         <div class="mode-body">
           <div class="mode-title">Poker Auction</div>
           <div class="mode-desc">Bid for poker cards in a sealed-bid auction, assemble the best hand you can, and trade
@@ -324,7 +342,7 @@
         </div>
       </div>
       <div class="mode-row">
-        <div class="mode-icon">🧠</div>
+        <div class="mode-icon">MM</div>
         <div class="mode-body">
           <div class="mode-title">Mental Math</div>
           <div class="mode-desc">Speed and accuracy in arithmetic is a prerequisite for trading floors. Timed questions

@@ -22,7 +22,7 @@
       flex: 0 0 auto;
       width: 16px; height: 16px;
       display: inline-flex; align-items: center; justify-content: center;
-      border-radius: 4px;
+      border-radius: 0;
       font-size: 10px; font-weight: 700;
     }
     .trade-side.buy  { background: rgba(46, 204, 113, 0.18); color: var(--green); }
@@ -35,7 +35,7 @@
       flex: 1 1 auto;
       text-align: right;
     }
-    .trade-who .bot-name { color: #9d8cff; }
+    .trade-who .bot-name { color: var(--brand); }
     .trade-item.kind-bot { opacity: 0.75; }
   </style>
   <script src="/static/theme.js"></script>
@@ -44,7 +44,7 @@
 <body>
   <div class="topbar">
     <div class="brand">
-      <a href="/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit;">
+      <a href="/" class="brand-link">
         <div class="logo">
           <img src="/static/alphabook.png" alt="AlphaBook" class="logo-img">
         </div>

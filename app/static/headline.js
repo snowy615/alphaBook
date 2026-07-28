@@ -291,8 +291,8 @@
         labels,
         datasets: [{
           data: priceHistory,
-          borderColor: "#6c5ce7",
-          backgroundColor: "#6c5ce733",
+          borderColor: "#4d9fd6",
+          backgroundColor: "#4d9fd633",
           fill: true,
           tension: 0.1,
           pointRadius: 0,

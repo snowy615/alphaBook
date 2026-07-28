@@ -13,7 +13,7 @@
 <body>
     <div class="topbar">
         <div class="brand">
-            <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+            <a href="/" class="brand-link">
                 <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
                 <div class="titles">
                     <h1>{{ app_name }}</h1>
@@ -35,16 +35,16 @@
 
     <div class="container">
         <div class="mm-rules">
-            <h2>🧮 Mental Math — Rules</h2>
+            <h2>Mental Math — Rules</h2>
 
             <div class="rules-section">
-                <h3>🎯 How It Works</h3>
+                <h3>How It Works</h3>
                 <p>Answer timed math questions as fast as you can. The admin configures question types, difficulty,
                     number of questions, and time per question. Answer before the timer runs out!</p>
             </div>
 
             <div class="rules-section">
-                <h3>📊 Question Types</h3>
+                <h3>Question Types</h3>
                 <div
                     style="display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-top: 8px;">
                     <div class="mm-type-badge">➕ Addition</div>
@@ -59,7 +59,7 @@
             </div>
 
             <div class="rules-section">
-                <h3>🏆 Scoring</h3>
+                <h3>Scoring</h3>
                 <p>Each correct answer = <strong>1 point</strong>. If time runs out, the question is skipped (0 points).
                     The player with the most correct answers wins!</p>
             </div>
@@ -69,7 +69,7 @@
             <!-- Admin: Create Game -->
             <div id="adminCreate" class="hidden">
                 <div class="rules-section" style="border-color: var(--brand);">
-                    <h3>🛠️ Admin — Create Game</h3>
+                    <h3>Admin — Create Game</h3>
 
                     <div class="mm-settings-grid">
                         <div class="mm-setting-group">
@@ -133,7 +133,7 @@
                 <p>Enter the 6-character code from your game admin:</p>
                 <div class="join-form">
                     <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
-                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 0; color: var(--text);">
                     <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
                 </div>
                 <p id="joinMsg" class="small" style="margin-top: 8px;"></p>

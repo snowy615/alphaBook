@@ -10,10 +10,10 @@
 
 </head>
 
-<body>
+<body class="msp-body">
   <div class="topbar">
     <div class="brand">
-      <a href="/market-sim-py" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+      <a href="/market-sim-py" class="brand-link">
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
@@ -31,15 +31,17 @@
     </div>
   </div>
 
-  <div class="container">
+  <div class="container msp-container">
     <div id="runHeader" class="msp-run-header">
-      <div>
+      <div class="msp-run-id">
         <h2 id="runName">Loading…</h2>
         <div class="msp-muted">Join code <span id="runCode" class="msp-code">------</span> ·
           <span id="runStatus">connecting</span>
         </div>
       </div>
       <div class="msp-run-actions">
+        <button id="setupToggle" class="btn ghost hidden" aria-expanded="false"
+          aria-controls="setupDrawer">Setup</button>
         <button id="startBtn" class="btn primary hidden">Start run</button>
         <button id="stopBtn" class="btn ghost hidden">End early</button>
       </div>
@@ -127,9 +129,30 @@
       </div>
     </section>
 
-    <!-- ── Live / finished ───────────────────────────────────────────── -->
+    <!-- ── Live / finished ───────────────────────────────────────────────
+         Fixed-height board: it fills the viewport and never scrolls the page,
+         so the key numbers stay put for the whole run. Each panel scrolls
+         inside itself instead. -->
     <section id="liveView" class="hidden">
-      <div class="msp-live-grid">
+      <!-- Setup lives in a drawer that is shut once the run is under way —
+           you don't reconnect a bot mid-competition. -->
+      <div id="setupDrawer" class="msp-drawer hidden">
+        <div id="liveConnect"></div>
+        <div class="card msp-panel msp-bots-card">
+          <div class="head">
+            <h3>House bots</h3>
+            <span class="msp-muted js-bots-count"></span>
+          </div>
+          <div class="msp-panel-body">
+            <div class="js-bots-add"></div>
+            <div class="js-bots-list msp-bots"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="msp-strip" id="myStats"></div>
+
+      <div class="msp-cols">
         <div class="card msp-panel">
           <div class="head">
             <h3>Leaderboard</h3>
@@ -143,65 +166,51 @@
           </div>
         </div>
 
-        <div class="card msp-panel">
-          <div class="head">
-            <h3>Market</h3>
-            <span class="msp-muted" id="fairNote">fair values revealed at the bell</span>
+        <div class="msp-col">
+          <div class="card msp-panel msp-market-card">
+            <div class="head">
+              <h3>Market</h3>
+              <span class="msp-muted" id="fairNote">fair values revealed at the bell</span>
+            </div>
+            <div class="msp-panel-body msp-flush msp-scroll">
+              <table class="msp-table" id="marketTable"></table>
+            </div>
           </div>
-          <div class="msp-panel-body msp-flush msp-scroll">
-            <table class="msp-table" id="marketTable"></table>
+
+          <div class="card msp-panel msp-grow">
+            <div class="head">
+              <h3>Your book</h3>
+              <span class="msp-pill" id="myStatus">—</span>
+            </div>
+            <div class="msp-panel-body msp-flush msp-scroll">
+              <table class="msp-table msp-positions" id="myPositions"></table>
+            </div>
           </div>
         </div>
 
-        <div class="card msp-panel">
-          <div class="head">
-            <h3>Your book</h3>
-            <span class="msp-pill" id="myStatus">—</span>
+        <div class="msp-col">
+          <div class="card msp-panel msp-chart-card">
+            <div class="head">
+              <h3>Your P&amp;L</h3>
+              <span class="msp-num" id="pnlNow">—</span>
+            </div>
+            <div class="msp-panel-body">
+              <canvas id="pnlChart" class="msp-chart"></canvas>
+            </div>
           </div>
-          <div class="msp-panel-body">
-            <div class="msp-stats" id="myStats"></div>
-            <table class="msp-table msp-positions" id="myPositions"></table>
-          </div>
-        </div>
 
-        <div id="liveConnect"></div>
-
-        <div class="card msp-panel msp-bots-card">
-          <div class="head">
-            <h3>House bots</h3>
-            <span class="msp-muted js-bots-count"></span>
-          </div>
-          <div class="msp-panel-body">
-            <div class="js-bots-add"></div>
-            <div class="js-bots-list msp-bots"></div>
-          </div>
-        </div>
-
-        <div class="card msp-panel msp-wide-card">
-          <div class="head">
-            <h3>Your P&amp;L</h3>
-            <span class="msp-num" id="pnlNow">—</span>
-          </div>
-          <div class="msp-panel-body">
-            <canvas id="pnlChart" class="msp-chart"></canvas>
-          </div>
-        </div>
-
-        <div class="card msp-panel msp-wide-card">
-          <div class="head">
-            <h3>Prints</h3>
-            <span class="msp-muted">most recent first</span>
-          </div>
-          <div class="msp-panel-body msp-flush msp-scroll">
-            <table class="msp-table" id="tapeTable"></table>
+          <div class="card msp-panel msp-grow">
+            <div class="head">
+              <h3>Prints</h3>
+              <span class="msp-muted">most recent first</span>
+            </div>
+            <div class="msp-panel-body msp-flush msp-scroll">
+              <table class="msp-table" id="tapeTable"></table>
+            </div>
           </div>
         </div>
       </div>
     </section>
-  </div>
-
-  <div class="footer">
-    <p>{{ app_name }} • Market Simulation Coding</p>
   </div>
 
   <script>

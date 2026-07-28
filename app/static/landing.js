@@ -11,6 +11,10 @@
 
   let isAuthed = false;
 
+  const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+
   // ---- Build flat game grid ----
   function buildGameGrid() {
     const grid = $("#gameGrid");
@@ -18,120 +22,93 @@
     grid.innerHTML = "";
 
     const groups = window.GAME_GROUPS || {};
-
-    // 1) Market Simulation card (always first)
     const marketGames = groups.market || [];
-    if (marketGames.length > 0) {
-      const card = createCard({
-        icon: "📈",
+
+    // Fixed modes, in the order they are meant to be discovered. The tag is a
+    // monogram, not an emoji — it reads as an instrument code on the board.
+    const modes = [
+      marketGames.length ? {
+        tag: "MKT",
         name: "Market Simulation",
-        subtitle: `${marketGames.length} stocks`,
-        accentFrom: "#9d8cff",
-        accentTo: "#6c5ce7",
-        onClick: () => navigate("/market"),
-      });
-      grid.appendChild(card);
-    }
+        subtitle: `Live limit order book across ${marketGames.length} stocks`,
+        href: "/market",
+      } : null,
+      {
+        tag: "MSC",
+        name: "Market Simulation Coding",
+        subtitle: "Write a bot, run it locally, trade it for ten minutes",
+        href: "/market-sim-py",
+      },
+      {
+        tag: "SWE",
+        name: "SWE Prep",
+        subtitle: "Write Python in the browser, sandboxed on the server",
+        href: "/swe-prep",
+      },
+      {
+        tag: "HDL",
+        name: "Headline",
+        subtitle: "News hits the wire — trade the story before the bell",
+        href: "/headline",
+      },
+      {
+        tag: "5OS",
+        name: "5Os",
+        subtitle: "Estimate the five statistics of a hidden hand",
+        href: "/5os",
+      },
+      {
+        tag: "PKR",
+        name: "Poker Auction",
+        subtitle: "Sealed-bid auctions, then trade the hands you build",
+        href: "/poker-auction",
+      },
+      {
+        tag: "MM",
+        name: "Mental Math",
+        subtitle: "Timed arithmetic drills, configurable difficulty",
+        href: "/mental-math",
+      },
+    ].filter(Boolean);
 
-    // 2) 5Os card (always present)
-    const fiveOsCard = createCard({
-      icon: "🎲",
-      name: "5Os",
-      subtitle: "Card Game",
-      accentFrom: "#ffb088",
-      accentTo: "#e17055",
-      onClick: () => navigate("/5os"),
-    });
-    grid.appendChild(fiveOsCard);
+    modes.forEach((m) => grid.appendChild(createCard({
+      tag: m.tag,
+      name: m.name,
+      subtitle: m.subtitle,
+      onClick: () => navigate(m.href),
+    })));
 
-    // 3) Headline card (always present)
-    const headlineCard = createCard({
-      icon: "📰",
-      name: "Headline",
-      subtitle: "Trading Game",
-      accentFrom: "#a29bfe",
-      accentTo: "#6c5ce7",
-      onClick: () => navigate("/headline"),
-    });
-    grid.appendChild(headlineCard);
-
-    // 4) Poker Auction card
-    const pokerCard = createCard({
-      icon: "🃏",
-      name: "Poker Auction",
-      subtitle: "Card Auction",
-      accentFrom: "#ffeaa7",
-      accentTo: "#fdcb6e",
-      onClick: () => navigate("/poker-auction"),
-    });
-    grid.appendChild(pokerCard);
-
-    // 5) Mental Math card
-    const mentalMathCard = createCard({
-      icon: "🧮",
-      name: "Mental Math",
-      subtitle: "Speed Quiz",
-      accentFrom: "#55efc4",
-      accentTo: "#00b894",
-      onClick: () => navigate("/mental-math"),
-    });
-    grid.appendChild(mentalMathCard);
-
-    // 6) Market Simulation Coding card
-    const algoCard = createCard({
-      icon: "🐍",
-      name: "Market Simulation Coding",
-      subtitle: "Algo Trading",
-      accentFrom: "#7ee8fa",
-      accentTo: "#0984e3",
-      onClick: () => navigate("/market-sim-py"),
-    });
-    grid.appendChild(algoCard);
-
-    // 7) SWE Prep card (in-browser Python editor, sandboxed)
-    const sweCard = createCard({
-      icon: "💻",
-      name: "SWE Prep",
-      subtitle: "Code Practice",
-      accentFrom: "#c3aefc",
-      accentTo: "#8e6cf0",
-      onClick: () => navigate("/swe-prep"),
-    });
-    grid.appendChild(sweCard);
-
-
-    // 3) Custom games (each as its own card)
-    const otherGames = groups.other || [];
-    otherGames.forEach(game => {
-      const card = createCard({
-        icon: game.name.charAt(0).toUpperCase(),
+    // Custom games created by an instructor, each as its own card.
+    (groups.other || []).forEach((game) => {
+      grid.appendChild(createCard({
+        tag: String(game.symbol || game.name).slice(0, 4).toUpperCase(),
         name: game.name,
-        subtitle: "Custom Game",
-        accentFrom: "#88ffcc",
-        accentTo: "#00cec9",
+        subtitle: "Custom game",
         onClick: () => navigate(`/trade/${game.symbol}`),
-      });
-      grid.appendChild(card);
+      }));
     });
   }
 
-  function createCard({ icon, name, subtitle, accentFrom, accentTo, comingSoon, onClick }) {
+  function createCard({ tag, name, subtitle, onClick }) {
     const card = document.createElement("div");
-    card.className = "equity-card" + (comingSoon ? " coming-soon-card" : "");
+    card.className = "equity-card";
+    card.setAttribute("role", "link");
+    card.setAttribute("tabindex", "0");
 
     card.innerHTML = `
-      <div class="equity-icon" style="background: radial-gradient(circle at 30% 30%, ${accentFrom}, ${accentTo});">${icon}</div>
-      <div class="equity-name">${name}</div>
-      <div class="equity-price ${comingSoon ? 'coming-soon-label' : ''}" style="font-size: 16px; ${comingSoon ? '' : 'color: var(--muted);'}">${subtitle}</div>
+      <div class="equity-icon">${esc(tag)}</div>
+      <div class="equity-name">${esc(name)}</div>
+      <div class="equity-price">${esc(subtitle)}</div>
     `;
 
     if (onClick) {
-      card.addEventListener("click", () => {
-        if (!isAuthed) {
-          window.location.href = "/login";
-        } else {
-          onClick();
-        }
+      const go = () => {
+        if (!isAuthed) window.location.href = "/login";
+        else onClick();
+      };
+      card.addEventListener("click", go);
+      card.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); }
       });
     }
 

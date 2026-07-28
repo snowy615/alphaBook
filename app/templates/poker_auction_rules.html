@@ -12,20 +12,30 @@
 
 <body>
     <div class="topbar">
-        <a href="/"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></a>
-        <div id="loginBox" class="hidden"><a href="/login" class="btn small ghost">Login</a></div>
-        <div id="userBox" class="hidden"><a href="/profile" class="btn ghost">Profile</a><span id="userName"></span></div>
+        <div class="brand">
+            <a href="/" class="brand-link">
+                <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+                <div class="titles">
+                    <h1>AlphaBook</h1>
+                    <div class="subtitle">Poker Auction</div>
+                </div>
+            </a>
+        </div>
+        <div class="actions">
+            <div id="loginBox" class="hidden"><a href="/login" class="btn ghost">Login</a></div>
+            <div id="userBox" class="hidden actions"><a href="/profile" class="btn ghost">Profile</a><span id="userName"></span></div>
+        </div>
     </div>
 
     <div class="page-container" style="max-width: 780px;">
         <div class="section-card">
-            <h2>🃏 Poker Auction</h2>
+            <h2>Poker Auction</h2>
             <p style="color: var(--muted); margin-bottom: 16px;">
                 Bid on poker cards in a multi-round auction. Build the best 5-card hand to win big!
             </p>
 
             <div class="rules-section">
-                <h3>📋 How It Works</h3>
+                <h3>How It Works</h3>
                 <ol style="color: var(--text); line-height: 1.8; padding-left: 20px;">
                     <li>Each team starts with <strong>1 random card</strong> and <strong>$1,000</strong></li>
                     <li><strong>13 rounds</strong> of sealed-bid auction — a full 52-card deck is auctioned off</li>
@@ -38,7 +48,7 @@
             </div>
 
             <div class="rules-section">
-                <h3>🔨 Round Schedule</h3>
+                <h3>Round Schedule</h3>
                 <div style="display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;">
                     <span class="pa-round-badge">R1: 2</span>
                     <span class="pa-round-badge">R2: 3</span>
@@ -51,7 +61,7 @@
             </div>
 
             <div class="rules-section">
-                <h3>💰 Post-Auction</h3>
+                <h3>Post-Auction</h3>
                 <p style="color: var(--text);">
                     After all 13 rounds, you can sell unwanted cards:
                 </p>
@@ -84,49 +94,49 @@
             </div>
 
             <div class="rules-section">
-                <h3>🏆 Hand Awards</h3>
+                <h3>Hand Awards</h3>
                 <p style="color: var(--text); margin-bottom: 8px;">
                     Your best 5-card hand earns a fixed bonus:
                 </p>
                 <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:13px;color:var(--text);">
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(253,203,110,0.1);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(253,203,110,0.1);border-radius: 0;">
                         <span>Royal Flush</span><strong style="color:#00b894;">$10,000</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(253,203,110,0.08);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(253,203,110,0.08);border-radius: 0;">
                         <span>Straight Flush</span><strong style="color:#00b894;">$5,000</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Four of a Kind</span><strong style="color:#00b894;">$3,000</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Full House</span><strong style="color:#00b894;">$2,000</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Flush</span><strong style="color:#00b894;">$1,500</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Straight</span><strong style="color:#00b894;">$1,000</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Three of a Kind</span><strong style="color:#00b894;">$500</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>Two Pair</span><strong style="color:#00b894;">$300</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>One Pair</span><strong style="color:#00b894;">$100</strong>
                     </div>
                     <div
-                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius:6px;">
+                        style="display:flex;justify-content:space-between;padding:6px 10px;background:rgba(255,255,255,0.02);border-radius: 0;">
                         <span>High Card</span><strong style="color:var(--muted);">$0</strong>
                     </div>
                 </div>
@@ -137,7 +147,7 @@
             <!-- Admin: Create Game -->
             <div id="adminCreate" class="hidden">
                 <div class="rules-section" style="border-color: var(--brand);">
-                    <h3>🛠️ Admin — Create Game</h3>
+                    <h3>Admin — Create Game</h3>
                     <button onclick="createGame()" class="btn" id="createBtn">Create Poker Auction Game</button>
                     <div id="createResult" class="hidden" style="margin-top: 16px; text-align: center;">
                         <p style="margin-bottom: 4px; color: var(--muted); font-size: 13px;">GAME CREATED — SHARE THIS
@@ -156,7 +166,7 @@
                 <p>Enter the 6-character code from your game admin:</p>
                 <div class="join-form">
                     <input type="text" id="joinCode" placeholder="ABC123" maxlength="6"
-                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; color: var(--text);">
+                        style="text-transform: uppercase; text-align: center; font-size: 24px; letter-spacing: 8px; padding: 12px 16px; width: 220px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 0; color: var(--text);">
                     <button onclick="joinGame()" class="btn" id="joinBtn">Join Game</button>
                 </div>
                 <p id="joinMsg" class="small" style="margin-top: 8px;"></p>

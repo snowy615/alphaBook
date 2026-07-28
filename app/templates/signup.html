@@ -3,96 +3,33 @@
 
 <head>
   <meta charset="utf-8" />
-  <title>Sign up · Mini Exchange</title>
+  <title>Sign up · AlphaBook</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <style>
-    :root {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-    }
-
-    body {
-      background: #0b0e11;
-      color: #e6e6e6;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      height: 100vh;
-      margin: 0;
-    }
-
-    .card {
-      background: #11161d;
-      border: 1px solid #232933;
-      border-radius: 12px;
-      padding: 22px;
-      width: 320px;
-    }
-
-    h2 {
-      margin: 0 0 10px 0;
-    }
-
-    label {
-      display: block;
-      margin: 10px 0 6px;
-      color: #9aa6b2;
-    }
-
-    input {
-      width: 100%;
-      padding: 10px;
-      border-radius: 8px;
-      border: 1px solid #232933;
-      background: #0d131a;
-      color: #e6e6e6;
-    }
-
-    button {
-      margin-top: 14px;
-      width: 100%;
-      padding: 10px;
-      border-radius: 8px;
-      border: 0;
-      background: #6fe6a8;
-      color: #001018;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .muted {
-      color: #8c95a3;
-      font-size: 13px;
-      margin-top: 8px;
-    }
-
-    .err {
-      color: #ff8a8a;
-      margin-top: 8px;
-    }
-
-    a {
-      color: #0cf;
-    }
-  </style>
+  <link rel="stylesheet" href="/static/style.css">
   <script src="/static/theme.js"></script>
 
 </head>
 
-<body>
-  <div class="card">
-    <h2>Create account</h2>
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+      <div class="titles">
+        <h1>AlphaBook</h1>
+        <div class="subtitle">Create your account</div>
+      </div>
+    </div>
     {% if error %}<div class="err">{{error}}</div>{% endif %}
     <div id="auth-container">
       <form id="signup-form">
         <label>Email</label>
         <input name="email" type="email" required placeholder="name@example.com" />
         <label>Username</label>
-        <input name="username" type="text" required placeholder="Display Name" />
+        <input name="username" type="text" required placeholder="Display name" />
         <label>Password</label>
         <input name="password" type="password" required minlength="6" />
-        <button type="submit">Sign up</button>
+        <button type="submit" class="btn primary auth-submit">Sign up</button>
       </form>
-      <p style="margin-top: 1rem;"><a href="/login">Already have an account? Sign in</a></p>
     </div>
 
     <script type="module">
@@ -166,7 +103,7 @@
       }
       init();
     </script>
-    <div class="muted">Already have an account? <a href="/login">Sign in</a></div>
+    <div class="auth-alt">Already have an account? <a href="/login">Sign in</a></div>
   </div>
 </body>
 

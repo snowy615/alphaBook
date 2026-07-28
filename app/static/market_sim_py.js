@@ -185,6 +185,36 @@
       }
     }
 
+    // -- setup drawer ----------------------------------------------------
+    // Connecting a bot and stocking house bots are pre-run chores. Once the
+    // run is live the drawer starts shut so the board owns the screen; the
+    // choice is remembered per browser.
+    const SETUP_KEY = "msp-setup-open";
+    function setSetupOpen(open) {
+      const drawer = $("#setupDrawer");
+      const btn = $("#setupToggle");
+      if (!drawer || !btn) return;
+      drawer.classList.toggle("hidden", !open);
+      btn.setAttribute("aria-expanded", open ? "true" : "false");
+      btn.classList.toggle("msp-toggle-on", open);
+      btn.textContent = open ? "Hide setup" : "Setup";
+      try { localStorage.setItem(SETUP_KEY, open ? "1" : "0"); } catch { /* private mode */ }
+      if (open) drawPnlChart();
+    }
+
+    $("#setupToggle")?.addEventListener("click", () => {
+      setSetupOpen($("#setupDrawer").classList.contains("hidden"));
+    });
+
+    let setupInitialised = false;
+    function initSetupDrawer() {
+      if (setupInitialised) return;
+      setupInitialised = true;
+      let stored = null;
+      try { stored = localStorage.getItem(SETUP_KEY); } catch { /* private mode */ }
+      setSetupOpen(stored === "1");
+    }
+
     $("#startBtn")?.addEventListener("click", async (e) => {
       e.target.disabled = true;
       try {
@@ -232,7 +262,7 @@
 
     function renderLeaderboard(rows, myUid) {
       const table = $("#leaderboard");
-      if (!table) return;
+      if (!table) return rows.find((r) => r.user_id === myUid);
 
       // Pin the player's own rank at the top so it's always visible.
       const meRow = rows.find((r) => r.user_id === myUid);
@@ -261,6 +291,8 @@
             <td class="msp-num">${r.fills}</td>
             <td>${!r.is_bot && r.connected ? '<span class="msp-dot" title="bot connected"></span>' : ""}</td>
           </tr>`).join("")}</tbody>`;
+
+      return meRow;
     }
 
     function renderMarket(items, revealed) {
@@ -280,12 +312,18 @@
           </tr>`).join("")}</tbody>`;
     }
 
-    function renderMe(me, items, runStatus) {
+    // The always-visible stat strip along the top of the board. Everything a
+    // player checks mid-run lives here so nothing has to be scrolled to.
+    function renderMe(me, items, runStatus, meRow) {
       const stats = $("#myStats");
       const positions = $("#myPositions");
       const status = $("#myStatus");
       if (!me) {
-        if (stats) stats.innerHTML = `<p class="msp-muted">You are watching this run, not trading it.</p>`;
+        if (stats) {
+          stats.innerHTML = `<div class="msp-stat msp-stat-wide">
+            <span class="msp-stat-label">Spectating</span>
+            <span class="msp-stat-value">You are watching this run, not trading it.</span></div>`;
+        }
         if (positions) positions.innerHTML = "";
         if (status) { status.textContent = "spectator"; status.className = "msp-pill"; }
         return;
@@ -298,16 +336,23 @@
       }
 
       if (stats) {
+        const rank = meRow ? `#${meRow.rank}` : "—";
+        const gross = items.reduce((n, it) => n + Math.abs(me.positions[it.item] || 0), 0);
         stats.innerHTML = `
-          <div class="msp-stat"><span class="msp-stat-label">P&amp;L</span>
+          <div class="msp-stat"><span class="msp-stat-label">Rank</span>
+            <span class="msp-stat-value">${rank}</span></div>
+          <div class="msp-stat msp-stat-key"><span class="msp-stat-label">P&amp;L</span>
             <span class="msp-stat-value ${me.pnl >= 0 ? "msp-up" : "msp-down"}">${money(me.pnl)}</span></div>
           <div class="msp-stat"><span class="msp-stat-label">Cash</span>
             <span class="msp-stat-value">${money(me.cash)}</span></div>
           <div class="msp-stat"><span class="msp-stat-label">Fills</span>
             <span class="msp-stat-value">${me.fills}</span></div>
           <div class="msp-stat"><span class="msp-stat-label">Orders</span>
-            <span class="msp-stat-value">${me.orders_accepted}
-              ${me.orders_rejected ? `<span class="msp-down">/ ${me.orders_rejected} rej</span>` : ""}</span></div>`;
+            <span class="msp-stat-value">${me.orders_accepted}${
+              me.orders_rejected ? `<span class="msp-down msp-stat-sub"> / ${me.orders_rejected} rej</span>` : ""
+            }</span></div>
+          <div class="msp-stat"><span class="msp-stat-label">Gross position</span>
+            <span class="msp-stat-value">${gross}</span></div>`;
       }
 
       if (positions) {
@@ -361,7 +406,7 @@
         ? `<span class="msp-num ${b.pnl >= 0 ? "msp-up" : "msp-down"}">${money(b.pnl)}</span>` : "<span></span>";
       const rm = (canControl && b.removable)
         ? `<button class="msp-bot-x" data-remove="${esc(b.uid)}" title="remove">×</button>` : "<span></span>";
-      return `<div class="msp-bot-row">
+      return `<div class="msp-roster-row">
         <span class="msp-bot-name">${esc(b.name)}</span>
         <span class="msp-skill msp-skill-${esc(b.skill)}">${esc(b.skill)}</span>
         <span class="msp-muted msp-bot-arch">${esc(b.archetype_label)}</span>
@@ -549,6 +594,8 @@
       $("#liveView").classList.toggle("hidden", inLobby);
       $("#startBtn").classList.toggle("hidden", !(inLobby && state.can_control));
       $("#stopBtn").classList.toggle("hidden", !(state.status === "running" && state.can_control));
+      $("#setupToggle").classList.toggle("hidden", inLobby);
+      document.body.classList.toggle("msp-live", !inLobby);
 
       if (state.can_control) await ensureCatalog();
 
@@ -558,12 +605,13 @@
         renderBots(state);
         $("#runClock")?.classList.add("hidden");
       } else {
+        initSetupDrawer();
         mountConnectInto("#liveConnect");
         renderClock(state.seconds_left);
         renderBots(state);
-        renderLeaderboard(state.leaderboard, state.my_uid);
+        const meRow = renderLeaderboard(state.leaderboard, state.my_uid);
         renderMarket(state.market, state.status === "finished");
-        renderMe(state.me, state.market, state.status);
+        renderMe(state.me, state.market, state.status, meRow);
         if (state.me) {
           const lastPoint = pnlHistory[pnlHistory.length - 1];
           // one point per tick, so catching up multiple ticks still adds once
@@ -582,6 +630,14 @@
       lastStatus = state.status;
       schedule(state.status);
     }
+
+    // The board is sized off the viewport, so the canvas has to be redrawn
+    // when the window changes shape.
+    let resizeTimer = null;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(drawPnlChart, 120);
+    });
 
     poll();
   }

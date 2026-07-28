@@ -8,11 +8,12 @@
   <link rel="stylesheet" href="/static/style.css">
   <style>
     .admin-header {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      padding: 30px;
-      border-radius: 12px;
-      margin-bottom: 30px;
-      color: white;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--brand);
+      padding: 20px 24px;
+      margin-bottom: 24px;
+      color: var(--text);
     }
 
     .stats-grid {
@@ -25,7 +26,7 @@
     .stat-card {
       background: var(--card);
       padding: 20px;
-      border-radius: 12px;
+      border-radius: 0;
       border: 1px solid var(--border);
     }
 
@@ -76,7 +77,7 @@
       width: 100%;
       border-collapse: collapse;
       background: var(--card);
-      border-radius: 12px;
+      border-radius: 0;
       overflow: hidden;
     }
 
@@ -100,7 +101,7 @@
     .badge {
       display: inline-block;
       padding: 4px 10px;
-      border-radius: 6px;
+      border-radius: 0;
       font-size: 11px;
       font-weight: 600;
       text-transform: uppercase;
@@ -123,7 +124,7 @@
 
     .action-btn {
       padding: 6px 12px;
-      border-radius: 6px;
+      border-radius: 0;
       border: none;
       font-size: 12px;
       font-weight: 600;
@@ -205,7 +206,7 @@
     .danger-zone {
       background: rgba(255, 107, 107, 0.1);
       border: 2px solid rgba(255, 107, 107, 0.3);
-      border-radius: 12px;
+      border-radius: 0;
       padding: 20px;
       margin-top: 30px;
     }
@@ -215,10 +216,6 @@
       margin-bottom: 15px;
     }
 
-    .logo-img {
-      height: 28px;
-      width: auto;
-    }
 
     .badge-muted {
       background: rgba(148, 163, 184, 0.2);
@@ -237,7 +234,7 @@
 
     .toast {
       padding: 12px 18px;
-      border-radius: 10px;
+      border-radius: 0;
       background: var(--card);
       border: 1px solid var(--border);
       color: var(--text);
@@ -280,7 +277,7 @@
         <span>{{ user.username }}</span>
         <form method="post" action="/logout" style="display:inline; margin-left: 10px;">
           <button type="submit"
-            style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 8px; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600;">Quit</button>
+            style="padding: 8px 16px; background: rgba(255,255,255,0.1); border: 1px solid var(--border); border-radius: 0; color: var(--text); cursor: pointer; font-size: 14px; font-weight: 600;">Quit</button>
         </form>
       </div>
     </div>
@@ -288,7 +285,7 @@
 
   <div class="container" style="margin-top: 40px; max-width: 1400px;">
     <div class="admin-header">
-      <h1>🛡️ Admin Control Panel</h1>
+      <h1>Admin Control Panel</h1>
       <p>Manage users, view analytics, and control the platform</p>
     </div>
 
@@ -324,7 +321,7 @@
     <div id="users-tab" class="tab-content active">
       <div style="display:flex; gap:12px; align-items:center; margin-bottom: 16px;">
         <input id="user-search" type="search" placeholder="Search users by name or ID…" oninput="filterUsers()"
-          style="flex: 0 1 340px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 14px;" />
+          style="flex: 0 1 340px; padding: 10px 14px; border-radius: 0; border: 1px solid var(--border); background: var(--card); color: var(--text); font-size: 14px;" />
         <span id="user-search-count" class="small" style="color: var(--muted);"></span>
       </div>
       <table class="users-table" id="users-table">
@@ -508,7 +505,7 @@
               <textarea id="game-instructions" rows="4"
                 placeholder="Trade YES if you think it will rain, NO if you think it won't. Market resolves at 8 PM tonight."
                 required
-                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; width: 100%; font-family: inherit;"></textarea>
+                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 0; padding: 10px 12px; width: 100%; font-family: inherit;"></textarea>
             </div>
             <div class="field">
               <label>Expected Value (hidden from users, used for P&L)</label>
@@ -517,7 +514,7 @@
             <div class="field">
               <label>Game Type</label>
               <select id="game-type"
-                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px;">
+                style="background: #0e1220; color: var(--text); border: 1px solid var(--border); border-radius: 0; padding: 10px 12px;">
                 <option value="market">Market Simulation</option>
                 <option value="5os">5Os</option>
                 <option value="other">Other</option>
@@ -785,7 +782,7 @@
           <label for="news-input" class="small" style="display:block; margin-bottom:4px;">New message</label>
           <div style="display:flex; gap:8px;">
             <input id="news-input" type="text" placeholder="Type market news here..."
-              style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid var(--border); background:#050814; color:#fff;" />
+              style="flex:1; padding:8px 10px; border-radius: 0; border:1px solid var(--border); background:#050814; color:#fff;" />
             <button class="btn primary" type="button" onclick="createNews()">Publish</button>
           </div>
           <div id="news-hint" class="small" style="margin-top:6px; color: var(--muted);"></div>
@@ -807,7 +804,7 @@
           <p style="color:var(--muted); margin:0;">Members must upload their CV from their profile page. Once ready, generate the full book with one click.</p>
         </div>
         <div style="display:flex; gap:12px; align-items:center;">
-          <select id="cvYearLabel" style="padding:10px 14px; border-radius:8px; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:14px;">
+          <select id="cvYearLabel" style="padding:10px 14px; border-radius: 0; border:1px solid var(--border); background:var(--card); color:var(--text); font-size:14px;">
             <option value="2025-2026">2025–2026</option>
             <option value="2026-2027">2026–2027</option>
             <option value="2027-2028">2027–2028</option>
@@ -856,22 +853,22 @@
 
       <!-- Edit modal -->
       <div id="cvEditModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center;">
-        <div style="background:var(--card); border-radius:16px; padding:32px; width:420px; max-width:90vw;">
+        <div style="background:var(--card); border-radius: 0; padding:32px; width:420px; max-width:90vw;">
           <h3 style="margin:0 0 20px;">Edit CV Profile</h3>
           <input type="hidden" id="editUserId">
           <div style="margin-bottom:14px;">
             <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Full Name</label>
             <input id="editFullName" type="text" placeholder="e.g. Jane Smith"
-              style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
+              style="width:100%; padding:10px; border-radius: 0; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
           </div>
           <div style="margin-bottom:14px;">
             <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Graduation Year</label>
             <input id="editGradYear" type="number" placeholder="e.g. 2027" min="2024" max="2032"
-              style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
+              style="width:100%; padding:10px; border-radius: 0; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
           </div>
           <div style="margin-bottom:24px;">
             <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Track</label>
-            <select id="editTrack" style="width:100%; padding:10px; border-radius:8px; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;">
+            <select id="editTrack" style="width:100%; padding:10px; border-radius: 0; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;">
               <option value="">General Member</option>
               <option value="Fundamental">Fundamental Analyst ✓ CV book</option>
               <option value="Quant">Quantitative Analyst ✓ CV book</option>
@@ -890,7 +887,7 @@
     <!-- Settings Tab -->
     <div id="settings-tab" class="tab-content">
       <div class="danger-zone">
-        <h3>⚠️ Danger Zone</h3>
+        <h3>Danger Zone</h3>
         <p style="margin-bottom: 20px;">These actions are irreversible. Use with caution.</p>
         <button class="btn primary" style="background: var(--red);" onclick="resetAllUsers()">
           Reset All Users to Initial State

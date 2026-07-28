@@ -11,7 +11,7 @@
       margin: 40px auto;
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 16px;
+      border-radius: 0;
       padding: 36px;
     }
     .profile-card h1 { margin: 0 0 6px; font-size: 24px; }
@@ -23,7 +23,7 @@
     }
     .field-group input,
     .field-group select {
-      width: 100%; padding: 11px 14px; border-radius: 9px;
+      width: 100%; padding: 11px 14px; border-radius: 0;
       border: 1px solid var(--border); background: var(--bg);
       color: var(--text); font-size: 15px; box-sizing: border-box;
       transition: border-color 0.2s;
@@ -32,7 +32,7 @@
     .field-group select:focus { outline: none; border-color: var(--brand); }
     .divider { border: none; border-top: 1px solid var(--border); margin: 28px 0; }
     .upload-area {
-      border: 2px dashed var(--border); border-radius: 12px;
+      border: 2px dashed var(--border); border-radius: 0;
       padding: 32px; text-align: center; cursor: pointer;
       transition: border-color 0.2s, background 0.2s;
     }
@@ -44,19 +44,19 @@
     .upload-area .upload-hint { font-size: 13px; color: var(--muted); }
     .cv-status-banner {
       display: flex; align-items: center; gap: 12px;
-      padding: 14px 18px; border-radius: 10px; margin-bottom: 16px;
+      padding: 14px 18px; border-radius: 0; margin-bottom: 16px;
       font-size: 14px; font-weight: 600;
     }
     .cv-status-banner.uploaded { background: rgba(46,204,113,0.12); color: #2ecc71; }
     .cv-status-banner.missing  { background: rgba(255,107,107,0.12); color: var(--red); }
     .btn-row { display: flex; gap: 12px; margin-top: 24px; }
-    .progress-bar-wrap { height: 6px; background: var(--border); border-radius: 4px; margin-top: 12px; display: none; }
-    .progress-bar { height: 100%; background: var(--brand); border-radius: 4px; width: 0%; transition: width 0.3s; }
+    .progress-bar-wrap { height: 6px; background: var(--border); border-radius: 0; margin-top: 12px; display: none; }
+    .progress-bar { height: 100%; background: var(--brand); border-radius: 0; width: 0%; transition: width 0.3s; }
 
     /* Track badge inside dropdown hint */
     .track-hint {
       font-size: 12px; color: var(--muted); margin-top: 6px;
-      padding: 8px 12px; border-radius: 8px; background: rgba(108,92,231,0.06);
+      padding: 8px 12px; border-radius: 0; background: rgba(108,92,231,0.06);
       display: none;
     }
     .track-hint.visible { display: block; }
@@ -69,13 +69,13 @@
     }
     .modal-backdrop.open { display: flex; }
     .modal-box {
-      background: var(--card); border-radius: 16px; padding: 32px;
+      background: var(--card); border-radius: 0; padding: 32px;
       width: 400px; max-width: 90vw;
     }
     .modal-box h3 { margin: 0 0 8px; }
     .modal-box p  { color: var(--muted); font-size: 14px; margin: 0 0 20px; }
     .modal-box input {
-      width: 100%; padding: 11px 14px; border-radius: 9px;
+      width: 100%; padding: 11px 14px; border-radius: 0;
       border: 1px solid var(--border); background: var(--bg);
       color: var(--text); font-size: 15px; box-sizing: border-box;
       margin-bottom: 8px;
@@ -86,7 +86,7 @@
     /* Toast */
     .toast {
       position: fixed; bottom: 28px; right: 28px;
-      padding: 14px 22px; border-radius: 10px; font-weight: 600;
+      padding: 14px 22px; border-radius: 0; font-weight: 600;
       font-size: 14px; z-index: 999; opacity: 0;
       transform: translateY(12px); transition: opacity 0.25s, transform 0.25s;
       pointer-events: none;
@@ -174,12 +174,12 @@
     </div>
 
     <!-- Inline PDF viewer -->
-    <div id="cvViewer" style="display:none;margin-top:20px;border-radius:10px;overflow:hidden;border:1px solid var(--border);">
+    <div id="cvViewer" style="display:none;margin-top:20px;border-radius: 0;overflow:hidden;border:1px solid var(--border);">
       <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border);">
         <span style="font-size:13px;font-weight:600;color:var(--muted);">CV Preview</span>
         <div style="display:flex;gap:8px;">
           <a id="cvOpenLink" href="/me/cv" target="_blank"
-            style="font-size:12px;font-weight:600;color:var(--brand);text-decoration:none;padding:4px 10px;border-radius:6px;background:rgba(108,92,231,0.1);">
+            style="font-size:12px;font-weight:600;color:var(--brand);text-decoration:none;padding:4px 10px;border-radius: 0;background:rgba(108,92,231,0.1);">
             Open in new tab ↗
           </a>
           <button onclick="toggleViewer()"
