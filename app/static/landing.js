@@ -38,6 +38,8 @@
     calc: svg('<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7.5h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'),
     // a line breaking down through a floor, with the rebound after it
     risk: svg('<path d="M3 6l4 5 3-2 4 9 3-4 4 2"/><path d="M3 20h18"/><path d="M14 18l3-4"/>'),
+    // a downward trend with an arrowhead — the crash ledger
+    crash: svg('<path d="M4 5v14h16"/><path d="M8 9l3 4 3-3 4 5"/><path d="M18 15v-3h-3"/>'),
   };
 
   // ---- Mode board ----
@@ -107,6 +109,13 @@
         blurb: "Timed arithmetic drills at the speed a trading floor expects. Configurable types and difficulty.",
         chips: ["Solo or group", "Timed", "Adjustable"],
         href: "/mental-math",
+      },
+      {
+        icon: ICON.crash,
+        name: "Crash Ledger",
+        blurb: "How every S&P 500 name has actually behaved in past crashes — the swingers, the losers, the survivors — with live charts.",
+        chips: ["Reference", "6 crashes", "Live charts"],
+        href: "/crash-ledger",
       },
     ].filter(Boolean);
 

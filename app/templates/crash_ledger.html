@@ -1,0 +1,1330 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crash Ledger - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/crash_ledger.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" style="display:flex;align-items:center;gap:12px;text-decoration:none;color:inherit;">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Crash Ledger</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+      <form method="post" action="/logout" style="display:inline"><button type="submit"
+          class="btn ghost">Logout</button></form>
+    </div>
+  </div>
+
+  <div class="crash-ledger">
+<header class="hero">
+  <div class="eyebrow">Crash-period dataset &middot; 493 S&amp;P 500 constituents</div>
+  <h1 class="display">The Crash<br><em>Ledger.</em></h1>
+  <p class="lede">
+    A field guide to how every S&amp;P 500 name has actually behaved during market crashes &mdash;
+    built from adjusted close prices across six historical crash periods. Below: the names that
+    swing hardest, the ones that got hurt worst, the ones that recovered fastest, and the ones
+    that barely moved at all.
+  </p>
+  <div class="stat-row">
+    <div class="stat"><span class="num">493</span><span class="lbl">Tickers tracked</span></div>
+    <div class="stat"><span class="num">6</span><span class="lbl">Crash periods covered</span></div>
+    <div class="stat"><span class="num">Adj. Close</span><span class="lbl">Price basis</span></div>
+  </div>
+</header>
+
+<div class="tape-wrap">
+  <div class="tape-track" id="tapeTrack"><!-- filled by JS --></div>
+</div>
+
+<section class="glossary">
+  <h2>How to read the numbers</h2>
+  <p class="sub">Every card below pulls from the same nine metrics. Here's what each one means before you dig into the tickers.</p>
+  <dl class="term-grid">
+    <div class="term"><dt>Periods with data</dt><dd>How many of the 6 defined crash periods this stock has price history for.</dd></div>
+    <div class="term"><dt>Observations</dt><dd>Total daily price readings used across those crash periods.</dd></div>
+    <div class="term"><dt>Avg. crash return</dt><dd>The mean % price change across all crash periods the stock was present for.</dd></div>
+    <div class="term"><dt>Median crash return</dt><dd>The middle-ranked % return across periods &mdash; less skewed by one extreme outlier than the average.</dd></div>
+    <div class="term"><dt>Best / worst period</dt><dd>The single best-performing and worst-performing crash period on record for this stock.</dd></div>
+    <div class="term"><dt>Worst max drawdown</dt><dd>The deepest peak-to-trough decline recorded in any single crash period &mdash; the most pain a holder would have felt.</dd></div>
+    <div class="term"><dt>Avg. daily volatility</dt><dd>The average size of day-to-day price swings during crash periods &mdash; higher means choppier, less predictable price action.</dd></div>
+    <div class="term"><dt>Total return, all periods</dt><dd>The compounded return if all of that stock's crash periods are strung together back to back.</dd></div>
+  </dl>
+</section>
+
+<section class="category" id="volatile">
+  <div class="category-head">
+    <h2><span class="dot"></span>Most volatile</h2>
+    <p>The names most likely to swing sharply the moment panic hits &mdash; ranked by average daily volatility.</p>
+  </div>
+  <div class="card-grid">
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="CVNA" data-name="Carvana Co." data-exchange="NYSE">CVNA</button>
+            <span class="company">Carvana Co.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-52.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-94.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">10.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-7.1%</span> / <span class="neg">-98.0%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.4%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.4%"></div></div>
+          </div>
+          <div class="meta">2 of 6 crash periods tracked &middot; 313 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="UAL" data-name="United Airlines Holdings, Inc." data-exchange="NASDAQ">UAL</button>
+            <span class="company">United Airlines Holdings, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-55.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-49.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-17.1%</span> / <span class="neg">-90.0%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-93.5%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:93.5%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 691 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="LVS" data-name="Las Vegas Sands Corp." data-exchange="NYSE">LVS</button>
+            <span class="company">Las Vegas Sands Corp.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-33.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-26.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+23.7%</span> / <span class="neg">-97.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.0%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 691 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="BLDR" data-name="Builders FirstSource, Inc." data-exchange="NYSE">BLDR</button>
+            <span class="company">Builders FirstSource, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-43.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+163.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-22.3%</span> / <span class="neg">-81.3%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-92.6%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:92.6%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 691 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="NCLH" data-name="Norwegian Cruise Line Holdings Ltd." data-exchange="NYSE">NCLH</button>
+            <span class="company">Norwegian Cruise Line Holdings Ltd.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-57.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-77.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-44.8%</span> / <span class="neg">-69.7%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-85.9%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:85.9%"></div></div>
+          </div>
+          <div class="meta">2 of 6 crash periods tracked &middot; 313 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="APO" data-name="Apollo Global Management, Inc." data-exchange="NYSE">APO</button>
+            <span class="company">Apollo Global Management, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-10.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-10.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-10.2%</span> / <span class="neg">-10.2%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-49.4%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:49.4%"></div></div>
+          </div>
+          <div class="meta">1 of 6 crash periods tracked &middot; 62 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="COIN" data-name="Coinbase Global, Inc." data-exchange="NASDAQ">COIN</button>
+            <span class="company">Coinbase Global, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-85.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-85.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-85.9%</span> / <span class="neg">-85.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-87.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:87.0%"></div></div>
+          </div>
+          <div class="meta">1 of 6 crash periods tracked &middot; 251 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="AKAM" data-name="Akamai Technologies, Inc." data-exchange="NASDAQ">AKAM</button>
+            <span class="company">Akamai Technologies, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-42.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-79.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+4.3%</span> / <span class="neg">-99.7%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.8%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.8%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,111 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="EQIX" data-name="Equinix, Inc." data-exchange="NASDAQ">EQIX</button>
+            <span class="company">Equinix, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-36.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+14.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+12.3%</span> / <span class="neg">-97.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.7%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.7%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,248 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="SBAC" data-name="SBA Communications Corporation" data-exchange="NASDAQ">SBAC</button>
+            <span class="company">SBA Communications Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-67.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-46.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-35.0%</span> / <span class="neg">-99.1%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.6%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.6%"></div></div>
+          </div>
+          <div class="meta">2 of 6 crash periods tracked &middot; 1,049 daily observations</div>
+        </article>
+  </div>
+</section>
+
+<section class="category" id="losers">
+  <div class="category-head">
+    <h2><span class="dot"></span>Biggest crash losers</h2>
+    <p>The most fragile exposures during stress &mdash; the steepest average declines once a crash starts.</p>
+  </div>
+  <div class="card-grid">
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="AKAM" data-name="Akamai Technologies, Inc." data-exchange="NASDAQ">AKAM</button>
+            <span class="company">Akamai Technologies, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-42.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-79.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+4.3%</span> / <span class="neg">-99.7%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.8%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.8%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,111 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="SBAC" data-name="SBA Communications Corporation" data-exchange="NASDAQ">SBAC</button>
+            <span class="company">SBA Communications Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-67.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-46.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-35.0%</span> / <span class="neg">-99.1%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.6%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.6%"></div></div>
+          </div>
+          <div class="meta">2 of 6 crash periods tracked &middot; 1,049 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="AIG" data-name="American International Group, Inc." data-exchange="NYSE">AIG</button>
+            <span class="company">American International Group, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-38.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-87.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">5.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+5.3%</span> / <span class="neg">-98.5%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.5%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.5%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,722 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="CVNA" data-name="Carvana Co." data-exchange="NYSE">CVNA</button>
+            <span class="company">Carvana Co.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-52.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-94.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">10.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-7.1%</span> / <span class="neg">-98.0%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.4%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.4%"></div></div>
+          </div>
+          <div class="meta">2 of 6 crash periods tracked &middot; 313 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="EQIX" data-name="Equinix, Inc." data-exchange="NASDAQ">EQIX</button>
+            <span class="company">Equinix, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-36.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+14.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+12.3%</span> / <span class="neg">-97.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.7%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.7%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,248 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="LVS" data-name="Las Vegas Sands Corp." data-exchange="NYSE">LVS</button>
+            <span class="company">Las Vegas Sands Corp.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-33.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-26.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">7.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+23.7%</span> / <span class="neg">-97.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.0%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 691 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="MGM" data-name="MGM Resorts International" data-exchange="NYSE">MGM</button>
+            <span class="company">MGM Resorts International</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-26.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+8.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">4.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+64.2%</span> / <span class="neg">-97.5%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.1%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.1%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,362 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="GLW" data-name="Corning Incorporated" data-exchange="NYSE">GLW</button>
+            <span class="company">Corning Incorporated</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-40.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+1,135.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">4.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-11.5%</span> / <span class="neg">-97.2%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-99.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:99.0%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,468 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="AMT" data-name="American Tower Corporation" data-exchange="NYSE">AMT</button>
+            <span class="company">American Tower Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-42.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-88.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">5.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+2.1%</span> / <span class="neg">-97.1%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.7%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.7%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,111 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="VRSN" data-name="VeriSign, Inc." data-exchange="NASDAQ">VRSN</button>
+            <span class="company">VeriSign, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-47.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-92.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">6.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-0.5%</span> / <span class="neg">-96.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-98.4%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:98.4%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,111 daily observations</div>
+        </article>
+  </div>
+</section>
+
+<section class="category" id="gainers">
+  <div class="category-head">
+    <h2><span class="dot"></span>Biggest crash gainers</h2>
+    <p>Names that either held up better than the market or recovered fastest in at least one crash regime.</p>
+  </div>
+  <div class="card-grid">
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="DVA" data-name="DaVita Inc." data-exchange="NYSE">DVA</button>
+            <span class="company">DaVita Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+166.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-5.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">3.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+733.7%</span> / <span class="neg">-35.3%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-47.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:47.0%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,362 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="NVR" data-name="NVR, Inc." data-exchange="NYSE">NVR</button>
+            <span class="company">NVR, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+111.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+66,444.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">3.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+663.9%</span> / <span class="neg">-56.2%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-59.2%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:59.2%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,468 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="COR" data-name="Cencora, Inc." data-exchange="NYSE">COR</button>
+            <span class="company">Cencora, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+96.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+122.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+379.1%</span> / <span class="neg">-26.3%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-41.9%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:41.9%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,362 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="VTR" data-name="Ventas, Inc." data-exchange="NYSE">VTR</button>
+            <span class="company">Ventas, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+69.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-11.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">3.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+373.2%</span> / <span class="neg">-42.6%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-73.1%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:73.1%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,362 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="TSCO" data-name="Tractor Supply Company" data-exchange="NASDAQ">TSCO</button>
+            <span class="company">Tractor Supply Company</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+92.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+22,021.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">3.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+302.5%</span> / <span class="neg">-22.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-67.4%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:67.4%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,300 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="AZO" data-name="AutoZone, Inc." data-exchange="NYSE">AZO</button>
+            <span class="company">AutoZone, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+84.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+134.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+279.1%</span> / <span class="neg">-2.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-37.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:37.0%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,362 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="BRO" data-name="Brown & Brown, Inc." data-exchange="NYSE">BRO</button>
+            <span class="company">Brown & Brown, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+34.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+26,093.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+275.8%</span> / <span class="neg">-39.2%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-42.1%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:42.1%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,468 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="BALL" data-name="Ball Corporation" data-exchange="NYSE">BALL</button>
+            <span class="company">Ball Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+23.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-93.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+271.5%</span> / <span class="neg">-44.5%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-55.6%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:55.6%"></div></div>
+          </div>
+          <div class="meta">6 of 6 crash periods tracked &middot; 1,939 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="WRB" data-name="W. R. Berkley Corporation" data-exchange="NYSE">WRB</button>
+            <span class="company">W. R. Berkley Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+42.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-92.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">3.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+271.4%</span> / <span class="neg">-67.6%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-75.3%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:75.3%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,707 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="DGX" data-name="Quest Diagnostics Incorporated" data-exchange="NYSE">DGX</button>
+            <span class="company">Quest Diagnostics Incorporated</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+78.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+2,196.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+255.8%</span> / <span class="neg">-16.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-46.6%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:46.6%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,300 daily observations</div>
+        </article>
+  </div>
+</section>
+
+<section class="category" id="stable">
+  <div class="category-head">
+    <h2><span class="dot"></span>Most stable</h2>
+    <p>The best candidates for defensive positioning &mdash; the lowest average daily volatility in the dataset.</p>
+  </div>
+  <div class="card-grid">
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="MDLZ" data-name="Mondelez International, Inc." data-exchange="NASDAQ">MDLZ</button>
+            <span class="company">Mondelez International, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-0.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+446.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">1.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+28.2%</span> / <span class="neg">-31.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-38.8%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:38.8%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 976 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="GIS" data-name="General Mills, Inc." data-exchange="NYSE">GIS</button>
+            <span class="company">General Mills, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+6.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+684.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">1.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+33.8%</span> / <span class="neg">-11.6%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-31.8%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:31.8%"></div></div>
+          </div>
+          <div class="meta">4 of 6 crash periods tracked &middot; 1,217 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="PEP" data-name="PepsiCo, Inc." data-exchange="NASDAQ">PEP</button>
+            <span class="company">PepsiCo, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-8.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-92.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">1.9%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+40.4%</span> / <span class="neg">-51.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-66.0%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:66.0%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,911 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="WEC" data-name="WEC Energy Group, Inc." data-exchange="NYSE">WEC</button>
+            <span class="company">WEC Energy Group, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value pos">+5.2%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+4,656.1%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+47.4%</span> / <span class="neg">-9.7%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-32.3%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:32.3%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,468 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="GEHC" data-name="GE HealthCare Technologies Inc." data-exchange="NASDAQ">GEHC</button>
+            <span class="company">GE HealthCare Technologies Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-2.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-2.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-2.7%</span> / <span class="neg">-2.7%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-5.8%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:5.8%"></div></div>
+          </div>
+          <div class="meta">1 of 6 crash periods tracked &middot; 11 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="LNT" data-name="Alliant Energy Corporation" data-exchange="NASDAQ">LNT</button>
+            <span class="company">Alliant Energy Corporation</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-23.3%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-71.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="neg">-5.3%</span> / <span class="neg">-33.1%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-49.5%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:49.5%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,688 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="DTE" data-name="DTE Energy Company" data-exchange="NYSE">DTE</button>
+            <span class="company">DTE Energy Company</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-6.7%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-87.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+77.3%</span> / <span class="neg">-52.8%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-56.5%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:56.5%"></div></div>
+          </div>
+          <div class="meta">6 of 6 crash periods tracked &middot; 1,973 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="MKC" data-name="McCormick & Company, Incorporated" data-exchange="NYSE">MKC</button>
+            <span class="company">McCormick & Company, Incorporated</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-6.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-75.8%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+71.5%</span> / <span class="neg">-55.9%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-61.2%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:61.2%"></div></div>
+          </div>
+          <div class="meta">6 of 6 crash periods tracked &middot; 1,939 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="JNJ" data-name="Johnson & Johnson" data-exchange="NYSE">JNJ</button>
+            <span class="company">Johnson & Johnson</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-1.4%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value neg">-78.5%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+65.6%</span> / <span class="neg">-36.3%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-41.9%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:41.9%"></div></div>
+          </div>
+          <div class="meta">5 of 6 crash periods tracked &middot; 1,722 daily observations</div>
+        </article>
+
+        <article class="card">
+          <div class="card-top">
+            <button type="button" class="ticker" data-ticker="UPS" data-name="United Parcel Service, Inc." data-exchange="NYSE">UPS</button>
+            <span class="company">United Parcel Service, Inc.</span>
+          </div>
+          <div class="metric-row">
+            <div class="metric">
+              <span class="m-label">Avg. crash return</span>
+              <span class="m-value neg">-10.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Total return, all periods</span>
+              <span class="m-value pos">+487.6%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Daily volatility</span>
+              <span class="m-value neutral">2.0%</span>
+            </div>
+            <div class="metric">
+              <span class="m-label">Best / worst period</span>
+              <span class="m-value"><span class="pos">+18.0%</span> / <span class="neg">-32.2%</span></span>
+            </div>
+          </div>
+          <div class="gauge">
+            <div class="gauge-label"><span>Worst drawdown</span><span class="neg">-47.9%</span></div>
+            <div class="gauge-track"><div class="gauge-fill" style="width:47.9%"></div></div>
+          </div>
+          <div class="meta">3 of 6 crash periods tracked &middot; 1,300 daily observations</div>
+        </article>
+  </div>
+</section>
+
+<div class="modal-backdrop" id="chartBackdrop">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mhTicker">
+    <div class="modal-head">
+      <div class="modal-head-left">
+        <span class="mh-ticker" id="mhTicker">&mdash;</span>
+        <span class="mh-name" id="mhName">&mdash;</span>
+      </div>
+      <div class="modal-head-right">
+        <a class="mh-yahoo" id="mhYahoo" href="#" target="_blank" rel="noopener">View on Yahoo Finance &#8599;</a>
+        <button class="mh-close" id="mhClose" aria-label="Close chart">&times;</button>
+      </div>
+    </div>
+    <div class="modal-body">
+      <div id="chartHost"></div>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <p><strong>Methodology.</strong> Figures are derived from adjusted close prices for 493 current S&amp;P 500 constituents across 6 historical market-crash periods. "Crash period" returns and drawdowns are measured within each defined window only, not over full market history. Tickers link out to their live Yahoo Finance quote page.</p>
+</footer>
+  </div>
+
+  <script src="/static/crash_ledger.js"></script>
+</body>
+
+</html>
