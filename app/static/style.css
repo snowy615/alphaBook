@@ -210,16 +210,14 @@ body {
   margin-top: 0;
 }
 
-/* ── Landing page: game board ──────────────────────────────────────────
-   Cards read like an instrument list — monogram ticker, name, one line of
-   description. No emoji, no gradients, no hover lift. */
+/* ── Section heading used on the landing and market boards ───────────── */
 .board-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 16px;
-  padding-bottom: 10px;
-  margin-top: 28px;
+  padding-bottom: 11px;
+  margin-bottom: 14px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -235,117 +233,530 @@ body {
   color: var(--muted);
 }
 
-/* Hairline rules come from the cards themselves rather than a gap-coloured
-   container, so a part-filled last row just ends instead of leaving a
-   filled-in empty box. */
-.equity-grid {
+/* ── Landing hero ─────────────────────────────────────────────────────
+   Says what the thing is, then shows it running. The live strip is real
+   mid prices off the same books the trading pages use. */
+.hero {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 0;
-  border-top: 1px solid var(--border);
-  border-left: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1.55fr) minmax(280px, .85fr);
+  gap: 40px;
+  align-items: start;
+  padding: 26px 0 30px;
 }
 
-.equity-card {
-  background: var(--panel);
-  border-right: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
-  border-radius: 0;
-  padding: 18px 20px;
-  display: grid;
-  grid-template-columns: 46px 1fr;
-  grid-template-rows: auto auto;
-  column-gap: 16px;
-  row-gap: 3px;
-  align-items: center;
-  cursor: pointer;
-  transition: background .12s ease;
+.hero-copy h2 {
+  margin: 0 0 14px;
+  font-size: 34px;
+  line-height: 1.16;
+  font-weight: 700;
+  letter-spacing: -.015em;
+  max-width: 15ch;
 }
 
-.equity-card:hover {
-  background: var(--raised);
-}
-
-.equity-card:hover .equity-icon {
-  border-color: var(--brand);
-  color: var(--brand);
-}
-
-.equity-icon {
-  grid-row: 1 / 3;
-  width: 46px;
-  height: 46px;
-  border: 1px solid var(--border-strong);
-  border-radius: 0;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
-  font-weight: 600;
-  letter-spacing: .04em;
+.hero-copy p {
+  margin: 0 0 24px;
+  font-size: 14.5px;
+  line-height: 1.65;
   color: var(--muted);
-  transition: border-color .12s ease, color .12s ease;
+  max-width: 54ch;
 }
 
-.equity-name {
-  font-size: 15.5px;
-  font-weight: 600;
-  letter-spacing: .01em;
-  align-self: end;
-}
-
-.equity-price {
-  font-size: 13px;
-  color: var(--muted);
-  align-self: start;
-  line-height: 1.45;
+.hero-cta {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.equity-last {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+.hero-cta .btn {
+  padding: 11px 20px;
   font-size: 14px;
+  font-weight: 600;
+}
+
+.hero-facts {
+  display: flex;
+  gap: 38px;
+  margin-top: 26px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+
+.hero-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.hero-facts strong {
+  font-size: 24px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
-.equity-change {
+.hero-facts span {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+/* -- live market strip -- */
+.ticker {
+  border: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.ticker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ticker-head h3 {
+  margin: 0;
   font-size: 12px;
-  font-weight: 500;
-  padding: 0;
-  background: none;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+}
+
+.ticker-head span {
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ticker-head span.is-live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.ticker-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 12px;
+  align-items: baseline;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ticker-row:last-child {
+  border-bottom: none;
+}
+
+.ticker-sym {
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+
+.ticker-px {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  transition: color .5s ease;
+}
+
+.ticker-spread {
+  font-size: 10.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 62px;
+  text-align: right;
+}
+
+.ticker-empty {
+  margin: 0;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+/* A price that just moved is tinted for one refresh. */
+.tick-up {
+  color: var(--green);
+}
+
+.tick-down {
+  color: var(--red);
+}
+
+/* ── Mode cards ───────────────────────────────────────────────────────
+   A drawn mark, a real sentence and the facts that decide whether you want
+   this mode. Featured card takes two columns so the row fills evenly. */
+.modes {
+  padding-bottom: 40px;
+}
+
+.mode-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.mode-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px 19px 16px;
+  min-height: 164px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .13s ease, border-color .13s ease;
+}
+
+.mode-card:hover,
+.mode-card:focus-visible {
+  background: var(--raised);
+  border-color: var(--brand);
+  outline: none;
+}
+
+.mode-card-featured {
+  grid-column: span 2;
+  background: var(--raised);
+}
+
+.mode-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.mode-head h3 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 650;
+  letter-spacing: .005em;
+}
+
+.mode-icon {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+  color: var(--brand);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mode-icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.mode-blurb {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  flex: 1;
+}
+
+.mode-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mode-chips span {
+  font-size: 10.5px;
+  letter-spacing: .03em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 3px 8px;
+}
+
+.mode-go {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  color: var(--brand);
+  opacity: 0;
+  transition: opacity .13s ease;
+}
+
+.mode-card:hover .mode-go,
+.mode-card:focus-visible .mode-go {
+  opacity: 1;
+}
+
+/* ── Market board ─────────────────────────────────────────────────────── */
+.market-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.market-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.market-dot.is-live {
+  background: var(--green);
+}
+
+.stock-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(268px, 1fr));
+  gap: 14px;
+}
+
+.stock-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 16px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: background .13s ease, border-color .13s ease;
+}
+
+.stock-card:hover,
+.stock-card:focus-visible {
+  background: var(--raised);
+  border-color: var(--brand);
+  outline: none;
+}
+
+.stock-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 2px;
+}
+
+.stock-sym {
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.stock-name {
+  font-size: 11.5px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stock-price {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 27px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -.01em;
+  margin: 4px 0 16px;
+  transition: color .5s ease;
+}
+
+.stock-book {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid var(--border);
+}
+
+.stock-quote {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 0 2px;
+}
+
+.stock-lbl {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+.stock-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 14px;
   font-variant-numeric: tabular-nums;
 }
 
-.equity-change.positive {
-  background: none;
+.stock-quote.bid .stock-val {
   color: var(--green);
 }
 
-.equity-change.negative {
-  background: none;
+.stock-quote.ask .stock-val {
   color: var(--red);
 }
 
-.equity-change {
-  font-size: 14px;
+.stock-qty {
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-height: 13px;
+}
+
+/* Which side of the top of book is thicker, from the sizes already fetched. */
+.stock-depth {
+  margin-top: 14px;
+}
+
+.stock-depth-bar {
+  display: flex;
+  height: 4px;
+  overflow: hidden;
+  background: var(--border);
+}
+
+.stock-depth-bid,
+.stock-depth-ask {
+  display: block;
+  height: 100%;
+  transition: width .4s ease;
+}
+
+.stock-depth-bid {
+  background: var(--green);
+}
+
+.stock-depth-ask {
+  background: var(--red);
+}
+
+.stock-depth-lbl {
+  display: block;
+  margin-top: 6px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+/* Closing band: what a newcomer needs to know before clicking into a book. */
+.market-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 32px;
+  flex-wrap: wrap;
+  margin: 32px 0 40px;
+  padding: 22px 24px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.market-note h3 {
+  margin: 0 0 6px;
+  font-size: 14.5px;
+  font-weight: 650;
+}
+
+.market-note p {
+  margin: 0;
+  max-width: 74ch;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.market-note-links {
+  display: flex;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.stock-go {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  font-size: 11px;
   font-weight: 600;
-  padding: 4px 12px;
-  border-radius: 0;
-  display: inline-block;
+  letter-spacing: .03em;
+  color: var(--brand);
+  opacity: 0;
+  transition: opacity .13s ease;
 }
 
-.equity-change.positive {
-  background: rgba(46, 204, 113, 0.2);
-  color: var(--green);
+.stock-card:hover .stock-go,
+.stock-card:focus-visible .stock-go {
+  opacity: 1;
 }
 
-.equity-change.negative {
-  background: rgba(255, 107, 107, 0.2);
-  color: var(--red);
+@media (max-width: 1180px) {
+  .mode-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 900px) {
+  .hero {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 24px 0 30px;
+  }
+
+  .hero-copy h2 {
+    font-size: 27px;
+    max-width: none;
+  }
+
+  .mode-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .mode-card-featured {
+    grid-column: span 1;
+  }
+}
+
+/* The topbar had no narrow-screen rules: the injected theme toggle and the
+   auth buttons landed on top of the brand block. */
+@media (max-width: 720px) {
+  .topbar {
+    flex-wrap: wrap;
+    row-gap: 10px;
+    padding: 10px 14px;
+  }
+
+  .actions {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .titles .subtitle {
+    display: none;
+  }
+
+  .board-head,
+  .market-page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .hero-facts {
+    gap: 22px;
+  }
+
+  .market-note {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 18px;
+  }
 }
 
 /* Trading Page Layout */
@@ -1067,15 +1478,21 @@ body {
 /* ---- Game Sections (Home Page) ---- */
 
 .market-page-header {
-  margin-bottom: 32px;
-  padding-bottom: 16px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin: 8px 0 20px;
+  padding-bottom: 14px;
   border-bottom: 1px solid var(--border);
 }
 
 .market-page-header h2 {
   margin: 0 0 4px 0;
-  font-size: 26px;
+  font-size: 24px;
   font-weight: 700;
+  letter-spacing: -.01em;
 }
 
 .market-page-header p {

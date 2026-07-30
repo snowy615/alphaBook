@@ -42,11 +42,30 @@
 
     <div class="container">
         <div class="market-page-header">
-            <h2>Market Simulation</h2>
-            <p>Select a stock to trade</p>
+            <div>
+                <h2>Market Simulation</h2>
+                <p>Live order books anchored to real prices. Pick a name to trade.</p>
+            </div>
+            <div class="market-status">
+                <span class="market-dot" id="marketDot"></span>
+                <span id="marketStatus">connecting</span>
+            </div>
         </div>
-        <div class="equity-grid" id="stockGrid">
+        <div class="stock-grid" id="stockGrid">
             <!-- Stock cards will be inserted here by JavaScript -->
+        </div>
+
+        <div class="market-note">
+            <div>
+                <h3>Every book stays two-sided</h3>
+                <p>A market-maker bot quotes both sides of every name, so you can trade any market on your
+                    own or against a full room. Fills follow strict price and time priority, the same way an
+                    exchange matches them.</p>
+            </div>
+            <div class="market-note-links">
+                <a href="/market-sim-py" class="btn">Trade it with a bot instead</a>
+                <a href="/about" class="btn ghost">How the engine works</a>
+            </div>
         </div>
     </div>
 

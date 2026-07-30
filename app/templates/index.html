@@ -18,7 +18,7 @@
       </div>
       <div class="titles">
         <h1>{{ app_name }}</h1>
-        <div class="subtitle">Select a Game</div>
+        <div class="subtitle">Open trading floor</div>
       </div>
     </div>
     <div class="actions">
@@ -39,13 +39,40 @@
   </div>
 
   <div class="container">
-    <div class="board-head">
-      <h2>Trading floor</h2>
-      <span class="board-note">Pick a mode — every one has a live leaderboard</span>
-    </div>
-    <div class="equity-grid" id="gameGrid">
-      <!-- Game cards will be inserted here by JavaScript -->
-    </div>
+    <section class="hero">
+      <div class="hero-copy">
+        <h2>Trade a live market against everyone else in the room.</h2>
+        <p>A real price-time-priority order book, live market data, and the exercises trading firms
+          actually use to hire. Virtual balances, no real-money risk, free for any student.</p>
+        <div class="hero-cta">
+          <a href="/signup" class="btn primary" id="heroPrimary">Start trading</a>
+          <a href="/about" class="btn">How it works</a>
+        </div>
+        <div class="hero-facts">
+          <div><strong id="factStocks">7</strong><span>live stocks</span></div>
+          <div><strong id="factModes">7</strong><span>game modes</span></div>
+          <div><strong>£0</strong><span>to play</span></div>
+        </div>
+      </div>
+
+      <aside class="ticker">
+        <div class="ticker-head">
+          <h3>Live market</h3>
+          <span id="tickerStatus">connecting</span>
+        </div>
+        <div class="ticker-rows" id="tickerRows"></div>
+      </aside>
+    </section>
+
+    <section class="modes" id="modes">
+      <div class="board-head">
+        <h2>Choose a mode</h2>
+        <span class="board-note">Every mode keeps its own live leaderboard</span>
+      </div>
+      <div class="mode-grid" id="gameGrid">
+        <!-- Mode cards are inserted here by landing.js -->
+      </div>
+    </section>
   </div>
 
   <div class="footer"></div>
