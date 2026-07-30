@@ -4691,6 +4691,218 @@ body {
 }
 
 /* ============================================================
+   Pre-game tutorial (tutorial.js)
+   ============================================================ */
+.tut-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 8, 15, .78);
+  backdrop-filter: blur(4px);
+  cursor: pointer;
+}
+
+:root[data-theme="light"] .tut-overlay {
+  background: rgba(16, 28, 51, .55);
+}
+
+body.tut-locked {
+  overflow: hidden;
+}
+
+.tut-card {
+  width: 100%;
+  max-width: 520px;
+  padding: 22px 26px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  outline: none;
+}
+
+.tut-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.tut-eyebrow {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--brand);
+}
+
+.tut-skip {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.tut-skip:hover {
+  color: var(--text);
+}
+
+.tut-heading {
+  margin: 0 0 10px;
+  font-size: 21px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -.01em;
+}
+
+.tut-body {
+  font-size: 13.5px;
+  line-height: 1.62;
+  color: var(--muted);
+}
+
+.tut-body p {
+  margin: 0 0 9px;
+}
+
+.tut-body p:last-child {
+  margin-bottom: 0;
+}
+
+.tut-body strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.tut-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  background: rgba(0, 0, 0, .28);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+  color: var(--text);
+}
+
+:root[data-theme="light"] .tut-body code {
+  background: rgba(16, 28, 51, .06);
+}
+
+.tut-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  margin-top: 16px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.tut-facts>div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+}
+
+.tut-facts span {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+.tut-facts strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.tut-foot {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.tut-dots {
+  display: flex;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.tut-dots span {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border-strong);
+}
+
+.tut-dots span.is-on {
+  background: var(--brand);
+}
+
+.tut-nav {
+  display: flex;
+  gap: 8px;
+}
+
+.tut-nav .btn {
+  min-width: 84px;
+}
+
+.tut-invisible {
+  visibility: hidden;
+}
+
+.tut-full {
+  font-size: 12.5px;
+  color: var(--brand);
+}
+
+.tut-hint {
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.tut-hint kbd {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  border: 1px solid var(--border-strong);
+  padding: 1px 5px;
+  color: var(--text);
+}
+
+.tut-btn-float {
+  position: fixed;
+  top: 12px;
+  right: 62px;
+  z-index: 50;
+}
+
+@media (max-width: 560px) {
+  .tut-card {
+    padding: 18px 18px 14px;
+  }
+
+  .tut-heading {
+    font-size: 18px;
+  }
+
+  .tut-nav .btn {
+    min-width: 70px;
+  }
+}
+
+/* ============================================================
    Risks — crash-survival portfolio game
    ============================================================ */
 .risk-limits {

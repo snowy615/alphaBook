@@ -44,6 +44,22 @@
     </script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
     <script src="/static/fiveos.js"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "fiveos",
+      version: 1,
+      title: "5Os",
+      label: "How to play",
+      fullRulesHref: "/5os",
+      steps: [
+      { heading: "Fifteen cards, drawn once", body: "Fifteen cards come out of a standard deck at the start and never change. Ace is 1, face cards are 11, 12, 13. Your job is to work out what is in there.", facts: [["Rounds", "5"], ["Cards", "15"]] },
+      { heading: "You only see fragments", body: "Each round you are shown one private card, and other players see different ones. In rounds 1, 3 and 5 everyone also sees a common card. Information accumulates — so do everyone else's estimates." },
+      { heading: "Estimate, then trade your estimate", body: "<p>Each round you answer three questions with an expected value. Then you go <strong>long</strong> if you think the truth is above the group median, or <strong>short</strong> if below.</p><p>There is a fee of <code>|your estimate − median| ÷ 3</code>, so a wild guess costs you even when the direction is right.</p>" },
+      { heading: "Scoring", body: "Per question: <code>(actual − median) × position − fee</code>, summed across all five rounds. Being well calibrated beats being loud." },
+      ],
+    });
+  </script>
 </body>
 
 </html>

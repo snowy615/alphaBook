@@ -262,5 +262,20 @@
     window.TOP_DEPTH = {{ depth }};
   </script>
   <script src="/static/trading.js?v=20260718"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "trading",
+      version: 1,
+      title: "Market Simulation",
+      label: "How to play",
+      fullRulesHref: "/about",
+      steps: [
+      { heading: "This is a real order book", body: "Bids and asks are matched on strict price and time priority, exactly as an exchange does it. Prices are anchored to the real market." },
+      { heading: "Two ways to trade", body: "<p>Put a <strong>limit order</strong> at your price and wait to be filled, or <strong>cross the spread</strong> to trade right now at someone else's price.</p><p>A market-maker bot always quotes both sides, so you can trade even with nobody else in the room.</p>" },
+      { heading: "Balances are virtual", body: "Your position and unrealised P&amp;L update on every fill. Full market pressure, no real money at risk." },
+      ],
+    });
+  </script>
 </body>
 </html>

@@ -43,6 +43,21 @@
         window.GAME_ID = "{{ game_id }}";
     </script>
     <script src="/static/mental_math.js"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "mental-math",
+      version: 1,
+      title: "Mental Math",
+      label: "How to play",
+      fullRulesHref: "/mental-math",
+      steps: [
+      { heading: "Arithmetic against a clock", body: "Questions come one at a time with a timer. The host sets the types, the difficulty, how many questions and how long you get for each." },
+      { heading: "Answer or lose it", body: "One point per correct answer. If the timer runs out the question is skipped and scores nothing, so a fast wrong answer costs you no more than running out — commit and move on." },
+      { heading: "Most correct answers wins", body: "Your running score and the leaderboard update as you go. There is a full review of every question at the end." },
+      ],
+    });
+  </script>
 </body>
 
 </html>
