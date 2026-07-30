@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Risks - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Risks</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn ghost">Logout</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="msp-hero">
+      <h2>Risks</h2>
+      <p>A synthetic crash, replayed one trading day at a time. The basket is drawn from a real
+        stress episode, blended from historical crashes and re-simulated per stock with its own
+        beta. Somewhere inside the round there is a panic window and a rebound. You are not told
+        where.</p>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <div class="msp-lobby-grid">
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Start a round</h3>
+          <span class="msp-muted">you host it</span>
+        </div>
+        <div class="msp-panel-body">
+          <label class="msp-label" for="runName">Round name</label>
+          <input id="runName" class="msp-input" type="text" placeholder="Michaelmas risk drill" maxlength="60">
+
+          <label class="msp-label" for="universe">Universe</label>
+          <select id="universe" class="msp-input">
+            <option value="">Any universe</option>
+            {% for u in universes %}
+            <option value="{{ u.universe }}">{{ u.label }} — {{ u.episodes }} episodes,
+              {{ u.min_days }}–{{ u.max_days }} days</option>
+            {% endfor %}
+          </select>
+
+          <label class="msp-label" for="spd">Seconds per trading day</label>
+          <select id="spd" class="msp-input">
+            <option value="2">2s — fast</option>
+            <option value="4" selected>4s — standard</option>
+            <option value="8">8s — considered</option>
+            <option value="15">15s — teaching pace</option>
+          </select>
+
+          <button id="createBtn" class="btn primary msp-wide">Create round</button>
+        </div>
+      </div>
+
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Join a round</h3>
+          <span class="msp-muted">six-character code</span>
+        </div>
+        <div class="msp-panel-body">
+          <label class="msp-label" for="joinCode">Join code</label>
+          <input id="joinCode" class="msp-input msp-code-input" type="text" maxlength="6" placeholder="ABC123">
+          <button id="joinBtn" class="btn primary msp-wide">Join</button>
+          <p class="msp-muted msp-lobby-note">You can join a round that has already started. You
+            will pick it up on whichever day it has reached, with a full starting balance.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="card msp-panel">
+      <div class="head">
+        <h3>Open rounds</h3>
+        <span class="msp-muted" id="openCount"></span>
+      </div>
+      <div class="msp-panel-body">
+        <div id="openRuns" class="msp-open-runs"></div>
+      </div>
+    </div>
+
+    <div class="card msp-panel msp-docs">
+      <div class="head">
+        <h3>How it works</h3>
+        <span class="msp-muted">read this bit, it decides the round</span>
+      </div>
+      <div class="msp-panel-body">
+        <h4>The book you run</h4>
+        <p>You start with <strong>${{ "{:,.0f}".format(start_equity) }}</strong> of equity and trade
+          a basket of twelve names, each rebased to 100 on day one. Set a target position in shares
+          for any name, long or short, and it fills at that day's close.</p>
+
+        <h4>Two limits, and why they are there</h4>
+        <p>Every episode in the library is a crash. If you could simply short the whole basket, the
+          round would be a coin-flip on direction and nothing else. So:</p>
+        <ul class="msp-rules">
+          <li><strong>Gross exposure</strong> — the sum of your position values, ignoring sign —
+            must stay under <strong>${{ "{:,.0f}".format(gross_limit) }}</strong>.</li>
+          <li><strong>Net exposure</strong> — long value minus short value — must stay within
+            <strong>±${{ "{:,.0f}".format(net_limit) }}</strong>.</li>
+        </ul>
+        <p>That forces a roughly market-neutral book. Your P&amp;L comes from which names fall
+          hardest and which hold up, not from the market falling.</p>
+
+        <h4>What you know, and what you do not</h4>
+        <p>Each name shows its <strong>published beta</strong>, fitted on historical crash data.
+          That is your prior for how violently it should react. The episode re-draws each stock's
+          beta around that number, and secretly assigns it to a shock group: defensive, normal,
+          vulnerable or victim. A low-beta name can still be the worst thing you own.</p>
+
+        <h4>Scoring</h4>
+        <p>You are ranked on <strong>P&amp;L minus {{ dd_penalty }} × your worst peak-to-trough
+            drawdown</strong>. Making money is not enough. A round where you were down heavily
+          before recovering scores below a flatter path to the same place.</p>
+
+        <h4>At the bell</h4>
+        <p>The round reveals every name's realised beta against its published beta, its shock
+          group, and where the panic and rebound windows actually were. That is the part worth
+          staying for.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <p>{{ app_name }} • Risks</p>
+  </div>
+
+  <script src="/static/risks.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Risks - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body class="msp-body">
+  <div class="topbar">
+    <div class="brand">
+      <a href="/risks" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Risks</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <span id="dayClock" class="msp-clock hidden">Day 0</span>
+      <a href="/risks" class="btn ghost">Rules</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn ghost">Logout</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="container msp-container">
+    <div id="runHeader" class="msp-run-header">
+      <div class="msp-run-id">
+        <h2 id="runName">Loading…</h2>
+        <div class="msp-muted">Join code <span id="runCode" class="msp-code">------</span> ·
+          <span id="runStatus">connecting</span>
+        </div>
+      </div>
+      <div class="msp-run-actions">
+        <button id="startBtn" class="btn primary hidden">Start round</button>
+        <button id="stopBtn" class="btn ghost hidden">End early</button>
+      </div>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <!-- ── Lobby ──────────────────────────────────────────────────────── -->
+    <section id="lobbyView" class="hidden">
+      <div class="msp-lobby-split">
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Before the bell</h3>
+            <span class="msp-muted" id="lobbyUniverse"></span>
+          </div>
+          <div class="msp-panel-body">
+            <p class="msp-muted">You will run a book across twelve names through a stressed market.
+              Both limits are live from day one:</p>
+            <div class="risk-limits">
+              <div>
+                <span class="risk-limit-lbl">Starting equity</span>
+                <span class="risk-limit-val">${{ "{:,.0f}".format(start_equity) }}</span>
+              </div>
+              <div>
+                <span class="risk-limit-lbl">Gross exposure cap</span>
+                <span class="risk-limit-val">${{ "{:,.0f}".format(gross_limit) }}</span>
+              </div>
+              <div>
+                <span class="risk-limit-lbl">Net exposure band</span>
+                <span class="risk-limit-val">±${{ "{:,.0f}".format(net_limit) }}</span>
+              </div>
+            </div>
+            <p class="msp-muted msp-lobby-note">Beta is published. The realised beta, the shock
+              groups and the timing of the panic are not. Read the tape.</p>
+          </div>
+        </div>
+
+        <div class="card msp-panel">
+          <div class="head">
+            <h3>Players</h3>
+            <span class="msp-muted" id="playerCount"></span>
+          </div>
+          <div class="msp-panel-body">
+            <div id="playerList" class="msp-players"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Live board ─────────────────────────────────────────────────── -->
+    <section id="liveView" class="hidden">
+      <div class="msp-strip" id="myStats"></div>
+
+      <div class="risk-cols">
+        <div class="card msp-panel risk-basket">
+          <div class="head">
+            <h3>Basket</h3>
+            <span class="msp-muted" id="basketIndex">click a row to set a position</span>
+          </div>
+          <div class="msp-panel-body msp-flush msp-scroll">
+            <table class="msp-table" id="basketTable"></table>
+          </div>
+        </div>
+
+        <div class="msp-col">
+          <div class="card msp-panel risk-chart-card">
+            <div class="head">
+              <h3>Your equity</h3>
+              <span class="msp-num" id="equityNow">—</span>
+            </div>
+            <div class="msp-panel-body">
+              <canvas id="equityChart" class="msp-chart"></canvas>
+            </div>
+          </div>
+
+          <div class="card msp-panel msp-grow">
+            <div class="head">
+              <h3>Leaderboard</h3>
+              <span class="msp-muted">P&amp;L less drawdown</span>
+            </div>
+            <div class="msp-panel-body msp-flush msp-scroll">
+              <table class="msp-table" id="leaderboard"></table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ── Post-round reveal ──────────────────────────────────────────── -->
+    <section id="revealView" class="hidden">
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>What actually happened</h3>
+          <span class="msp-muted" id="revealSummary"></span>
+        </div>
+        <div class="msp-panel-body msp-flush msp-scroll">
+          <table class="msp-table" id="revealTable"></table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- Position entry, opened from a basket row -->
+  <div id="tradeModal" class="risk-modal hidden">
+    <div class="risk-modal-card">
+      <div class="head">
+        <h3 id="tradeTicker">—</h3>
+        <button id="tradeClose" class="msp-bot-x" aria-label="Close">×</button>
+      </div>
+      <div class="msp-panel-body">
+        <div class="risk-modal-facts" id="tradeFacts"></div>
+        <label class="msp-label" for="tradeTarget">Target position (shares, negative to short)</label>
+        <input id="tradeTarget" class="msp-input" type="number" step="100" value="0">
+        <div class="risk-modal-quick" id="tradeQuick"></div>
+        <div id="tradeHint" class="msp-muted risk-modal-hint"></div>
+        <button id="tradeSubmit" class="btn primary msp-wide">Set position</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.GAME_ID = "{{ game_id }}";
+    window.START_EQUITY = {{ start_equity }};
+    window.GROSS_LIMIT = {{ gross_limit }};
+    window.NET_LIMIT = {{ net_limit }};
+  </script>
+  <script src="/static/risks.js"></script>
+</body>
+
+</html>

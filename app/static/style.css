@@ -423,8 +423,8 @@ body {
 }
 
 .mode-card-featured {
-  grid-column: span 2;
   background: var(--raised);
+  border-color: var(--border-strong);
 }
 
 .mode-head {
@@ -718,9 +718,6 @@ body {
     grid-template-columns: 1fr;
   }
 
-  .mode-card-featured {
-    grid-column: span 1;
-  }
 }
 
 /* The topbar had no narrow-screen rules: the injected theme toggle and the
@@ -4690,6 +4687,262 @@ body {
 
   .msp-run-row {
     grid-template-columns: 1fr auto;
+  }
+}
+
+/* ============================================================
+   Risks — crash-survival portfolio game
+   ============================================================ */
+.risk-limits {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1px;
+  margin: 16px 0;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.risk-limits>div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--panel);
+}
+
+.risk-limit-lbl {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+.risk-limit-val {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+/* Live board: the basket is the working surface, so it gets the wide column. */
+.risk-cols {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr);
+  gap: 10px;
+}
+
+.risk-cols .card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.risk-cols .card .head {
+  flex: 0 0 auto;
+}
+
+.risk-cols .msp-panel-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.risk-cols .msp-scroll {
+  max-height: none;
+}
+
+.risk-cols .msp-table td {
+  padding: 8px 14px;
+}
+
+.risk-chart-card {
+  flex: 0 0 36%;
+  min-height: 150px;
+}
+
+.risk-chart-card .msp-panel-body {
+  padding: 10px 12px 12px;
+}
+
+.risk-chart-card .msp-chart {
+  height: 100%;
+}
+
+.risk-row {
+  cursor: pointer;
+}
+
+.risk-row:hover,
+.risk-row:focus-visible {
+  background: var(--raised);
+  outline: none;
+}
+
+.risk-row-held {
+  background: var(--brand-wash);
+}
+
+.risk-row-held:hover {
+  background: var(--raised);
+}
+
+/* Shock group is only ever shown after the bell. */
+.risk-group {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.risk-group-defensive {
+  color: var(--green);
+  border-color: rgba(53, 201, 139, .45);
+}
+
+.risk-group-normal {
+  color: var(--muted);
+}
+
+.risk-group-vulnerable {
+  color: #e0a33a;
+  border-color: rgba(224, 163, 58, .45);
+}
+
+.risk-group-victim {
+  color: var(--red);
+  border-color: rgba(242, 85, 90, .5);
+}
+
+/* -- position entry -- */
+.risk-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(4, 8, 15, .68);
+  backdrop-filter: blur(3px);
+}
+
+.risk-modal-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+}
+
+.risk-modal-card .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.risk-modal-card .head h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: .04em;
+}
+
+.risk-modal-facts {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1px;
+  margin: 14px 0 18px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.risk-modal-facts>div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--panel-2);
+  font-size: 12px;
+}
+
+.risk-modal-facts span {
+  color: var(--muted);
+}
+
+.risk-modal-facts strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+
+.risk-modal-quick {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+.risk-modal-quick .btn {
+  flex: 1;
+  min-width: 62px;
+  padding: 7px 6px;
+  font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.risk-modal-hint {
+  margin: 14px 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+}
+
+.risk-modal-hint strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* Review mode: the page scrolls so the reveal table is fully readable, so the
+   board's panels need explicit heights instead of filling the viewport. */
+.msp-body.risk-review .risk-cols {
+  align-items: start;
+}
+
+.msp-body.risk-review .risk-chart-card {
+  /* flex-basis wins over height on a flex column's main axis, so it has to be
+     reset here or the card keeps its 36%-of-viewport sizing. */
+  flex: 0 0 auto;
+  height: 210px;
+}
+
+.msp-body.risk-review .risk-cols .msp-panel-body {
+  max-height: 340px;
+}
+
+.msp-body.risk-review #revealView {
+  margin-top: 10px;
+  padding-bottom: 30px;
+}
+
+@media (max-width: 1100px) {
+  .risk-cols {
+    grid-template-columns: 1fr;
+  }
+
+  .risk-chart-card {
+    flex: 0 0 auto;
+  }
+
+  .risk-chart-card .msp-chart {
+    height: 180px;
+  }
+
+  .risk-cols .msp-panel-body {
+    max-height: 360px;
   }
 }
 

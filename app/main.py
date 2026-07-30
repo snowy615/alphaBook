@@ -891,3 +891,6 @@ app.include_router(market_sim_py.router)
 from app import swe_prep
 app.include_router(swe_prep.router)
 
+from app import risks
+app.include_router(risks.router)
+

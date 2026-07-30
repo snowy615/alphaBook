@@ -36,6 +36,8 @@
     cards: svg('<rect x="3" y="7" width="11" height="14" rx="1"/><path d="M8.5 4h9.5a2 2 0 0 1 2 2v11"/><path d="M8.5 14h1"/>'),
     // calculator
     calc: svg('<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7.5h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'),
+    // a line breaking down through a floor, with the rebound after it
+    risk: svg('<path d="M3 6l4 5 3-2 4 9 3-4 4 2"/><path d="M3 20h18"/><path d="M14 18l3-4"/>'),
   };
 
   // ---- Mode board ----
@@ -51,9 +53,8 @@
       marketGames.length ? {
         icon: ICON.market,
         name: "Market Simulation",
-        blurb: "Trade " + marketGames.length + " stocks on a live limit order book anchored to real " +
-               "prices. Place limit orders, work a position and watch your P&L move as the room trades " +
-               "against you. A market-maker bot is always quoting, so it works solo too.",
+        blurb: "Trade " + marketGames.length + " stocks on a live limit order book anchored to " +
+               "real prices. A market-maker bot always quotes, so it works solo too.",
         chips: ["Multiplayer", "Live order book", marketGames.length + " stocks"],
         href: "/market",
         featured: true,
@@ -71,6 +72,13 @@
         blurb: "The same market, but you write Python in the browser and the server runs it. Nothing to install.",
         chips: ["Solo", "Sandboxed", "No setup"],
         href: "/swe-prep",
+      },
+      {
+        icon: ICON.risk,
+        name: "Risks",
+        blurb: "Run a market-neutral book through a synthetic crash. Beta is published, the panic is not.",
+        chips: ["Multiplayer", "Portfolio", "Drawdown scored"],
+        href: "/risks",
       },
       {
         icon: ICON.news,
