@@ -175,6 +175,21 @@ me = {"positions", "open_orders", "cash", "pnl", "fills", "last_reject"}</pre>
   </div>
 
   <script src="/static/market_sim_py.js"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "market-sim-py",
+      version: 1,
+      title: "Market Simulation Coding",
+      label: "How to play",
+      fullRulesHref: "/market-sim-py",
+      steps: [
+      { heading: "Your bot runs on your machine", body: "Nothing you write is uploaded. Your strategy trades this market over an authenticated API, against everyone else's bots, for ten minutes.", facts: [["Round length", "10 min"], ["Order rate", "~10/sec"]] },
+      { heading: "Three commands to get trading", body: "<p>Download your client from the Setup panel — your run id and token are already filled in. Then:</p><p><code>cd ~/Downloads</code><br><code>python3 algo_client.py</code></p><p>Edit <code>on_tick</code> and re-run to change your bot. Reconnecting mid-round is fine.</p>" },
+      { heading: "Fair values are hidden until the bell", body: "You are marked at each item's hidden fair value, so the leaderboard is not just whoever traded most. Position limits are enforced per item; rejected orders show up in your stats.", facts: [["Position limit", "1,000 / item"]] },
+      ],
+    });
+  </script>
 </body>
 
 </html>

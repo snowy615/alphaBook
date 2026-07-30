@@ -187,7 +187,9 @@
     btn.title = "How to play";
     btn.addEventListener("click", () => open(0));
 
-    const actions = document.querySelector(".topbar .actions");
+    const actions = [...document.querySelectorAll(".topbar .actions")]
+      .find((el) => !el.classList.contains("hidden"))
+      || document.querySelector(".topbar .actions");
     if (actions) {
       actions.insertBefore(btn, actions.firstChild);
     } else {

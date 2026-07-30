@@ -159,6 +159,21 @@ ctx["memory"]         # a dict that survives between ticks — put your state he
   </div>
 
   <script src="/static/swe_prep.js"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "swe-prep",
+      version: 1,
+      title: "SWE Prep",
+      label: "How to play",
+      fullRulesHref: "/swe-prep",
+      steps: [
+      { heading: "Write Python in the browser", body: "Same market as the coding mode, but nothing to install. Your strategy runs in a sandbox on the server." },
+      { heading: "Edit, check, submit", body: "Use <strong>Check</strong> to run your code against a dry market and catch errors before you commit to it. Then submit and it trades the round for you." },
+      { heading: "Scored on P&L at the bell", body: "Your book is marked at fair value when the clock runs out. Errors and rejected orders are shown live, so a broken strategy is diagnosable while it runs." },
+      ],
+    });
+  </script>
 </body>
 
 </html>

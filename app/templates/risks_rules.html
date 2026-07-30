@@ -143,6 +143,22 @@
   </div>
 
   <script src="/static/risks.js"></script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "risks",
+      version: 1,
+      title: "Risks",
+      label: "How to play",
+      fullRulesHref: "/risks",
+      steps: [
+      { heading: "You are running a book through a crash", body: "Twelve names, each starting at 100, replayed one trading day every few seconds. The path comes from a real stress episode, so there is a panic somewhere in it. You are not told where.", facts: [["Starting equity", "$1,000,000"], ["Names", "12"]] },
+      { heading: "Two limits, and they decide the game", body: "<p>Gross exposure caps how much you can hold in total. Net exposure keeps you close to market-neutral.</p><p>That second one matters: every episode is a crash, so if you could just short everything the round would be a coin flip. Capped, it becomes a question of <strong>which</strong> names break.</p>", facts: [["Gross cap", "$2,000,000"], ["Net band", "±$250,000"]] },
+      { heading: "Beta is the only clue you get", body: "Every name publishes a beta fitted on historical crashes — your prior for how hard it should react. The episode redraws each stock's real beta around that number and hides which ones are quietly the worst. A low-beta name can still take you apart." },
+      { heading: "Surviving counts as much as calling it", body: "<p>You are ranked on <strong>P&amp;L minus half your worst peak-to-trough drawdown</strong>. A round spent deep under water scores below a steadier path to the same money.</p><p><strong>Click any row in the basket</strong> to set a position. At the bell, every realised beta and shock group is revealed.</p>" },
+      ],
+    });
+  </script>
 </body>
 
 </html>

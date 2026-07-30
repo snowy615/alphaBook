@@ -189,6 +189,21 @@
 
         document.getElementById("joinCode").addEventListener("keydown", e => { if (e.key === "Enter") joinGame(); });
     </script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "headline",
+      version: 1,
+      title: "Headline Trading",
+      label: "How to play",
+      fullRulesHref: "/headline",
+      steps: [
+      { heading: "One contract, five minutes, live news", body: "The price walks continuously. Headlines hit the wire at random times and bias the walk in one direction for a while afterwards.", facts: [["Round length", "5 min"], ["Position range", "−1000 to +1000"]] },
+      { heading: "Read the headline, then size it", body: "Set your position at any moment. Not every headline moves the price the same amount — some are strong signals, some are noise dressed up as news." },
+      { heading: "P&L is marked continuously", body: "Each change of position is a trade at the price on the screen. Your P&amp;L is the sum of contracts times the move since you got in. At the end, every headline's true strength is revealed." },
+      ],
+    });
+  </script>
 </body>
 
 </html>

@@ -247,6 +247,22 @@
 
         document.getElementById("joinCode").addEventListener("keydown", e => { if (e.key === "Enter") joinGame(); });
     </script>
+  <script src="/static/tutorial.js"></script>
+  <script>
+    AlphaTutorial.init({
+      key: "poker-auction",
+      version: 1,
+      title: "Poker Auction",
+      label: "How to play",
+      fullRulesHref: "/poker-auction",
+      steps: [
+      { heading: "Buy cards, build a hand", body: "Your team starts with one random card and $1,000. Thirteen rounds of sealed-bid auction put the whole deck up for sale.", facts: [["Starting cash", "$1,000"], ["Rounds", "13"]] },
+      { heading: "Second-price, so bid your value", body: "The highest bidder wins the cards but pays the <strong>second-highest</strong> bid. That means shading your bid down mostly costs you cards you wanted — bid what the cards are actually worth to you." },
+      { heading: "Then clear your leftovers", body: "After the auctions you can sell unwanted cards to the host at $20 each, or list them to other teams for a listing fee. Cards you cannot use are still worth something." },
+      { heading: "The hand pays the bonus", body: "Your best five-card hand earns a fixed bonus — a pair is $100, a flush $1,500, four of a kind $3,000. The top hand in the room takes another $2,000.", facts: [["Top hand bonus", "$2,000"]] },
+      ],
+    });
+  </script>
 </body>
 
 </html>
