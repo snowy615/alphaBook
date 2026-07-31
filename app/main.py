@@ -355,15 +355,6 @@ async def about_page(request: Request):
     )
 
 
-@app.get("/crash-ledger", include_in_schema=False)
-async def crash_ledger_page(request: Request):
-    """Crash Ledger — how S&P 500 names behaved across historical crash periods."""
-    return templates.TemplateResponse(
-        "crash_ledger.html",
-        {"request": request, "app_name": "AlphaBook"},
-    )
-
-
 @app.get("/", include_in_schema=False)
 async def home(request: Request):
     from app.models import CustomGame
@@ -902,4 +893,7 @@ app.include_router(swe_prep.router)
 
 from app import risks
 app.include_router(risks.router)
+
+from app import crash_ledger
+app.include_router(crash_ledger.router)
 

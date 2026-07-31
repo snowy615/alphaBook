@@ -46,6 +46,59 @@
   </div>
 </header>
 
+<!-- ══ Crash Call: the game ══════════════════════════════════════════════ -->
+<section class="cl-game" id="clGame">
+  <div class="cl-game-head">
+    <h2>Crash Call</h2>
+    <p class="cl-game-sub">
+      {{ rounds_per_game }} rounds. Each shows two real names — call which one behaved a certain way in past
+      crashes. Peek at either chart before you decide. Streaks pay bonus points.
+    </p>
+  </div>
+
+  <!-- Start -->
+  <div class="cl-view" id="clStart">
+    <div class="cl-play-row">
+      <button class="btn primary cl-play" id="clPlayBtn">Play Crash Call</button>
+      <span class="msp-muted">{{ rounds_per_game }} rounds &middot; {{ stock_count }} stocks in play</span>
+    </div>
+    <div class="cl-board-wrap">
+      <div class="cl-board-head"><h3>Leaderboard</h3><span class="msp-muted">best score per player</span></div>
+      <table class="cl-board" id="clBoard"></table>
+    </div>
+  </div>
+
+  <!-- A round -->
+  <div class="cl-view hidden" id="clRound">
+    <div class="cl-hud">
+      <span class="cl-hud-round" id="clRoundNum">Round 1 / {{ rounds_per_game }}</span>
+      <span class="cl-hud-score" id="clScore">0 pts</span>
+      <span class="cl-hud-streak" id="clStreak"></span>
+    </div>
+    <div class="cl-question" id="clQuestion">&mdash;</div>
+    <div class="cl-duel" id="clDuel"></div>
+    <div class="cl-reveal hidden" id="clReveal"></div>
+    <button class="btn primary cl-next hidden" id="clNextBtn">Next round</button>
+  </div>
+
+  <!-- Final -->
+  <div class="cl-view hidden" id="clFinal">
+    <div class="cl-final-card">
+      <div class="cl-final-score" id="clFinalScore">0</div>
+      <div class="cl-final-label">points</div>
+      <div class="cl-final-detail" id="clFinalDetail"></div>
+      <button class="btn primary" id="clPlayAgain">Play again</button>
+    </div>
+  </div>
+
+  <div class="cl-msg hidden" id="clMsg"></div>
+</section>
+
+<div class="cl-browse">
+  <h2>Browse the ledger</h2>
+  <p class="msp-muted">The full reference below — every card's ticker opens its live chart, same as in the game.</p>
+</div>
+
 <div class="tape-wrap">
   <div class="tape-track" id="tapeTrack"><!-- filled by JS --></div>
 </div>

@@ -498,3 +498,247 @@
   .crash-ledger .hero { padding-top: 2rem; }
   .crash-ledger .stat { padding-right: 1rem; }
 }
+
+/* ============================================================
+   Crash Call — the game
+   ============================================================ */
+.crash-ledger .cl-game {
+  margin: 2.4rem 0 1rem;
+  padding: 1.6rem;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.crash-ledger .cl-game-head h2 {
+  margin: 0 0 .3rem;
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.crash-ledger .cl-game-sub {
+  margin: 0 0 1.2rem;
+  color: var(--muted);
+  max-width: 640px;
+  line-height: 1.55;
+}
+
+.crash-ledger .cl-play-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 1.6rem;
+}
+
+.crash-ledger .cl-play {
+  font-size: 1rem;
+  padding: 12px 22px;
+}
+
+/* -- leaderboard -- */
+.crash-ledger .cl-board-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 1.2rem;
+  margin-bottom: .6rem;
+}
+
+.crash-ledger .cl-board-head h3 { margin: 0; font-size: 1.05rem; }
+
+.crash-ledger .cl-board {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .9rem;
+}
+
+.crash-ledger .cl-board th {
+  text-align: left;
+  font-size: .68rem;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.crash-ledger .cl-board td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(127, 127, 127, .12);
+}
+
+.crash-ledger .cl-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.crash-ledger .cl-me-row {
+  background: rgba(108, 92, 231, .12);
+}
+
+/* -- round HUD -- */
+.crash-ledger .cl-hud {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 1rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .85rem;
+}
+
+.crash-ledger .cl-hud-round { color: var(--muted); }
+.crash-ledger .cl-hud-score { font-weight: 700; }
+.crash-ledger .cl-hud-streak { margin-left: auto; color: #ff9a5b; font-weight: 700; }
+
+.crash-ledger .cl-question {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1.25;
+  margin-bottom: 1.2rem;
+}
+
+/* -- the duel -- */
+.crash-ledger .cl-duel {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.crash-ledger .cl-stock {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.1rem 1.1rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: .8rem;
+  background: var(--panel-2);
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.crash-ledger .cl-stock-top {
+  display: flex;
+  flex-direction: column;
+  gap: .2rem;
+}
+
+.crash-ledger .cl-stock-ticker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 700;
+  font-size: 1.4rem;
+}
+
+.crash-ledger .cl-stock-name {
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.crash-ledger .cl-stock-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: auto;
+}
+
+.crash-ledger .cl-pick { flex: 1; }
+.crash-ledger .cl-chart { white-space: nowrap; }
+
+.crash-ledger .cl-stock-value {
+  display: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .95rem;
+  font-weight: 600;
+  padding-top: .3rem;
+  border-top: 1px solid var(--border);
+}
+
+.crash-ledger .cl-stock-value.shown { display: block; }
+
+.crash-ledger .cl-stock.cl-correct {
+  border-color: rgba(46, 204, 113, .6);
+  background: rgba(46, 204, 113, .1);
+}
+
+.crash-ledger .cl-stock.cl-wrong {
+  border-color: rgba(255, 107, 107, .6);
+  background: rgba(255, 107, 107, .1);
+}
+
+/* -- reveal + next -- */
+.crash-ledger .cl-reveal {
+  margin-top: 1rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.crash-ledger .cl-reveal-ok {
+  background: rgba(46, 204, 113, .1);
+  border-color: rgba(46, 204, 113, .4);
+}
+
+.crash-ledger .cl-reveal-bad {
+  background: rgba(255, 107, 107, .1);
+  border-color: rgba(255, 107, 107, .4);
+}
+
+.crash-ledger .cl-next { margin-top: 1rem; }
+
+/* -- final -- */
+.crash-ledger .cl-final-card {
+  text-align: center;
+  padding: 1.5rem 1rem;
+}
+
+.crash-ledger .cl-final-score {
+  font-size: 3.4rem;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--brand);
+}
+
+.crash-ledger .cl-final-label {
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  font-size: .72rem;
+  color: var(--muted);
+  margin-top: .3rem;
+}
+
+.crash-ledger .cl-final-detail {
+  margin: 1rem 0 1.4rem;
+  color: var(--muted);
+}
+
+.crash-ledger .cl-msg {
+  margin-top: 1rem;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(255, 107, 107, .12);
+  border: 1px solid rgba(255, 107, 107, .4);
+}
+
+/* -- browse divider -- */
+.crash-ledger .cl-browse {
+  margin: 2.6rem 0 0;
+  padding-top: 1.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.crash-ledger .cl-browse h2 {
+  margin: 0 0 .3rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.crash-ledger .cl-browse p { margin: 0; }
+
+@media (max-width: 560px) {
+  .crash-ledger .cl-duel { grid-template-columns: 1fr; }
+  .crash-ledger .cl-question { font-size: 1.25rem; }
+}
