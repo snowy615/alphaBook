@@ -106,14 +106,15 @@
 
   // ---- Crash Call game ----
   (function () {
-    const game = $("#clGame");
-    if (!game) return;
+    if (!$("#clGame")) return;
 
     const views = { start: $("#clStart"), round: $("#clRound"), final: $("#clFinal") };
     const msg = $("#clMsg");
     let gameId = null;
-    let total = 10;
     let answering = false;
+    let profile = null;
+
+    const TIER_ICON = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💠", diamond: "💎" };
 
     function show(view) {
       Object.entries(views).forEach(([k, el]) => el.classList.toggle("hidden", k !== view));
@@ -124,27 +125,97 @@
       msg.classList.remove("hidden");
     }
 
+    // ── Start-screen player card (level bar, tier, streak) ──────────────
+    function renderPlayer(p) {
+      const el = $("#clPlayer");
+      if (!el) return;
+      const tier = p.tier || { key: "bronze", label: "Bronze", color: "#b08d57" };
+      const pctInto = Math.round((p.level_pct || 0) * 100);
+      const streakLine = p.day_streak > 0
+        ? `<span class="cl-streak-flame">🔥 ${p.day_streak}-day streak</span>`
+        : `<span class="msp-muted">Play daily to start a streak</span>`;
+      const dailyLine = p.daily_available
+        ? `<span class="cl-daily-badge">Daily bonus ready →</span>` : "";
+      el.innerHTML = `
+        <div class="cl-player-main">
+          <span class="cl-tier-pill" style="--tier:${tier.color}">${TIER_ICON[tier.key] || "🏅"} ${esc(tier.label)}</span>
+          <div class="cl-level-block">
+            <div class="cl-level-row"><strong>Level ${p.level}</strong>
+              <span class="msp-muted">${p.level_into} / ${p.level_span} XP</span></div>
+            <div class="cl-xpbar"><div class="cl-xpfill" style="width:${pctInto}%"></div></div>
+          </div>
+        </div>
+        <div class="cl-player-meta">
+          ${streakLine} ${dailyLine}
+          <span class="msp-muted">Best ${(p.best_score || 0).toLocaleString()} &middot; ${p.games_played || 0} games</span>
+        </div>`;
+    }
+
+    function renderDaily(goal) {
+      const el = $("#clDaily");
+      if (!el || !goal) return;
+      const pct = Math.min(100, Math.round((goal.current / goal.goal) * 100));
+      el.innerHTML = `
+        <div class="cl-daily-head">
+          <span>🤝 Today's desk goal</span>
+          <span class="msp-muted">${goal.current.toLocaleString()} / ${goal.goal.toLocaleString()} correct calls${goal.reached ? " · reached! 🎉" : ""}</span>
+        </div>
+        <div class="cl-goalbar"><div class="cl-goalfill${goal.reached ? " cl-goalfill-done" : ""}" style="width:${pct}%"></div></div>`;
+    }
+
+    async function loadProfile() {
+      try {
+        profile = await api("/crash-ledger/profile");
+        renderPlayer(profile);
+        renderDaily(profile.daily_goal);
+      } catch (err) {
+        const el = $("#clPlayer");
+        if (el) el.innerHTML = `<span class="msp-muted">${err.status === 401 ? "Log in to track XP, streaks and leagues." : esc(err.message)}</span>`;
+      }
+    }
+
+    // ── Tiered leaderboard ──────────────────────────────────────────────
     async function loadBoard() {
       const table = $("#clBoard");
+      const badge = $("#clTierBadge");
       if (!table) return;
       try {
-        const { leaderboard } = await api("/crash-ledger/leaderboard");
-        if (!leaderboard.length) {
-          table.innerHTML = `<tbody><tr><td class="msp-muted">No scores yet — be the first.</td></tr></tbody>`;
+        const data = await api("/crash-ledger/leaderboard");
+        if (badge && data.tier) {
+          badge.textContent = `${TIER_ICON[data.tier.key] || "🏅"} ${data.tier.label} league`;
+          badge.style.setProperty("--tier", data.tier.color);
+        }
+        const rows = data.rows || [];
+        if (!rows.length) {
+          table.innerHTML = `<tbody><tr><td class="msp-muted">No one in this league yet — be the first.</td></tr></tbody>`;
           return;
         }
         table.innerHTML = `
-          <thead><tr><th>#</th><th>Player</th><th class="cl-num">Score</th><th class="cl-num">Best streak</th></tr></thead>
-          <tbody>${leaderboard.map((r) => `
+          <thead><tr><th>#</th><th>Player</th><th class="cl-num">XP</th><th class="cl-num">Lvl</th><th class="cl-num">Best</th></tr></thead>
+          <tbody>${rows.map((r) => `
             <tr class="${r.is_me ? "cl-me-row" : ""}">
               <td>${r.rank}</td>
               <td>${esc(r.username)}${r.is_me ? " (you)" : ""}</td>
-              <td class="cl-num">${r.score.toLocaleString()}</td>
-              <td class="cl-num">${r.best_streak}</td>
+              <td class="cl-num">${r.xp.toLocaleString()}</td>
+              <td class="cl-num">${r.level}</td>
+              <td class="cl-num">${r.best_score.toLocaleString()}</td>
             </tr>`).join("")}</tbody>`;
       } catch (err) {
         table.innerHTML = `<tbody><tr><td class="msp-muted">${esc(err.message)}</td></tr></tbody>`;
       }
+    }
+
+    // ── Round rendering ─────────────────────────────────────────────────
+    function renderProgress(index, total) {
+      const el = $("#clProgress");
+      if (!el) return;
+      // Endowed head start: the first segment reads as already underway.
+      el.innerHTML = Array.from({ length: total }, (_, i) => {
+        let cls = "cl-seg";
+        if (i < index) cls += " cl-seg-done";
+        else if (i === index) cls += " cl-seg-now";
+        return `<span class="${cls}"></span>`;
+      }).join("");
     }
 
     function stockCard(side, s) {
@@ -163,11 +234,18 @@
         </div>`;
     }
 
-    function renderRound(round, score, streak) {
+    function setDiff(tag) {
+      const el = $("#clDiff");
+      if (el) el.textContent = tag ? tag : "";
+    }
+
+    function renderRound(round, score, streak, diffTag) {
       answering = false;
+      renderProgress(round.index, round.total);
       $("#clRoundNum").textContent = `Round ${round.index + 1} / ${round.total}`;
       $("#clScore").textContent = `${(score || 0).toLocaleString()} pts`;
       $("#clStreak").textContent = streak ? `🔥 ${streak}` : "";
+      setDiff(diffTag);
       $("#clQuestion").textContent = round.question;
       $("#clDuel").innerHTML = stockCard("a", round.a) + stockCard("b", round.b);
       $("#clReveal").classList.add("hidden");
@@ -175,6 +253,14 @@
       $("#clNextBtn").classList.add("hidden");
       $("#clDuel").querySelectorAll(".cl-pick").forEach((btn) =>
         btn.addEventListener("click", () => submitPick(btn.dataset.side, round.label)));
+    }
+
+    function pointPop(card, points) {
+      const pop = document.createElement("div");
+      pop.className = "cl-pop";
+      pop.textContent = `+${points}`;
+      card.appendChild(pop);
+      setTimeout(() => pop.remove(), 1100);
     }
 
     async function submitPick(pick, label) {
@@ -190,7 +276,6 @@
         return;
       }
 
-      // reveal the metric value on each side and mark right/wrong
       const duel = $("#clDuel");
       const map = { a: res.a_value, b: res.b_value };
       ["a", "b"].forEach((side) => {
@@ -201,53 +286,77 @@
         if (side === res.answer) card.classList.add("cl-correct");
         else if (side === pick) card.classList.add("cl-wrong");
       });
+      if (res.correct) pointPop(duel.querySelector(`.cl-stock[data-side="${pick}"]`), res.points);
 
       const reveal = $("#clReveal");
       reveal.className = "cl-reveal " + (res.correct ? "cl-reveal-ok" : "cl-reveal-bad");
-      reveal.innerHTML = res.correct
-        ? `<strong>Correct.</strong> +${res.points} pts${res.streak > 1 ? ` &middot; 🔥 ${res.streak} streak` : ""}`
+      let line = res.correct
+        ? `<strong>Correct.</strong> +${res.points} pts${res.streak > 1 ? ` &middot; 🔥 ${res.streak} in a row` : ""}`
         : `<strong>Missed it.</strong> The answer was ${res.answer.toUpperCase()}.`;
+      if (res.milestone) line += ` <span class="cl-milestone">🔥 ${res.milestone}-streak!</span>`;
+      reveal.innerHTML = line;
+      reveal.classList.remove("hidden");
       $("#clScore").textContent = `${res.score.toLocaleString()} pts`;
       $("#clStreak").textContent = res.streak ? `🔥 ${res.streak}` : "";
+      setDiff(res.difficulty_tag);
 
       if (res.done) {
-        setTimeout(() => finish(res.final), 900);
+        setTimeout(() => finish(res.final), 950);
       } else {
         const next = $("#clNextBtn");
         next.classList.remove("hidden");
-        next.onclick = () => renderRound(res.round, res.score, res.streak);
+        next.onclick = () => renderRound(res.round, res.score, res.streak, res.difficulty_tag);
       }
     }
 
-    function finish(final) {
-      $("#clFinalScore").textContent = final.score.toLocaleString();
-      $("#clFinalDetail").innerHTML =
-        `${final.correct} of ${final.total} correct &middot; best streak 🔥 ${final.best_streak}`;
+    // ── Final screen ────────────────────────────────────────────────────
+    function finish(f) {
+      const bits = [];
+      if (f.leveled_up) bits.push(`<div class="cl-final-flag cl-flag-level">⬆️ Level up! You're Level ${f.level}</div>`);
+      if (f.new_best) bits.push(`<div class="cl-final-flag cl-flag-best">🏆 New personal best</div>`);
+      if (f.daily_bonus) bits.push(`<div class="cl-final-flag cl-flag-daily">🔥 Day ${f.day_streak} · +${f.daily_bonus} daily bonus</div>`);
+
+      const pctInto = Math.round((f.level_pct || 0) * 100);
+      const levelBar = f.level != null ? `
+        <div class="cl-final-level">
+          <div class="cl-level-row"><strong>Level ${f.level}</strong>
+            <span class="msp-muted">${f.level_into} / ${f.level_span} XP</span></div>
+          <div class="cl-xpbar"><div class="cl-xpfill" style="width:${pctInto}%"></div></div>
+        </div>` : "";
+
+      $("#clFinalBody").innerHTML = `
+        <div class="cl-final-score" id="clFinalScore">${(f.score || 0).toLocaleString()}</div>
+        <div class="cl-final-label">points</div>
+        <div class="cl-final-detail">${f.correct} of ${f.total} correct &middot; best streak 🔥 ${f.best_streak}
+          ${f.xp_earned ? ` &middot; <strong>+${f.xp_earned} XP</strong>` : ""}</div>
+        <div class="cl-final-flags">${bits.join("")}</div>
+        ${levelBar}
+        <button class="btn primary" id="clPlayAgain">Play again</button>`;
+      $("#clPlayAgain").addEventListener("click", () => { startGame(); });
       show("final");
+      loadProfile();
       loadBoard();
     }
 
     async function startGame() {
-      $("#clPlayBtn").disabled = true;
-      $("#clPlayAgain").disabled = true;
+      const btn = $("#clPlayBtn");
+      if (btn) btn.disabled = true;
       msg.classList.add("hidden");
       try {
         const res = await postJSON("/crash-ledger/game/start", {});
         gameId = res.game_id;
-        total = res.total;
         show("round");
-        renderRound(res.round, 0, 0);
+        renderRound(res.round, 0, 0, res.difficulty_tag);
       } catch (err) {
         showMsg(err.status === 401 ? "Please log in to play." : err.message);
         show("start");
       } finally {
-        $("#clPlayBtn").disabled = false;
-        $("#clPlayAgain").disabled = false;
+        if (btn) btn.disabled = false;
       }
     }
 
     $("#clPlayBtn").addEventListener("click", startGame);
-    $("#clPlayAgain").addEventListener("click", () => { show("start"); startGame(); });
+    loadProfile();
     loadBoard();
   })();
 })();

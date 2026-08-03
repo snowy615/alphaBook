@@ -742,3 +742,202 @@
   .crash-ledger .cl-duel { grid-template-columns: 1fr; }
   .crash-ledger .cl-question { font-size: 1.25rem; }
 }
+
+/* ============================================================
+   Crash Call — gamification UI
+   ============================================================ */
+/* -- start-screen player card -- */
+.crash-ledger .cl-player {
+  display: flex;
+  flex-direction: column;
+  gap: .7rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  margin-bottom: 1rem;
+}
+
+.crash-ledger .cl-player-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.crash-ledger .cl-tier-pill {
+  --tier: var(--brand);
+  font-weight: 700;
+  font-size: .85rem;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--tier);
+  color: var(--tier);
+  background: color-mix(in srgb, var(--tier) 14%, transparent);
+  white-space: nowrap;
+}
+
+.crash-ledger .cl-level-block { flex: 1; min-width: 180px; }
+
+.crash-ledger .cl-level-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 5px;
+  font-size: .9rem;
+}
+
+.crash-ledger .cl-xpbar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, .22);
+  overflow: hidden;
+}
+
+.crash-ledger .cl-xpfill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--brand), #9d8cff);
+  transition: width .5s ease;
+}
+
+.crash-ledger .cl-player-meta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: .85rem;
+}
+
+.crash-ledger .cl-streak-flame { color: #ff9a5b; font-weight: 600; }
+
+.crash-ledger .cl-daily-badge {
+  color: var(--green);
+  font-weight: 600;
+  font-size: .82rem;
+}
+
+/* -- shared daily desk goal -- */
+.crash-ledger .cl-daily {
+  margin-bottom: 1.4rem;
+}
+
+.crash-ledger .cl-daily-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-size: .88rem;
+  margin-bottom: 6px;
+}
+
+.crash-ledger .cl-goalbar {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, .22);
+  overflow: hidden;
+}
+
+.crash-ledger .cl-goalfill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7ea8ff, var(--brand));
+  transition: width .5s ease;
+}
+
+.crash-ledger .cl-goalfill-done { background: linear-gradient(90deg, var(--green), #7ee8a8); }
+
+.crash-ledger .cl-play-hint { display: inline-block; margin-top: 2px; }
+
+/* -- tier badge on the leaderboard -- */
+.crash-ledger .cl-tier-badge {
+  --tier: var(--brand);
+  font-size: .78rem;
+  font-weight: 700;
+  color: var(--tier);
+}
+
+/* -- round progress bar (endowed head start) -- */
+.crash-ledger .cl-progress {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 1rem;
+}
+
+.crash-ledger .cl-seg {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(127, 127, 127, .22);
+}
+
+.crash-ledger .cl-seg-done { background: var(--brand); }
+
+.crash-ledger .cl-seg-now {
+  background: linear-gradient(90deg, var(--brand) 55%, rgba(127, 127, 127, .22) 55%);
+  animation: cl-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes cl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+/* -- difficulty chip -- */
+.crash-ledger .cl-diff-chip {
+  font-size: .72rem;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+/* -- point pop on a correct call -- */
+.crash-ledger .cl-stock { position: relative; overflow: visible; }
+
+.crash-ledger .cl-pop {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 800;
+  font-size: 1.2rem;
+  color: var(--green);
+  pointer-events: none;
+  animation: cl-pop-up 1.1s ease-out forwards;
+}
+
+@keyframes cl-pop-up {
+  0% { transform: translateY(6px) scale(.9); opacity: 0; }
+  20% { transform: translateY(0) scale(1.1); opacity: 1; }
+  100% { transform: translateY(-26px) scale(1); opacity: 0; }
+}
+
+.crash-ledger .cl-milestone { color: #ff9a5b; font-weight: 700; margin-left: 6px; }
+
+/* -- final screen extras -- */
+.crash-ledger .cl-final-flags {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  margin: 0 0 1.2rem;
+}
+
+.crash-ledger .cl-final-flag {
+  font-weight: 600;
+  font-size: .92rem;
+  padding: 8px 14px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.crash-ledger .cl-flag-level { color: var(--brand); border-color: rgba(108, 92, 231, .45); background: rgba(108, 92, 231, .1); }
+.crash-ledger .cl-flag-best { color: #e0b341; border-color: rgba(224, 179, 65, .45); background: rgba(224, 179, 65, .1); }
+.crash-ledger .cl-flag-daily { color: #ff9a5b; border-color: rgba(255, 154, 91, .45); background: rgba(255, 154, 91, .1); }
+
+.crash-ledger .cl-final-level {
+  max-width: 340px;
+  margin: 0 auto 1.4rem;
+  text-align: left;
+}

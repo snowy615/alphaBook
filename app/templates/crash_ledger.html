@@ -58,20 +58,27 @@
 
   <!-- Start -->
   <div class="cl-view" id="clStart">
+    <div class="cl-player" id="clPlayer"><!-- level / tier / streak, from profile --></div>
+    <div class="cl-daily" id="clDaily"><!-- shared desk goal --></div>
     <div class="cl-play-row">
       <button class="btn primary cl-play" id="clPlayBtn">Play Crash Call</button>
-      <span class="msp-muted">{{ rounds_per_game }} rounds &middot; {{ stock_count }} stocks in play</span>
+      <span class="msp-muted cl-play-hint">Round 1 is ready &middot; {{ rounds_per_game }} rounds &middot; {{ stock_count }} stocks in play</span>
     </div>
     <div class="cl-board-wrap">
-      <div class="cl-board-head"><h3>Leaderboard</h3><span class="msp-muted">best score per player</span></div>
+      <div class="cl-board-head">
+        <h3>League leaderboard</h3>
+        <span class="cl-tier-badge" id="clTierBadge"></span>
+      </div>
       <table class="cl-board" id="clBoard"></table>
     </div>
   </div>
 
   <!-- A round -->
   <div class="cl-view hidden" id="clRound">
+    <div class="cl-progress" id="clProgress"></div>
     <div class="cl-hud">
       <span class="cl-hud-round" id="clRoundNum">Round 1 / {{ rounds_per_game }}</span>
+      <span class="cl-diff-chip" id="clDiff"></span>
       <span class="cl-hud-score" id="clScore">0 pts</span>
       <span class="cl-hud-streak" id="clStreak"></span>
     </div>
@@ -83,12 +90,7 @@
 
   <!-- Final -->
   <div class="cl-view hidden" id="clFinal">
-    <div class="cl-final-card">
-      <div class="cl-final-score" id="clFinalScore">0</div>
-      <div class="cl-final-label">points</div>
-      <div class="cl-final-detail" id="clFinalDetail"></div>
-      <button class="btn primary" id="clPlayAgain">Play again</button>
-    </div>
+    <div class="cl-final-card" id="clFinalBody"></div>
   </div>
 
   <div class="cl-msg hidden" id="clMsg"></div>
