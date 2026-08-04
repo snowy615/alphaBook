@@ -75,7 +75,7 @@
       mhYahoo.href = `https://finance.yahoo.com/quote/${encodeURIComponent(ticker)}/`;
       backdrop.classList.add("open");
       document.body.style.overflow = "hidden";
-      const symbol = encodeURIComponent(`${exchange || "NASDAQ"}:${ticker}`);
+      const symbol = encodeURIComponent(exchange ? `${exchange}:${ticker}` : ticker);
       const theme = chartTheme();
       const bg = theme === "light" ? "ffffff" : "111522";
       const src = `https://s.tradingview.com/widgetembed/?details=0&hide_side_toolbar=1&interval=D` +
@@ -359,4 +359,100 @@
     loadProfile();
     loadBoard();
   })();
+
+  // ---- Full universe browser ----
+  // Renders the remaining constituents with search and a cohort filter. Every
+  // name is a [data-ticker] button, so the delegated handler above opens the
+  // same chart the curated cards use — no second modal.
+  (function () {
+    const DATA = window.UNIVERSE || { cohorts: [], stocks: [] };
+    const STOCKS = DATA.stocks || [];
+    const COHORTS = DATA.cohorts || [];
+    const root = $("#uniRoot");
+    if (!root || !STOCKS.length) return;
+
+    const chips = $("#uniChips");
+    const empty = $("#uniEmpty");
+    const countEl = $("#uniCount");
+    const search = $("#uniSearch");
+    const state = { query: "", cohort: "all" };
+
+    const counts = COHORTS.reduce((acc, c) => {
+      acc[c] = STOCKS.filter((s) => s.c === c).length;
+      return acc;
+    }, {});
+
+    const label = (c) => c.replace(/([a-z])([A-Z])/g, "$1 $2");
+
+    function matches() {
+      const q = state.query.trim().toUpperCase();
+      return STOCKS.filter((s) => {
+        if (state.cohort !== "all" && s.c !== state.cohort) return false;
+        if (!q) return true;
+        return s.t.toUpperCase().includes(q) || s.n.toUpperCase().includes(q);
+      });
+    }
+
+    function renderChips() {
+      chips.innerHTML =
+        `<button class="uni-chip ${state.cohort === "all" ? "is-on" : ""}"
+          data-cohort="all" type="button">All <span>${STOCKS.length}</span></button>` +
+        COHORTS.map((c) => `
+          <button class="uni-chip ${state.cohort === c ? "is-on" : ""}"
+            data-cohort="${esc(c)}" type="button">${esc(label(c))} <span>${counts[c]}</span></button>`
+        ).join("");
+      chips.querySelectorAll("[data-cohort]").forEach((b) => {
+        b.addEventListener("click", () => { state.cohort = b.dataset.cohort; render(); });
+      });
+    }
+
+    function render() {
+      const rows = matches();
+      countEl.textContent = rows.length === STOCKS.length
+        ? `${STOCKS.length} names`
+        : `${rows.length} of ${STOCKS.length}`;
+      empty.classList.toggle("hidden", rows.length > 0);
+
+      const grouped = new Map();
+      rows.forEach((s) => {
+        if (!grouped.has(s.c)) grouped.set(s.c, []);
+        grouped.get(s.c).push(s);
+      });
+
+      root.innerHTML = COHORTS.filter((c) => grouped.has(c)).map((c) => {
+        const names = grouped.get(c);
+        return `<div class="uni-group">
+          <div class="uni-group-head">
+            <h3>${esc(label(c))}</h3>
+            <span>${names.length} name${names.length === 1 ? "" : "s"}</span>
+          </div>
+          <div class="uni-grid">${names.map((s) => `
+            <button class="uni-name" type="button"
+              data-ticker="${esc(s.t)}" data-name="${esc(s.n)}">
+              <span class="uni-ticker">${esc(s.t)}</span>
+              <span class="uni-company">${esc(s.n)}</span>
+            </button>`).join("")}</div>
+        </div>`;
+      }).join("");
+
+      renderChips();
+    }
+
+    let debounce = null;
+    search.addEventListener("input", () => {
+      clearTimeout(debounce);
+      debounce = setTimeout(() => { state.query = search.value; render(); }, 90);
+    });
+
+    $("#uniClear").addEventListener("click", () => {
+      state.query = "";
+      state.cohort = "all";
+      search.value = "";
+      render();
+      search.focus();
+    });
+
+    render();
+  })();
+
 })();

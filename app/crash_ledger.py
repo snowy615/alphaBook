@@ -368,14 +368,31 @@ class AnswerRequest(BaseModel):
 
 
 # ---- Page ----
+def _load_universe() -> Dict[str, Any]:
+    """The full constituent list, grouped by the crash simulator's cohorts.
+
+    The curated cards above cover the notable names; this is the other 450-odd,
+    so the "493 tickers tracked" headline is something you can actually browse.
+    """
+    path = BASE_DIR / "data" / "sp500_cohorts.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {"cohorts": [], "stocks": []}
+    return data
+
+
 @router.get("", include_in_schema=False)
 async def crash_ledger_page(request: Request):
+    universe = _load_universe()
     return templates.TemplateResponse("crash_ledger.html", {
         "request": request,
         "app_name": "AlphaBook",
         "stock_count": len(_STOCKS),
         "rounds_per_game": ROUNDS_PER_GAME,
         "daily_goal": DAILY_GOAL,
+        "universe_json": json.dumps(universe),
+        "universe_count": len(universe.get("stocks", [])),
     })
 
 

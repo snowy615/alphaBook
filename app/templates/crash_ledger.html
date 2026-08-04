@@ -1374,11 +1374,40 @@
   </div>
 </div>
 
+<section class="category" id="universe">
+  <div class="category-head">
+    <h2><span class="dot"></span>The full universe</h2>
+    <p>Every constituent the dataset covers, grouped into the cohorts the crash simulator moves
+      them in together. Search it, or filter to a cohort — any name opens the same chart.</p>
+  </div>
+
+  <div class="uni-controls">
+    <input id="uniSearch" class="msp-input uni-search" type="search" autocomplete="off"
+      placeholder="Search a ticker or a company…" aria-label="Search the universe">
+    <button id="uniClear" class="btn ghost" type="button">Clear</button>
+    <span class="uni-count" id="uniCount"></span>
+  </div>
+
+  <div class="uni-chips" id="uniChips"></div>
+
+  <p class="uni-note">
+    <strong>Cohorts are the simulator's, not GICS.</strong> They are the factor buckets the crash
+    model moves names in together, and they do not line up with a company's real-world sector —
+    Exxon sits in Technology here. The chart is the real company.
+  </p>
+
+  <div id="uniRoot" class="uni-groups"></div>
+  <p class="uni-empty hidden" id="uniEmpty">Nothing matches that search.</p>
+</section>
+
 <footer>
   <p><strong>Methodology.</strong> Figures are derived from adjusted close prices for 493 current S&amp;P 500 constituents across 6 historical market-crash periods. "Crash period" returns and drawdowns are measured within each defined window only, not over full market history. Tickers link out to their live Yahoo Finance quote page.</p>
 </footer>
   </div>
 
+  <script>
+    window.UNIVERSE = {{ universe_json|safe }};
+  </script>
   <script src="/static/crash_ledger.js"></script>
 </body>
 
