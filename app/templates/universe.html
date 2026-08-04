@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Universe - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Universe</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/risks" class="btn ghost">Risks</a>
+      <a href="/about" class="btn ghost">About</a>
+      <div id="loginBox" class="hidden">
+        <a href="/login" class="btn">Login</a>
+        <a href="/signup" class="btn primary">Sign up</a>
+      </div>
+      <div id="userBox" class="hidden">
+        <a href="/profile" class="btn ghost">Profile</a>
+        <span id="userName">user</span>
+        <form method="post" action="/logout" style="display:inline">
+          <button type="submit" class="btn ghost">Logout</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="market-page-header">
+      <div>
+        <h2>The universe</h2>
+        <p>Every name the crash simulator models, grouped into the cohorts it moves them in.
+          Open one for its real chart.</p>
+      </div>
+      <div class="market-status">
+        <span id="uniCount">{{ stock_count }} names</span>
+      </div>
+    </div>
+
+    <div class="uni-controls">
+      <input id="uniSearch" class="msp-input uni-search" type="search" autocomplete="off"
+        placeholder="Search a ticker or a company…" aria-label="Search the universe">
+      <button id="uniClear" class="btn ghost" type="button">Clear</button>
+    </div>
+
+    <div class="uni-chips" id="uniChips"></div>
+
+    <p class="uni-note">
+      <strong>Cohorts are the simulator's, not GICS.</strong> They are the factor buckets the
+      crash model moves names in together, and they do not line up with a company's real-world
+      sector — Exxon sits in Technology here. The chart is the real company.
+    </p>
+
+    <div id="uniRoot" class="uni-groups"></div>
+    <p class="uni-empty hidden" id="uniEmpty">Nothing matches that search.</p>
+  </div>
+
+  <!-- Chart, opened from any name -->
+  <div id="uniModal" class="risk-modal hidden">
+    <div class="risk-modal-card uni-modal-card">
+      <div class="head">
+        <div>
+          <h3 id="uniModalTicker">—</h3>
+          <div class="msp-muted uni-modal-sub"><span id="uniModalName"></span> ·
+            <span id="uniModalCohort"></span></div>
+        </div>
+        <button id="uniModalClose" class="msp-bot-x" type="button" aria-label="Close chart">×</button>
+      </div>
+      <div class="uni-chart-host" id="uniChartHost"></div>
+      <div class="uni-modal-foot">
+        <a id="uniYahoo" class="btn ghost" href="#" target="_blank" rel="noopener noreferrer">
+          Open on Yahoo Finance</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="footer"></div>
+
+  <script>
+    window.UNIVERSE = {{ universe_json|safe }};
+  </script>
+  <script src="/static/universe.js"></script>
+</body>
+
+</html>

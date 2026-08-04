@@ -92,6 +92,13 @@
     <section id="liveView" class="hidden">
       <div class="msp-strip" id="myStats"></div>
 
+      <!-- The generator's commentary for the day the clock is on. -->
+      <div class="risk-wire hidden" id="riskWire">
+        <span class="risk-wire-tag">Wire</span>
+        <span class="risk-wire-text" id="wireText"></span>
+        <span class="risk-wire-conf" id="wireConf"></span>
+      </div>
+
       <div class="risk-cols">
         <div class="card msp-panel risk-basket">
           <div class="head">
@@ -134,8 +141,21 @@
           <h3>What actually happened</h3>
           <span class="msp-muted" id="revealSummary"></span>
         </div>
+        <div class="msp-panel-body">
+          <div id="revealBlend" class="risk-blend hidden"></div>
+        </div>
         <div class="msp-panel-body msp-flush msp-scroll">
           <table class="msp-table" id="revealTable"></table>
+        </div>
+      </div>
+
+      <div class="card msp-panel hidden" id="eventsCard">
+        <div class="head">
+          <h3>What hit, and when</h3>
+          <span class="msp-muted">the dated shocks behind the path</span>
+        </div>
+        <div class="msp-panel-body msp-flush msp-scroll">
+          <table class="msp-table" id="eventsTable"></table>
         </div>
       </div>
     </section>

@@ -346,6 +346,29 @@ async def profile_page(request: Request):
     return templates.TemplateResponse("profile.html", {"request": request})
 
 
+@app.get("/universe", include_in_schema=False)
+async def universe_page(request: Request):
+    """Browse every name the crash simulator models, grouped by its cohort."""
+    from app import risk_episodes
+
+    path = Path(__file__).parent / "data" / "sp500_cohorts.json"
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        data = {"cohorts": [], "stocks": []}
+
+    return templates.TemplateResponse(
+        "universe.html",
+        {
+            "request": request,
+            "app_name": "AlphaBook",
+            "universe_json": json.dumps(data),
+            "stock_count": len(data.get("stocks", [])),
+            "episode_count": len(risk_episodes.all_episodes()),
+        },
+    )
+
+
 @app.get("/about", include_in_schema=False)
 async def about_page(request: Request):
     import datetime

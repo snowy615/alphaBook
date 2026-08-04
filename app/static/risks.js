@@ -294,9 +294,11 @@
           `<span class="${signCls(move)}">${pct(move)}</span>`;
       }
       const positions = (me && me.positions) || {};
+      const anySector = names.some((n) => n.sector);
       table.innerHTML = `
         <thead><tr>
-          <th>Name</th><th class="msp-num">Beta</th><th class="msp-num">Price</th>
+          <th>Name</th>${anySector ? "<th>Cohort</th>" : ""}
+          <th class="msp-num">Beta</th><th class="msp-num">Price</th>
           <th class="msp-num">Day</th><th class="msp-num">Total</th>
           <th class="msp-num">Position</th><th class="msp-num">Value</th>
         </tr></thead>
@@ -306,6 +308,7 @@
           return `<tr class="${live ? "risk-row" : ""} ${q ? "risk-row-held" : ""}"
               ${live ? `data-ticker="${esc(n.ticker)}" tabindex="0" role="button"` : ""}>
             <td><strong>${esc(n.ticker)}</strong></td>
+            ${anySector ? `<td class="risk-cohort">${esc(n.sector || "—")}</td>` : ""}
             <td class="msp-num">${n.published_beta.toFixed(2)}</td>
             <td class="msp-num">${n.price.toFixed(2)}</td>
             <td class="msp-num ${signCls(n.day_pct)}">${pct(n.day_pct)}</td>
@@ -324,6 +327,19 @@
       });
     }
 
+    // The day's commentary. Confidence is the generator's own read of how
+    // strong the signal is, so it is worth surfacing next to the words.
+    function renderWire(wire) {
+      const bar = $("#riskWire");
+      if (!bar) return;
+      if (!wire || !wire.text) { bar.classList.add("hidden"); return; }
+      bar.classList.remove("hidden");
+      $("#wireText").textContent = wire.text;
+      const conf = $("#wireConf");
+      conf.textContent = wire.confidence;
+      conf.className = "risk-wire-conf risk-conf-" + String(wire.confidence).toLowerCase();
+    }
+
     function renderLeaderboard(rows, myUid) {
       const table = $("#leaderboard");
       if (!table) return;
@@ -340,16 +356,82 @@
           </tr>`).join("")}</tbody>`;
     }
 
+    // A 100-day episode can have fifty consecutive rebound days; listing them
+    // one by one runs off the end of the line. Collapse runs into ranges.
+    function dayRanges(days) {
+      if (!days || !days.length) return "none";
+      const nums = [...days].map((d) => d + 1).sort((a, b) => a - b);
+      const parts = [];
+      let start = nums[0];
+      let prev = nums[0];
+      for (let i = 1; i <= nums.length; i++) {
+        const n = nums[i];
+        if (n !== prev + 1) {
+          parts.push(start === prev ? `${start}` : `${start}–${prev}`);
+          start = n;
+        }
+        prev = n;
+      }
+      return "day" + (nums.length > 1 ? "s " : " ") + parts.join(", ");
+    }
+
     function renderReveal(reveal) {
       const view = $("#revealView");
       const table = $("#revealTable");
       if (!view || !table || !reveal) return;
       view.classList.remove("hidden");
 
+      // Which historical crashes this path was blended from, and the phases.
+      const blend = $("#revealBlend");
+      if (blend) {
+        const bits = [];
+        if (reveal.blend && reveal.blend.length) {
+          bits.push(`<div class="risk-blend-row"><span>Blended from</span><div>` +
+            reveal.blend.map((b) =>
+              `<span class="risk-blend-chip">${esc(b.period)}
+                 <strong>${Math.round(b.weight * 100)}%</strong></span>`).join("") +
+            `</div></div>`);
+        }
+        if (reveal.phases) {
+          const order = ["crash", "stabilisation", "recovery"];
+          bits.push(`<div class="risk-blend-row"><span>Phases</span><div>` +
+            order.filter((k) => reveal.phases[k]).map((k) =>
+              `<span class="risk-blend-chip risk-phase-${k}">${k}
+                 <strong>day ${reveal.phases[k][0] + 1}–${reveal.phases[k][1]}</strong></span>`).join("") +
+            `</div></div>`);
+        }
+        if (reveal.severity != null) {
+          bits.push(`<div class="risk-blend-row"><span>Severity</span><div>` +
+            `<span class="risk-blend-chip"><strong>${reveal.severity.toFixed(2)}×</strong></span></div></div>`);
+        }
+        blend.innerHTML = bits.join("");
+        blend.classList.toggle("hidden", !bits.length);
+      }
+
+      // Dated macro events, when the generator recorded them.
+      const evCard = $("#eventsCard");
+      const evTable = $("#eventsTable");
+      if (evCard && evTable) {
+        const events = reveal.events || [];
+        evCard.classList.toggle("hidden", !events.length);
+        if (events.length) {
+          evTable.innerHTML = `
+            <thead><tr><th class="msp-num">Day</th><th>Kind</th><th>Signal</th>
+            <th class="msp-num">Reading</th><th>Hits</th></tr></thead>
+            <tbody>${events.map((e) => `
+              <tr>
+                <td class="msp-num">${e.day + 1}</td>
+                <td><span class="risk-event risk-event-${esc(e.kind)}">${esc(e.kind)}</span></td>
+                <td>${esc(e.label)}</td>
+                <td class="msp-num">${e.value == null ? "—" : esc(e.value) + " " + esc(e.unit)}</td>
+                <td class="msp-muted">${(e.hits || []).map(esc).join(", ")}</td>
+              </tr>`).join("")}</tbody>`;
+        }
+      }
+
       $("#revealSummary").textContent =
         `index ${pct(reveal.index_return_pct)}, trough ${pct(reveal.index_drawdown_pct)} · ` +
-        `panic days ${reveal.panic_days.length ? reveal.panic_days.map((d) => d + 1).join(", ") : "none"} · ` +
-        `rebound days ${reveal.rebound_days.length ? reveal.rebound_days.map((d) => d + 1).join(", ") : "none"}`;
+        `panic ${dayRanges(reveal.panic_days)} · rebound ${dayRanges(reveal.rebound_days)}`;
 
       table.innerHTML = `
         <thead><tr>
@@ -499,6 +581,7 @@
         renderPlayers(s.players || []);
       } else {
         renderStrip(s.me, s);
+        renderWire(s.wire);
         renderBasket(s.names || [], s.me, s.status === "active");
         renderLeaderboard(s.leaderboard || [], s.my_uid);
         drawEquity(s.my_equity_curve || [], s.start_equity);

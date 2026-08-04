@@ -4691,6 +4691,207 @@ body {
 }
 
 /* ============================================================
+   Universe browser
+   ============================================================ */
+.uni-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.uni-search {
+  flex: 1;
+  max-width: 460px;
+}
+
+.uni-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.uni-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 7px 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .12s ease, color .12s ease, background .12s ease;
+}
+
+.uni-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.uni-chip.is-on {
+  border-color: var(--brand);
+  color: var(--text);
+  background: var(--brand-wash);
+}
+
+.uni-chip span {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.uni-note {
+  margin: 0 0 22px;
+  padding: 11px 14px;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.uni-note strong {
+  color: var(--text);
+}
+
+.uni-group {
+  margin-bottom: 26px;
+}
+
+.uni-group-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 9px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.uni-group-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: .01em;
+}
+
+.uni-group-head span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.uni-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.uni-name {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+
+.uni-name:hover,
+.uni-name:focus-visible {
+  border-color: var(--brand);
+  background: var(--raised);
+  outline: none;
+}
+
+.uni-ticker {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: .03em;
+}
+
+.uni-company {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+
+.uni-empty {
+  padding: 30px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.uni-modal-card {
+  max-width: 940px;
+}
+
+.uni-modal-sub {
+  font-size: 11.5px;
+  margin-top: 2px;
+}
+
+.uni-chart-host {
+  position: relative;
+  height: min(62vh, 520px);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+/* The fallback sits underneath the frame rather than being toggled: a
+   cross-origin embed gives no reliable load signal, and a blocked one paints
+   nothing, so the note shows through exactly when the chart fails. */
+.uni-chart-fallback {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 34px;
+  text-align: center;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.uni-chart-host iframe {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  display: block;
+}
+
+.uni-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  padding: 12px 16px;
+}
+
+@media (max-width: 640px) {
+  .uni-chart-host {
+    height: 54vh;
+  }
+
+  .uni-grid {
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  }
+}
+
+/* ============================================================
    Pre-game tutorial (tutorial.js)
    ============================================================ */
 .tut-overlay {
@@ -5116,6 +5317,134 @@ body.tut-locked {
 
 .risk-modal-hint strong {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* -- daily market wire -- */
+.risk-wire {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 9px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.risk-wire-tag {
+  flex: 0 0 auto;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--brand);
+}
+
+.risk-wire-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--text);
+}
+
+.risk-wire-conf {
+  flex: 0 0 auto;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.risk-conf-moderate {
+  color: #e0a33a;
+  border-color: rgba(224, 163, 58, .45);
+}
+
+.risk-conf-high {
+  color: var(--red);
+  border-color: rgba(242, 85, 90, .5);
+}
+
+.risk-cohort {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* -- post-round: the blend, the phases and the dated events -- */
+.risk-blend {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.risk-blend-row {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.risk-blend-row>span {
+  flex: 0 0 96px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+}
+
+.risk-blend-row>div {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.risk-blend-chip {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.risk-blend-chip strong {
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-left: 6px;
+}
+
+.risk-phase-crash {
+  border-color: rgba(242, 85, 90, .45);
+  color: var(--red);
+}
+
+.risk-phase-stabilisation {
+  border-color: rgba(224, 163, 58, .45);
+  color: #e0a33a;
+}
+
+.risk-phase-recovery {
+  border-color: rgba(53, 201, 139, .45);
+  color: var(--green);
+}
+
+.risk-event {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.risk-event-shock {
+  color: var(--red);
+  border-color: rgba(242, 85, 90, .5);
+}
+
+.risk-event-macro {
+  color: var(--brand);
+  border-color: rgba(77, 159, 214, .45);
 }
 
 /* Review mode: the page scrolls so the reveal table is fully readable, so the

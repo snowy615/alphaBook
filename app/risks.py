@@ -336,6 +336,9 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     out["days_left"] = max(0, total_days - 1 - day)
     out["names"] = ep_lib.public_names(episode, day)
     out["index"] = [round(v, 2) for v in episode["index"][:day + 1]]
+    # The generator's commentary for today only. It is written from the move
+    # that has already happened, so it gives nothing away about tomorrow.
+    out["wire"] = ep_lib.message_on(episode, day)
 
     trades = game.get("trades", {})
 
@@ -375,6 +378,9 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
             "index_return_pct": episode["index_return_pct"],
             "index_drawdown_pct": episode["index_drawdown_pct"],
             "full_index": [round(v, 2) for v in episode["index"]],
+            # Which historical crashes were blended, the phase boundaries and
+            # the dated macro events, when the episode carries them.
+            **ep_lib.aftermath(episode),
         }
 
     return out

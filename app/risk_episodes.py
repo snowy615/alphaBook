@@ -123,7 +123,40 @@ def public_names(episode: dict[str, Any], day: int) -> list[dict[str, Any]]:
             "day_pct": round((price / prev - 1) * 100, 2) if prev else 0.0,
             "total_pct": round((price / closes[0] - 1) * 100, 2),
             "published_beta": n["published_beta"],
+            # Public: names in a cohort move together, which is the whole
+            # point of spreading a book across them.
+            "sector": n.get("sector", ""),
         })
+    return out
+
+
+def message_on(episode: dict[str, Any], day: int) -> dict[str, Any] | None:
+    """The day's market commentary, when the generator produced a wire.
+
+    Written from that day's move only, so it never looks ahead.
+    """
+    msgs = episode.get("messages") or []
+    if not msgs:
+        return None
+    day = max(0, min(int(day), len(msgs) - 1))
+    row = msgs[day]
+    return {"text": row.get("text", ""), "confidence": row.get("confidence", "Low")}
+
+
+def aftermath(episode: dict[str, Any]) -> dict[str, Any]:
+    """The v7 extras that are only safe to show once a round is scored."""
+    out: dict[str, Any] = {}
+    if episode.get("phases"):
+        out["phases"] = episode["phases"]
+    if episode.get("blend"):
+        out["blend"] = sorted(
+            ({"period": k, "weight": v} for k, v in episode["blend"].items()),
+            key=lambda r: r["weight"], reverse=True,
+        )
+    if episode.get("severity") is not None:
+        out["severity"] = episode["severity"]
+    if episode.get("events"):
+        out["events"] = episode["events"]
     return out
 
 

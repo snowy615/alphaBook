@@ -44,11 +44,28 @@ class TestLibrary:
                 assert all(c > 0 for c in name["closes"])
             assert len(ep["index"]) == ep["days"]
 
-    def test_every_shipped_episode_is_a_stress_episode(self):
-        # The whole game rests on these being crashes; a flat episode would
-        # make the net-exposure rule pointless.
+    def test_every_shipped_episode_has_real_dispersion(self):
+        """Names must pull apart, or a market-neutral book has nothing to pick.
+
+        Index depth is deliberately not asserted: the net-exposure cap means
+        index direction is not the game, and the v7 episodes include rounds
+        where the index barely moves while single names range 40pp apart.
+        """
         for ep in ep_lib.all_episodes():
-            assert ep["index_drawdown_pct"] < -5, ep["episode_id"]
+            rets = [(n["closes"][-1] / n["closes"][0] - 1) * 100 for n in ep["names"]]
+            assert max(rets) - min(rets) > 15, ep["episode_id"]
+
+    def test_v7_extras_are_well_formed_where_present(self):
+        for ep in ep_lib.all_episodes():
+            if ep.get("messages"):
+                assert len(ep["messages"]) == ep["days"], ep["episode_id"]
+                assert all(m.get("text") for m in ep["messages"]), ep["episode_id"]
+            for start, end in (ep.get("phases") or {}).values():
+                assert 0 <= start <= end <= ep["days"], ep["episode_id"]
+            if ep.get("blend"):
+                assert abs(sum(ep["blend"].values()) - 1.0) < 0.02, ep["episode_id"]
+            for event in ep.get("events") or []:
+                assert 0 <= event["day"] < ep["days"], ep["episode_id"]
 
     def test_universes_are_summarised(self):
         for u in ep_lib.universes():
@@ -88,6 +105,35 @@ class TestDisclosure:
     def test_day_index_is_clamped(self, episode):
         assert ep_lib.public_names(episode, 99)[0]["price"] == \
             ep_lib.public_names(episode, episode["days"] - 1)[0]["price"]
+
+    def test_cohort_is_public_but_the_answers_are_not(self, episode):
+        episode["names"][0]["sector"] = "Technology"
+        row = ep_lib.public_names(episode, 1)[0]
+        assert row["sector"] == "Technology"
+        assert "shock_group" not in row
+
+    def test_wire_is_absent_without_messages(self, episode):
+        assert ep_lib.message_on(episode, 0) is None
+
+    def test_wire_returns_the_day_and_clamps(self, episode):
+        episode["messages"] = [
+            {"text": "calm", "confidence": "Low"},
+            {"text": "panic", "confidence": "High"},
+            {"text": "bounce", "confidence": "Moderate"},
+        ]
+        assert ep_lib.message_on(episode, 1)["text"] == "panic"
+        assert ep_lib.message_on(episode, 99)["text"] == "bounce"
+        assert ep_lib.message_on(episode, -5)["text"] == "calm"
+
+    def test_aftermath_is_empty_without_v7_extras(self, episode):
+        assert ep_lib.aftermath(episode) == {}
+
+    def test_aftermath_sorts_the_blend_heaviest_first(self, episode):
+        episode["blend"] = {"Dot-com Bust": 0.25, "GFC": 0.75}
+        episode["phases"] = {"crash": [1, 2]}
+        after = ep_lib.aftermath(episode)
+        assert [b["period"] for b in after["blend"]] == ["GFC", "Dot-com Bust"]
+        assert after["phases"]["crash"] == [1, 2]
 
     def test_reveal_exposes_everything_sorted_worst_first(self, episode):
         reveal = ep_lib.reveal_names(episode)
