@@ -113,8 +113,8 @@
       {
         icon: ICON.crash,
         name: "Crash Ledger",
-        blurb: "How every S&P 500 name has actually behaved in past crashes — the swingers, the losers, the survivors — with live charts.",
-        chips: ["Reference", "6 crashes", "Live charts"],
+        blurb: "Make a market on how real S&P 500 names behaved in past crashes. Quote a bid and an ask; the house trades against you at the true number.",
+        chips: ["Market making", "6 crashes", "Head-to-head"],
         href: "/crash-ledger",
       },
     ].filter(Boolean);

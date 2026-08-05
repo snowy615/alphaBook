@@ -29,6 +29,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import logging
+import math
 import random
 import time
 import uuid
@@ -64,7 +65,6 @@ DIFF_UP = 0.09
 DIFF_DOWN = 0.13
 DIFF_MIN = 0.05
 DIFF_MAX = 0.97
-SAMPLE_K = 14               # candidate pairs considered per round
 
 MAX_GAMES = 500
 
@@ -79,20 +79,55 @@ TIERS = [
 
 _STOCKS: List[Dict[str, Any]] = json.loads((BASE_DIR / "crash_data.json").read_text())
 
-PROMPTS: List[Dict[str, Any]] = [
-    {"key": "worst_drawdown", "pick": "min", "gap": 6.0,
-     "q": "Which one fell harder at its worst?", "label": "worst drawdown"},
-    {"key": "volatility", "pick": "max", "gap": 1.2,
-     "q": "Which one was more volatile day to day?", "label": "avg daily volatility"},
-    {"key": "avg_return", "pick": "max", "gap": 7.0,
-     "q": "Which one held up better on average?", "label": "avg crash return"},
-    {"key": "avg_return", "pick": "min", "gap": 7.0,
-     "q": "Which one crashed harder on average?", "label": "avg crash return"},
-    {"key": "total_return", "pick": "max", "gap": 12.0,
-     "q": "Which one ended further ahead across all crashes?", "label": "total crash-period return"},
-    {"key": "worst_period", "pick": "min", "gap": 7.0,
-     "q": "Which one had the uglier single worst period?", "label": "worst single period"},
+# ─────────────────────────────────────────────────────────────────────────────
+# Market-making rounds
+# ─────────────────────────────────────────────────────────────────────────────
+# The player quotes a two-sided market on a real crash statistic and the house
+# trades against them at the true value. A binary "which one fell harder?" is
+# 50/50 guessable; pricing a number forces an actual opinion and is scored on
+# calibration — the thing trading desks actually test.
+#
+# Only statistics with a sane, roughly linear spread are quotable. total_return
+# and best_period run from -95% to +66,000%, so no fair fixed-width market can
+# be made on them and they stay out of the game.
+
+MARKET_PROMPTS: List[Dict[str, Any]] = [
+    {"key": "worst_drawdown",
+     "q": "How far did {name} fall from its peak at the worst of it?",
+     "label": "worst drawdown", "unit": "%", "lo": -100.0, "hi": 0.0, "step": 0.5},
+    {"key": "worst_period",
+     "q": "How bad was {name}'s single worst crash period?",
+     "label": "worst single period", "unit": "%", "lo": -100.0, "hi": 0.0, "step": 0.5},
+    {"key": "volatility",
+     "q": "How much did {name} move on an average day?",
+     "label": "avg daily volatility", "unit": "%", "lo": 0.0, "hi": 12.0, "step": 0.1},
+    {"key": "avg_return",
+     "q": "What did {name} return on average across its crash periods?",
+     "label": "avg crash return", "unit": "%", "lo": -100.0, "hi": 200.0, "step": 1.0},
 ]
+
+# Scoring. Widths are measured in units of each statistic's spread across the
+# whole set, so a 10-point market on drawdown (sd ≈ 26) and a 1-point market on
+# volatility (sd ≈ 2.3) are treated as equally brave.
+BASE_POINTS = 200          # a perfectly tight market that holds
+MISS_PENALTY = 120         # per spread-unit of being picked off
+MAX_LOSS = 250             # worst single round
+MAX_TRADEABLE_WIDTH = 3.0  # wider than this in spread-units and nobody trades it
+STREAK_BONUS = 20          # per consecutive held quote, capped
+STREAK_BONUS_CAP = 100
+
+
+def _stat_spread(key: str) -> Tuple[float, float]:
+    """(mean, standard deviation) of a statistic across the whole set."""
+    vals = [s[key] for s in _STOCKS if s.get(key) is not None]
+    mean = sum(vals) / len(vals)
+    var = sum((v - mean) ** 2 for v in vals) / len(vals)
+    return mean, max(var ** 0.5, 1e-6)
+
+
+_STAT_SPREAD: Dict[str, Tuple[float, float]] = {
+    p["key"]: _stat_spread(p["key"]) for p in MARKET_PROMPTS
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,41 +175,120 @@ def _public_stock(s: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _make_round(rng: random.Random, difficulty: float) -> Dict[str, Any]:
-    """Build a round whose pair-closeness matches ``difficulty`` (0 easy → 1 hard).
-
-    Candidate pairs are gathered (all clearly-different enough to have a real
-    answer), sorted easiest-first by gap, and the one at the difficulty
-    percentile is served — so a strong run gets tighter calls.
     """
-    prompt = rng.choice(PROMPTS)
-    cands: List[Tuple[float, Dict, Dict, float, float]] = []
-    for _ in range(80):
-        a, b = rng.sample(_STOCKS, 2)
-        va, vb = a.get(prompt["key"]), b.get(prompt["key"])
-        if va is None or vb is None:
-            continue
-        gap = abs(va - vb)
-        if gap < prompt["gap"]:
-            continue
-        cands.append((gap, a, b, va, vb))
-        if len(cands) >= SAMPLE_K:
-            break
+    Build a round to quote, at the given difficulty (0 easy → 1 hard).
 
-    if not cands:  # pathological fallback
-        a, b = rng.sample(_STOCKS, 2)
-        va, vb = a[prompt["key"]], b[prompt["key"]]
-        cands = [(abs(va - vb), a, b, va, vb)]
+    Difficulty is how much of an outlier the true value is: a name sitting near
+    the cohort average is easy to price off the anchor, while an extreme one
+    punishes anyone who just quotes around the average.
+    """
+    prompt = rng.choice(MARKET_PROMPTS)
+    key = prompt["key"]
+    mean, sd = _STAT_SPREAD[key]
 
-    cands.sort(key=lambda c: c[0], reverse=True)   # biggest gap (easiest) first
-    idx = min(len(cands) - 1, int(round(difficulty * (len(cands) - 1))))
-    gap, a, b, va, vb = cands[idx]
-    if prompt["pick"] == "max":
-        answer = "a" if va > vb else "b"
-    else:
-        answer = "a" if va < vb else "b"
+    cands = [(abs((s[key] - mean) / sd), s) for s in _STOCKS if s.get(key) is not None]
+    cands.sort(key=lambda c: c[0])          # closest to the average (easiest) first
+    if not cands:                           # pathological fallback
+        cands = [(0.0, rng.choice(_STOCKS))]
+
+    # Sample a small band around the difficulty percentile so repeated rounds at
+    # the same difficulty don't serve the same name every time.
+    target = min(len(cands) - 1, int(round(difficulty * (len(cands) - 1))))
+    window = [c for c in cands[max(0, target - 2): target + 3]]
+    _, stock = rng.choice(window)
+
     return {
-        "prompt": prompt["key"], "pick": prompt["pick"], "q": prompt["q"],
-        "label": prompt["label"], "a": a, "b": b, "va": va, "vb": vb, "answer": answer,
+        "prompt": key,
+        "q": prompt["q"].format(name=stock["name"]),
+        "label": prompt["label"],
+        "unit": prompt["unit"],
+        "lo": prompt["lo"],
+        "hi": prompt["hi"],
+        "step": prompt["step"],
+        "stock": stock,
+        "truth": float(stock[key]),
+        "spread": sd,
+        "cohort_avg": round(mean, 1),
+    }
+
+
+def _round_view(rnd: Dict[str, Any], index: int, total: int) -> Dict[str, Any]:
+    """The part of a round a player is allowed to see."""
+    s = rnd["stock"]
+    return {
+        "index": index,
+        "total": total,
+        "question": rnd["q"],
+        "label": rnd["label"],
+        "unit": rnd["unit"],
+        "lo": rnd["lo"],
+        "hi": rnd["hi"],
+        "step": rnd["step"],
+        "stock": {**_public_stock(s), "category": s.get("category", "")},
+        # A public anchor: the average across all 35 names for this statistic.
+        # It makes the round a judgement about *this* company rather than a
+        # blind stab at an unfamiliar scale.
+        "cohort_avg": rnd["cohort_avg"],
+        "spread": round(rnd["spread"], 2),
+        # Sent so the page can show the payout for a given width live, without
+        # a second copy of the scoring rules drifting out of step.
+        "scoring": {
+            "base": BASE_POINTS,
+            "max_width_units": MAX_TRADEABLE_WIDTH,
+            "miss_penalty": MISS_PENALTY,
+            "max_loss": MAX_LOSS,
+        },
+    }
+
+
+def score_quote(rnd: Dict[str, Any], bid: float, ask: float, streak: int) -> Dict[str, Any]:
+    """
+    Trade the house against a quoted market and score it.
+
+    * truth inside the market  → the quote held; points scale with tightness
+    * market wider than MAX_TRADEABLE_WIDTH → nobody trades it, no points
+    * truth outside            → picked off, losing the edge you gave away
+    """
+    truth = rnd["truth"]
+    sd = rnd["spread"]
+    width_units = (ask - bid) / sd
+
+    if truth > ask:
+        # The house lifts the offer: you sold at ask, it was worth more.
+        miss = truth - ask
+        side = "lifted"
+    elif truth < bid:
+        # The house hits the bid: you bought at bid, it was worth less.
+        miss = bid - truth
+        side = "hit"
+    else:
+        miss = 0.0
+        side = "held"
+
+    if side == "held":
+        if width_units > MAX_TRADEABLE_WIDTH:
+            points = 0
+            note = "too wide to trade — nobody lifts a market that loose"
+        else:
+            points = int(round(BASE_POINTS / (1.0 + max(0.0, width_units))))
+            if streak > 0:
+                points += min(STREAK_BONUS * streak, STREAK_BONUS_CAP)
+            note = "your market held"
+    else:
+        points = -min(MAX_LOSS, int(round(MISS_PENALTY * miss / sd)))
+        note = ("the house lifted your offer" if side == "lifted"
+                else "the house hit your bid")
+
+    return {
+        "points": points,
+        "side": side,
+        "held": side == "held",
+        "tradeable": width_units <= MAX_TRADEABLE_WIDTH,
+        "miss": round(miss, 2),
+        "width": round(ask - bid, 2),
+        "width_units": round(width_units, 2),
+        "truth": round(truth, 2),
+        "note": note,
     }
 
 
@@ -206,46 +320,33 @@ class Game:
         self.current = _make_round(rng, self.difficulty)
 
     def round_view(self) -> Dict[str, Any]:
-        r = self.current
-        return {
-            "index": self.idx,
-            "total": self.total,
-            "question": r["q"],
-            "label": r["label"],
-            "a": _public_stock(r["a"]),
-            "b": _public_stock(r["b"]),
-        }
+        return _round_view(self.current, self.idx, self.total)
 
-    def base_points(self) -> int:
-        return int(70 + 80 * self.difficulty)
-
-    def answer(self, pick: str) -> Dict[str, Any]:
+    def quote(self, bid: float, ask: float) -> Dict[str, Any]:
         r = self.current
-        correct = pick == r["answer"]
-        points = 0
-        milestone = 0
-        if correct:
+        res = score_quote(r, bid, ask, self.streak)
+
+        if res["held"] and res["tradeable"]:
             self.streak += 1
             self.best_streak = max(self.best_streak, self.streak)
             self.correct += 1
-            points = self.base_points() + 25 * (self.streak - 1)
-            self.score += points
             self.difficulty = min(DIFF_MAX, self.difficulty + DIFF_UP)
-            if self.streak in (3, 5, 7, 10):
-                milestone = self.streak
         else:
             self.streak = 0
-            self.difficulty = max(DIFF_MIN, self.difficulty - DIFF_DOWN)
+            if not res["held"]:
+                self.difficulty = max(DIFF_MIN, self.difficulty - DIFF_DOWN)
+
+        self.score += res["points"]
+        milestone = self.streak if self.streak in (3, 5, 7, 10) else 0
 
         self.idx += 1
         self.done = self.idx >= self.total
         out: Dict[str, Any] = {
-            "correct": correct,
-            "answer": r["answer"],
-            "a_value": r["va"],
-            "b_value": r["vb"],
+            **res,
+            "bid": bid,
+            "ask": ask,
             "label": r["label"],
-            "points": points,
+            "unit": r["unit"],
             "score": self.score,
             "streak": self.streak,
             "milestone": milestone,
@@ -329,7 +430,9 @@ async def _finalize(game: Game) -> Dict[str, Any]:
             prof["last_played"] = today
 
         prev_level = _level_for_xp(int(prof.get("xp", 0)))
-        xp_earned = game.score // 10 + 5 * game.correct + daily_bonus
+        # A losing session still earns something for showing up, but never
+        # negative XP — the score itself is where a bad game shows up.
+        xp_earned = max(0, game.score) // 10 + 5 * game.correct + daily_bonus
         prof["xp"] = int(prof.get("xp", 0)) + xp_earned
         new_best = game.score > int(prof.get("best_score", 0))
         prof["best_score"] = max(int(prof.get("best_score", 0)), game.score)
@@ -371,8 +474,25 @@ async def _finalize(game: Game) -> Dict[str, Any]:
 
 
 # ---- Request schemas ----
-class AnswerRequest(BaseModel):
-    pick: str
+class QuoteRequest(BaseModel):
+    bid: float
+    ask: float
+
+
+def _validate_quote(rnd: Dict[str, Any], req: QuoteRequest) -> Tuple[float, float]:
+    """A market must be two-sided, the right way round, and on the scale shown."""
+    bid, ask = float(req.bid), float(req.ask)
+    if not (math.isfinite(bid) and math.isfinite(ask)):
+        raise HTTPException(status_code=400, detail="Both sides of your market must be numbers")
+    if ask < bid:
+        raise HTTPException(status_code=400, detail="Your ask has to be at or above your bid")
+    lo, hi = rnd["lo"], rnd["hi"]
+    if bid < lo or ask > hi:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Keep your market inside the {lo:g} to {hi:g}{rnd['unit']} scale",
+        )
+    return bid, ask
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -430,12 +550,7 @@ class Room:
         p = self.players.get(uid)
         if not p or p["done"] or self.status != "active":
             return None
-        r = self.rounds[p["idx"]]
-        return {
-            "index": p["idx"], "total": len(self.rounds),
-            "question": r["q"], "label": r["label"],
-            "a": _public_stock(r["a"]), "b": _public_stock(r["b"]),
-        }
+        return _round_view(self.rounds[p["idx"]], p["idx"], len(self.rounds))
 
     def standings(self) -> List[Dict[str, Any]]:
         rows = [{
@@ -455,34 +570,29 @@ class Room:
         return rows
 
     # -- play --
-    def answer(self, uid: str, pick: str) -> Dict[str, Any]:
+    def quote(self, uid: str, bid: float, ask: float) -> Dict[str, Any]:
         p = self.players[uid]
         r = self.rounds[p["idx"]]
-        correct = pick == r["answer"]
-        points = 0
-        milestone = 0
+        res = score_quote(r, bid, ask, p["streak"])
 
-        if correct:
+        if res["held"] and res["tradeable"]:
             p["streak"] += 1
             p["best_streak"] = max(p["best_streak"], p["streak"])
             p["correct"] += 1
-            # Same shape as the solo scoring, but off the round's fixed
-            # difficulty so every player earns identically for the same call.
-            points = int(70 + 80 * r["difficulty"]) + 25 * (p["streak"] - 1)
-            p["score"] += points
-            if p["streak"] in (3, 5, 7, 10):
-                milestone = p["streak"]
         else:
             p["streak"] = 0
+        p["score"] += res["points"]
 
         p["idx"] += 1
         p["done"] = p["idx"] >= len(self.rounds)
 
         out: Dict[str, Any] = {
-            "correct": correct, "answer": r["answer"],
-            "a_value": r["va"], "b_value": r["vb"], "label": r["label"],
-            "points": points, "score": p["score"], "streak": p["streak"],
-            "milestone": milestone, "done": p["done"],
+            **res,
+            "bid": bid, "ask": ask,
+            "label": r["label"], "unit": r["unit"],
+            "score": p["score"], "streak": p["streak"],
+            "milestone": p["streak"] if p["streak"] in (3, 5, 7, 10) else 0,
+            "done": p["done"],
             "difficulty_tag": _difficulty_tag(r["difficulty"]),
         }
         if not p["done"]:
@@ -612,7 +722,7 @@ async def room_state(room_id: str, user: User = Depends(current_user)):
 
 
 @router.post("/room/{room_id}/answer")
-async def room_answer(room_id: str, req: AnswerRequest, user: User = Depends(current_user)):
+async def room_answer(room_id: str, req: QuoteRequest, user: User = Depends(current_user)):
     room = _rooms.get(room_id)
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found (it may have expired)")
@@ -623,10 +733,9 @@ async def room_answer(room_id: str, req: AnswerRequest, user: User = Depends(cur
         raise HTTPException(status_code=400, detail="This room isn't running")
     if room.players[uid]["done"]:
         raise HTTPException(status_code=400, detail="You've finished all your rounds")
-    if req.pick not in ("a", "b"):
-        raise HTTPException(status_code=400, detail="pick must be 'a' or 'b'")
 
-    out = room.answer(uid, req.pick)
+    bid, ask = _validate_quote(room.rounds[room.players[uid]["idx"]], req)
+    out = room.quote(uid, bid, ask)
     out["standings"] = room.standings()
     if room.status == "finished":
         await _finalize_room(room)
@@ -687,7 +796,7 @@ async def start_game(user: User = Depends(current_user)):
 
 
 @router.post("/game/{game_id}/answer")
-async def answer(game_id: str, req: AnswerRequest, user: User = Depends(current_user)):
+async def answer(game_id: str, req: QuoteRequest, user: User = Depends(current_user)):
     game = _games.get(game_id)
     if game is None:
         raise HTTPException(status_code=404, detail="Game not found (it may have expired) — start a new one")
@@ -695,10 +804,9 @@ async def answer(game_id: str, req: AnswerRequest, user: User = Depends(current_
         raise HTTPException(status_code=403, detail="Not your game")
     if game.done:
         raise HTTPException(status_code=400, detail="This game is already finished")
-    if req.pick not in ("a", "b"):
-        raise HTTPException(status_code=400, detail="pick must be 'a' or 'b'")
 
-    out = game.answer(req.pick)
+    bid, ask = _validate_quote(game.current, req)
+    out = game.quote(bid, ask)
     if out["done"]:
         out["final"] = await _finalize(game)
     return out

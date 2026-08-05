@@ -51,8 +51,10 @@
   <div class="cl-game-head">
     <h2>Crash Call</h2>
     <p class="cl-game-sub">
-      {{ rounds_per_game }} rounds. Each shows two real names — call which one behaved a certain way in past
-      crashes. Peek at either chart before you decide. Streaks pay bonus points.
+      {{ rounds_per_game }} rounds of making a market. Each round names a real company and a crash
+      statistic — you quote a bid and an ask, and the house trades against you at the true number.
+      Quote tight and hold it for big points; leave it too wide and nobody trades you; get the
+      level wrong and you're picked off. Peek at the chart before you price it.
     </p>
   </div>
 
@@ -114,7 +116,7 @@
       <span class="cl-hud-streak" id="clStreak"></span>
     </div>
     <div class="cl-question" id="clQuestion">&mdash;</div>
-    <div class="cl-duel" id="clDuel"></div>
+    <div class="cl-market" id="clMarket"></div>
     <div class="cl-reveal hidden" id="clReveal"></div>
     <button class="btn primary cl-next hidden" id="clNextBtn">Next round</button>
   </div>
@@ -1439,7 +1441,7 @@
   <script>
     window.UNIVERSE = {{ universe_json|safe }};
   </script>
-  <script src="/static/crash_ledger.js"></script>
+  <script src="/static/crash_ledger.js?v=20260805"></script>
 </body>
 
 </html>

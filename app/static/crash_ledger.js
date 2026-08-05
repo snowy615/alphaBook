@@ -225,87 +225,199 @@
       }).join("");
     }
 
-    function stockCard(side, s) {
-      return `
-        <div class="cl-stock" data-side="${side}">
-          <div class="cl-stock-top">
-            <span class="cl-stock-ticker">${esc(s.ticker)}</span>
-            <span class="cl-stock-name">${esc(s.name)}</span>
-          </div>
-          <div class="cl-stock-actions">
-            <button type="button" class="btn ghost cl-chart" data-ticker="${esc(s.ticker)}"
-              data-name="${esc(s.name)}" data-exchange="${esc(s.exchange)}">View chart ↗</button>
-            <button type="button" class="btn cl-pick" data-side="${side}">Call it</button>
-          </div>
-          <div class="cl-stock-value" data-value></div>
-        </div>`;
-    }
-
     function setDiff(tag) {
       const el = $("#clDiff");
       if (el) el.textContent = tag ? tag : "";
     }
 
+    // ── Making a market ─────────────────────────────────────────────────
+    // The player quotes a bid and an ask on the round's statistic. Both sides
+    // are draggable on one scale; the payout for the current width is shown
+    // live, so the risk/reward of tightening is visible before committing.
+
+    let current = null;   // the round being quoted
+
+    const fmtV = (v, unit) => `${Number(v).toFixed(Math.abs(v) < 10 ? 1 : 0)}${unit || ""}`;
+    const posPct = (v) => ((v - current.lo) / (current.hi - current.lo)) * 100;
+
+    function heldPayout(width) {
+      const s = current.scoring;
+      const w = width / current.spread;
+      if (w > s.max_width_units) return 0;
+      return Math.round(s.base / (1 + Math.max(0, w)));
+    }
+
+    function readQuote() {
+      const bid = parseFloat($("#clBid").value);
+      const ask = parseFloat($("#clAsk").value);
+      return { bid, ask };
+    }
+
+    function paintQuote() {
+      let { bid, ask } = readQuote();
+      if (!isFinite(bid) || !isFinite(ask)) return;
+      const band = $("#clBand");
+      band.style.left = Math.max(0, Math.min(100, posPct(bid))) + "%";
+      band.style.width = Math.max(0, Math.min(100, posPct(ask) - posPct(bid))) + "%";
+
+      const width = Math.max(0, ask - bid);
+      const w = width / current.spread;
+      const pay = heldPayout(width);
+      const tooWide = w > current.scoring.max_width_units;
+      $("#clSpreadOut").innerHTML = tooWide
+        ? `spread <strong>${fmtV(width, current.unit)}</strong> —
+           <span class="cl-warn">too wide to trade, 0 pts</span>`
+        : `spread <strong>${fmtV(width, current.unit)}</strong>
+           <span class="cl-muted">(${w.toFixed(2)}× these names' spread)</span> ·
+           holds for <strong>${pay}</strong> pts`;
+    }
+
+    function clampSides(moved) {
+      const bidEl = $("#clBid"), askEl = $("#clAsk");
+      let bid = parseFloat(bidEl.value), ask = parseFloat(askEl.value);
+      if (bid > ask) {
+        // Push the other side rather than snapping back, so dragging feels sane.
+        if (moved === "bid") askEl.value = bid; else bidEl.value = ask;
+      }
+      $("#clBidNum").value = bidEl.value;
+      $("#clAskNum").value = askEl.value;
+      paintQuote();
+    }
+
     function renderRound(round, score, streak, diffTag) {
       answering = false;
+      current = round;
       renderProgress(round.index, round.total);
       $("#clRoundNum").textContent = `Round ${round.index + 1} / ${round.total}`;
       $("#clScore").textContent = `${(score || 0).toLocaleString()} pts`;
       $("#clStreak").textContent = streak ? `🔥 ${streak}` : "";
       setDiff(diffTag);
       $("#clQuestion").textContent = round.question;
-      $("#clDuel").innerHTML = stockCard("a", round.a) + stockCard("b", round.b);
+
+      const s = round.stock;
+      // Open centred on the cohort average with a one-spread-wide market: a
+      // reasonable default that shows what a sane starting quote looks like.
+      const start = round.cohort_avg;
+      const half = round.spread / 2;
+      const bid0 = Math.max(round.lo, +(start - half).toFixed(2));
+      const ask0 = Math.min(round.hi, +(start + half).toFixed(2));
+
+      $("#clMarket").innerHTML = `
+        <div class="cl-mkt-head">
+          <div class="cl-mkt-name">
+            <span class="cl-stock-ticker">${esc(s.ticker)}</span>
+            <span class="cl-stock-name">${esc(s.name)}</span>
+            ${s.category ? `<span class="cl-cat">${esc(s.category)}</span>` : ""}
+          </div>
+          <button type="button" class="btn ghost cl-chart" data-ticker="${esc(s.ticker)}"
+            data-name="${esc(s.name)}" data-exchange="${esc(s.exchange)}">View chart ↗</button>
+        </div>
+
+        <div class="cl-scale">
+          <div class="cl-scale-track">
+            <div class="cl-anchor" style="left:${posPct(round.cohort_avg)}%">
+              <span class="cl-anchor-tick"></span>
+              <span class="cl-anchor-label">all names avg ${fmtV(round.cohort_avg, round.unit)}</span>
+            </div>
+            <div class="cl-band" id="clBand"></div>
+            <div class="cl-truth hidden" id="clTruth"><span class="cl-truth-tick"></span>
+              <span class="cl-truth-label" id="clTruthLabel"></span></div>
+          </div>
+          <div class="cl-scale-ends">
+            <span>${fmtV(round.lo, round.unit)}</span>
+            <span class="cl-muted">${esc(round.label)}</span>
+            <span>${fmtV(round.hi, round.unit)}</span>
+          </div>
+        </div>
+
+        <div class="cl-quote">
+          <label class="cl-side cl-side-bid">
+            <span>Your bid</span>
+            <input type="number" id="clBidNum" step="${round.step}" min="${round.lo}" max="${round.hi}" value="${bid0}">
+          </label>
+          <label class="cl-side cl-side-ask">
+            <span>Your ask</span>
+            <input type="number" id="clAskNum" step="${round.step}" min="${round.lo}" max="${round.hi}" value="${ask0}">
+          </label>
+        </div>
+        <input type="range" class="cl-range cl-range-bid" id="clBid"
+          min="${round.lo}" max="${round.hi}" step="${round.step}" value="${bid0}">
+        <input type="range" class="cl-range cl-range-ask" id="clAsk"
+          min="${round.lo}" max="${round.hi}" step="${round.step}" value="${ask0}">
+
+        <div class="cl-spread-out" id="clSpreadOut"></div>
+        <button type="button" class="btn primary cl-quote-btn" id="clQuoteBtn">Quote this market</button>`;
+
+      $("#clBid").addEventListener("input", () => clampSides("bid"));
+      $("#clAsk").addEventListener("input", () => clampSides("ask"));
+      ["clBidNum", "clAskNum"].forEach((id) => {
+        $("#" + id).addEventListener("input", () => {
+          const side = id === "clBidNum" ? "clBid" : "clAsk";
+          const v = parseFloat($("#" + id).value);
+          if (isFinite(v)) $("#" + side).value = Math.max(round.lo, Math.min(round.hi, v));
+          clampSides(id === "clBidNum" ? "bid" : "ask");
+        });
+      });
+      $("#clQuoteBtn").addEventListener("click", submitQuote);
+
+      $("#clTruth").classList.add("hidden");
       $("#clReveal").classList.add("hidden");
       $("#clReveal").innerHTML = "";
       $("#clNextBtn").classList.add("hidden");
-      $("#clDuel").querySelectorAll(".cl-pick").forEach((btn) =>
-        btn.addEventListener("click", () => submitPick(btn.dataset.side, round.label)));
+      paintQuote();
     }
 
-    function pointPop(card, points) {
-      const pop = document.createElement("div");
-      pop.className = "cl-pop";
-      pop.textContent = `+${points}`;
-      card.appendChild(pop);
-      setTimeout(() => pop.remove(), 1100);
-    }
-
-    async function submitPick(pick, label) {
+    async function submitQuote() {
       if (answering) return;
+      const { bid, ask } = readQuote();
+      if (!isFinite(bid) || !isFinite(ask)) { showMsg("Set both sides of your market."); return; }
       answering = true;
-      $("#clDuel").querySelectorAll(".cl-pick").forEach((b) => { b.disabled = true; });
+      $("#clQuoteBtn").disabled = true;
+      ["clBid", "clAsk", "clBidNum", "clAskNum"].forEach((id) => { $("#" + id).disabled = true; });
+
       let res;
       try {
         res = await postJSON(
           room ? `/crash-ledger/room/${room.room_id}/answer`
                : `/crash-ledger/game/${gameId}/answer`,
-          { pick });
+          { bid, ask });
       } catch (err) {
         showMsg(err.message);
         answering = false;
+        $("#clQuoteBtn").disabled = false;
+        ["clBid", "clAsk", "clBidNum", "clAskNum"].forEach((id) => { $("#" + id).disabled = false; });
         return;
       }
 
-      const duel = $("#clDuel");
-      const map = { a: res.a_value, b: res.b_value };
-      ["a", "b"].forEach((side) => {
-        const card = duel.querySelector(`.cl-stock[data-side="${side}"]`);
-        const val = card.querySelector("[data-value]");
-        val.textContent = `${label}: ${pct(map[side])}`;
-        val.classList.add("shown");
-        if (side === res.answer) card.classList.add("cl-correct");
-        else if (side === pick) card.classList.add("cl-wrong");
-      });
-      if (res.correct) pointPop(duel.querySelector(`.cl-stock[data-side="${pick}"]`), res.points);
+      // Drop the true value onto the same scale the player just quoted on.
+      const truth = $("#clTruth");
+      truth.style.left = Math.max(0, Math.min(100, posPct(res.truth))) + "%";
+      $("#clTruthLabel").textContent = fmtV(res.truth, res.unit);
+      truth.classList.remove("hidden");
+      $("#clBand").classList.add(res.held && res.tradeable ? "cl-band-ok" : "cl-band-bad");
 
       const reveal = $("#clReveal");
-      reveal.className = "cl-reveal " + (res.correct ? "cl-reveal-ok" : "cl-reveal-bad");
-      let line = res.correct
-        ? `<strong>Correct.</strong> +${res.points} pts${res.streak > 1 ? ` &middot; 🔥 ${res.streak} in a row` : ""}`
-        : `<strong>Missed it.</strong> The answer was ${res.answer.toUpperCase()}.`;
-      if (res.milestone) line += ` <span class="cl-milestone">🔥 ${res.milestone}-streak!</span>`;
+      const good = res.points > 0;
+      reveal.className = "cl-reveal " + (good ? "cl-reveal-ok" : "cl-reveal-bad");
+      let line;
+      if (res.side === "held" && res.tradeable) {
+        line = `<strong>Held.</strong> True ${esc(res.label)} was
+          <strong>${fmtV(res.truth, res.unit)}</strong>, inside your
+          ${fmtV(res.bid, res.unit)} / ${fmtV(res.ask, res.unit)} market. +${res.points} pts`;
+      } else if (res.side === "held") {
+        line = `<strong>No trade.</strong> True ${esc(res.label)} was
+          <strong>${fmtV(res.truth, res.unit)}</strong> — inside your market, but a
+          ${fmtV(res.width, res.unit)} spread is too wide for anyone to trade. 0 pts`;
+      } else {
+        const verb = res.side === "lifted" ? "lifted your offer" : "hit your bid";
+        line = `<strong>Picked off.</strong> True ${esc(res.label)} was
+          <strong>${fmtV(res.truth, res.unit)}</strong>, so the house ${verb} —
+          off by ${fmtV(res.miss, res.unit)}. ${res.points} pts`;
+      }
+      if (res.milestone) line += ` <span class="cl-milestone">🔥 ${res.milestone} in a row!</span>`;
       reveal.innerHTML = line;
       reveal.classList.remove("hidden");
+
       $("#clScore").textContent = `${res.score.toLocaleString()} pts`;
       $("#clStreak").textContent = res.streak ? `🔥 ${res.streak}` : "";
       setDiff(res.difficulty_tag);
@@ -314,9 +426,9 @@
 
       if (res.done) {
         if (room) {
-          setTimeout(() => waitForRoom(), 950);
+          setTimeout(() => waitForRoom(), 1100);
         } else {
-          setTimeout(() => finish(res.final), 950);
+          setTimeout(() => finish(res.final), 1100);
         }
       } else {
         const next = $("#clNextBtn");
@@ -428,7 +540,7 @@
             <tr class="${r.is_me ? "cl-row-me" : ""}">
               <td class="cl-num">${r.rank}</td>
               <td>${esc(r.username)}</td>
-              <td class="cl-num">${r.correct}/${r.total}</td>
+              <td class="cl-num">${r.correct}/${r.total} held</td>
               <td class="cl-num">${r.score.toLocaleString()}</td>
             </tr>`).join("")}
         </tbody></table>
@@ -503,7 +615,7 @@
       $("#clFinalBody").innerHTML = `
         <div class="cl-final-score" id="clFinalScore">${(f.score || 0).toLocaleString()}</div>
         <div class="cl-final-label">points</div>
-        <div class="cl-final-detail">${f.correct} of ${f.total} correct &middot; best streak 🔥 ${f.best_streak}
+        <div class="cl-final-detail">${f.correct} of ${f.total} markets held &middot; best run 🔥 ${f.best_streak}
           ${f.xp_earned ? ` &middot; <strong>+${f.xp_earned} XP</strong>` : ""}</div>
         <div class="cl-final-flags">${bits.join("")}</div>
         ${levelBar}

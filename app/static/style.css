@@ -5968,3 +5968,190 @@ body.tut-locked {
   width: 100%;
   max-width: 420px;
 }
+
+/* ── Crash Call: making a market ─────────────────────────────────────────────
+   One shared scale carries everything — the cohort anchor, the player's band,
+   and (after the trade) the true value — so the reveal lands in the same place
+   the player was just looking. */
+
+.cl-market {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 18px 20px 20px;
+}
+
+.cl-mkt-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+}
+
+.cl-mkt-name {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.cl-cat {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 2px 6px;
+}
+
+.cl-scale {
+  margin: 30px 0 18px;
+}
+
+.cl-scale-track {
+  position: relative;
+  height: 12px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+}
+
+.cl-band {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  background: var(--brand-wash);
+  border-left: 2px solid var(--brand);
+  border-right: 2px solid var(--brand);
+  transition: left .08s linear, width .08s linear;
+}
+
+.cl-band-ok {
+  background: rgba(53, 201, 139, .18);
+  border-left-color: var(--green);
+  border-right-color: var(--green);
+}
+
+.cl-band-bad {
+  background: rgba(242, 85, 90, .15);
+  border-left-color: var(--red);
+  border-right-color: var(--red);
+}
+
+.cl-anchor,
+.cl-truth {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+}
+
+.cl-anchor-tick,
+.cl-truth-tick {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: -1px;
+  width: 2px;
+}
+
+.cl-anchor-tick {
+  background: var(--muted);
+  opacity: .5;
+}
+
+.cl-truth-tick {
+  background: var(--text);
+}
+
+.cl-anchor-label,
+.cl-truth-label {
+  position: absolute;
+  white-space: nowrap;
+  font-size: 11px;
+  transform: translateX(-50%);
+}
+
+.cl-anchor-label {
+  top: -20px;
+  color: var(--muted);
+}
+
+.cl-truth-label {
+  bottom: -21px;
+  color: var(--text);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-scale-ends {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 26px;
+  font-size: 11.5px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-quote {
+  display: flex;
+  gap: 14px;
+  margin-top: 6px;
+}
+
+.cl-side {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+
+.cl-side input {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 9px 11px;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  border-radius: 0;
+}
+
+.cl-side-bid input:focus { border-color: var(--green); outline: none; }
+.cl-side-ask input:focus { border-color: var(--red); outline: none; }
+
+.cl-range {
+  width: 100%;
+  margin: 12px 0 0;
+  accent-color: var(--brand);
+}
+
+.cl-range-bid { accent-color: var(--green); }
+.cl-range-ask { accent-color: var(--red); }
+
+.cl-spread-out {
+  margin: 16px 0 4px;
+  font-size: 13px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-spread-out strong { color: var(--text); }
+
+.cl-warn { color: var(--red); }
+.cl-muted { color: var(--muted); }
+
+.cl-quote-btn {
+  width: 100%;
+  margin-top: 10px;
+  padding: 12px;
+  font-size: 15px;
+}
+
+@media (max-width: 560px) {
+  .cl-quote { flex-direction: column; }
+}
