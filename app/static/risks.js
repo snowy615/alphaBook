@@ -587,6 +587,7 @@
         drawEquity(s.my_equity_curve || [], s.start_equity);
         if (s.status === "finished") {
           renderReveal(s.reveal);
+          if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", s.feedback);
           if (lastStatus === "active") {
             showMsg(msg, "Round complete — realised betas and shock groups are revealed below.", "ok");
           }

@@ -386,6 +386,8 @@
       <div class="fiveos-finished">
         <h2>🏆 Game Over!</h2>
 
+        <div id="fbkBox" class="hidden"></div>
+
         <div class="results-section">
           <h3>Final Price</h3>
           <div class="actuals-grid">
@@ -423,6 +425,8 @@
         <a href="/headline" class="btn" style="margin-top: 24px; display: inline-block;">← New Game</a>
       </div>
     `;
+
+    if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", state.feedback);
 
     // Draw final chart
     setTimeout(() => {

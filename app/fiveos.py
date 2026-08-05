@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.auth import current_user
 from app.models import User
@@ -418,6 +419,7 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         result["pnl"] = await _compute_pnl(game_id, game_data)
         # Compute optimal estimates for this user based on their known cards
         result["optimal"] = _compute_optimal_estimates(game_data, uid)
+        result["feedback"] = (game_data.get("feedback") or {}).get(uid)
 
     return result
 
@@ -512,15 +514,37 @@ def _compute_optimal_estimates(game_data: dict, user_id: str):
 
 
 async def _record_scores(game_id: str, game_data: dict) -> None:
-    """Feed each player's final P&L into the cross-game rating system."""
+    """Rate each player, and write them a note on which estimate let them down."""
     try:
         pnl = await _compute_pnl(game_id, game_data)
+        actuals = compute_actuals(game_data["deck_15"])
+
+        # Each player's own submissions, so the coaching can talk about which of
+        # the three statistics they misread and in which direction.
+        subs_by_user = {}
+        docs = await db_module.db.collection("fiveos_submissions") \
+            .where("game_id", "==", game_id).get()
+        for d in docs:
+            s = d.to_dict()
+            subs_by_user.setdefault(s["user_id"], []).append(s)
+
+        feedback_by_user = {}
         for uid, row in (pnl.get("players") or {}).items():
+            coaching = fb.analyse("fiveos", {
+                "rounds": subs_by_user.get(uid, []),
+                "actuals": actuals,
+                "pnl": row.get("pnl", 0.0),
+            })
+            feedback_by_user[uid] = coaching
             await scores.record_result(
                 "fiveos", uid, row.get("username", ""), row.get("pnl", 0.0),
                 game_id=game_id,
                 detail={"team": row.get("team", "")},
+                feedback=coaching,
             )
+
+        await db_module.db.collection("fiveos_games").document(game_id).update(
+            {"feedback": feedback_by_user})
     except Exception:
         log.warning("5Os score recording failed for game %s", game_id, exc_info=True)
 

@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.auth import current_user
 from app.models import User
@@ -513,12 +514,26 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     result["my_trades"] = trades.get(uid, [])
 
     if just_finished:
+        feedback_by_user = {}
         for row in leaderboard:
+            coaching = fb.analyse("headline", {
+                "pnl": row["pnl"],
+                "position": row["position"],
+                "trades": trades.get(row["user_id"], []),
+                "news": news_schedule,
+            })
+            feedback_by_user[row["user_id"]] = coaching
             await scores.record_result(
                 "headline", row["user_id"], row["username"], row["pnl"],
                 game_id=game_id,
                 detail={"template": game_data.get("template_name", ""),
                         "position": row["position"]},
+                feedback=coaching,
             )
+        await doc.reference.update({"feedback": feedback_by_user})
+        game_data["feedback"] = feedback_by_user
+
+    if status == "finished":
+        result["feedback"] = (game_data.get("feedback") or {}).get(uid)
 
     return result

@@ -152,6 +152,8 @@
       <div class="msp-strip" id="myStats"></div>
 
       <div class="msp-cols">
+        <div id="fbkBox" class="hidden"></div>
+
         <div class="card msp-panel">
           <div class="head">
             <h3>Leaderboard</h3>
@@ -216,6 +218,7 @@
     window.RUN_ID = "{{ run_id }}";
     window.POSITION_LIMIT = {{ position_limit }};
   </script>
+  <script src="/static/feedback.js?v=1"></script>
   <script src="/static/market_sim_py.js"></script>
   <script src="/static/tutorial.js"></script>
   <script>

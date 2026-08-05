@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.auth import current_user
 from app.models import User
@@ -517,15 +518,32 @@ async def advance(game_id: str, user: User = Depends(current_user)):
         })
 
         # Everyone on a team is scored on that team's final bankroll.
+        feedback_by_user = {}
+        spent_by_team = {}
+        for h in game_data.get("round_history", []):
+            if h.get("winner_team"):
+                spent_by_team[h["winner_team"]] = spent_by_team.get(h["winner_team"], 0) + h.get("paid", 0)
+
         for team in teams:
             hand = poker_hands.get(team["team_id"], {})
+            coaching = fb.analyse("poker_auction", {
+                "money": team.get("money", 0),
+                "start_money": 1000,
+                "hand": hand.get("rank_name", "High Card"),
+                "award": hand.get("award", 0),
+                "spent": spent_by_team.get(team["team_id"], 0),
+                "cards": len(team.get("cards", [])),
+            })
             for uid in team.get("user_ids", []):
+                feedback_by_user[uid] = coaching
                 await scores.record_result(
                     "poker_auction", uid, team.get("team_name", ""), team.get("money", 0),
                     game_id=game_id,
                     detail={"team_id": team["team_id"], "hand": hand.get("rank_name", "")},
+                    feedback=coaching,
                 )
 
+        await doc.reference.update({"feedback": feedback_by_user})
         return {"ok": True, "action": "finished"}
 
     raise HTTPException(status_code=400, detail=f"Cannot advance from status={status}, phase={phase}")
@@ -782,6 +800,7 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         result["post_bids_counts"] = {k: len(v) for k, v in post_bids.items()}
 
     elif status == "finished":
+        result["feedback"] = (game_data.get("feedback") or {}).get(uid)
         result["poker_hands"] = game_data.get("poker_hands", {})
         result["hand_awards"] = {HAND_RANK_NAMES[k]: v for k, v in HAND_AWARDS.items()}
         result["round_history"] = game_data.get("round_history", [])

@@ -42,6 +42,7 @@ from google.cloud import firestore as gfs
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.auth import current_user
 from app.models import User
@@ -292,6 +293,24 @@ def score_quote(rnd: Dict[str, Any], bid: float, ask: float, streak: int) -> Dic
     }
 
 
+def _history_entry(rnd: Dict[str, Any], bid: float, ask: float,
+                   res: Dict[str, Any]) -> Dict[str, Any]:
+    """One round, kept so the end-of-game coaching can spot patterns."""
+    return {
+        "ticker": rnd["stock"]["ticker"],
+        "label": rnd["label"],
+        "prompt": rnd["prompt"],
+        "truth": res["truth"],
+        "bid": bid,
+        "ask": ask,
+        "points": res["points"],
+        "side": res["side"],
+        "tradeable": res["tradeable"],
+        "width": res["width"],
+        "width_units": res["width_units"],
+    }
+
+
 def _difficulty_tag(d: float) -> str:
     if d < 0.30:
         return "Warm-up"
@@ -317,6 +336,7 @@ class Game:
         self.difficulty = DIFF_START
         self.done = False
         self.created = time.monotonic()
+        self.history: List[Dict[str, Any]] = []   # per-round detail, for coaching
         self.current = _make_round(rng, self.difficulty)
 
     def round_view(self) -> Dict[str, Any]:
@@ -325,6 +345,7 @@ class Game:
     def quote(self, bid: float, ask: float) -> Dict[str, Any]:
         r = self.current
         res = score_quote(r, bid, ask, self.streak)
+        self.history.append(_history_entry(r, bid, ask, res))
 
         if res["held"] and res["tradeable"]:
             self.streak += 1
@@ -464,11 +485,18 @@ async def _finalize(game: Game) -> Dict[str, Any]:
         log.warning("Crash Ledger finalize failed for %s", game.uid, exc_info=True)
         final["xp_earned"] = 0
 
+    coaching = fb.analyse("crash_ledger", {
+        "rounds": getattr(game, "history", []),
+        "score": game.score,
+    })
+    final["feedback"] = coaching
+
     await scores.record_result(
         "crash_ledger", game.uid, game.username, game.score,
         game_id=game.id,
         detail={"correct": game.correct, "total": game.total,
                 "best_streak": game.best_streak},
+        feedback=coaching,
     )
     return final
 
@@ -535,7 +563,7 @@ class Room:
         if uid not in self.players:
             self.players[uid] = {
                 "username": username, "idx": 0, "score": 0, "correct": 0,
-                "streak": 0, "best_streak": 0, "done": False,
+                "streak": 0, "best_streak": 0, "done": False, "history": [],
             }
         else:
             self.players[uid]["username"] = username
@@ -574,6 +602,7 @@ class Room:
         p = self.players[uid]
         r = self.rounds[p["idx"]]
         res = score_quote(r, bid, ask, p["streak"])
+        p["history"].append(_history_entry(r, bid, ask, res))
 
         if res["held"] and res["tradeable"]:
             p["streak"] += 1
@@ -642,6 +671,7 @@ class _RoomResult:
         self.correct = p["correct"]
         self.total = len(room.rounds)
         self.best_streak = p["best_streak"]
+        self.history = p.get("history", [])
 
 
 async def _finalize_room(room: Room) -> None:
@@ -651,7 +681,8 @@ async def _finalize_room(room: Room) -> None:
     room.scored = True
     for uid, p in room.players.items():
         try:
-            await _finalize(_RoomResult(room, uid, p))
+            final = await _finalize(_RoomResult(room, uid, p))
+            p["feedback"] = final.get("feedback")
         except Exception:
             log.warning("Crash Ledger room finalize failed for %s", uid, exc_info=True)
 
@@ -669,6 +700,7 @@ def _room_state(room: Room, uid: str) -> Dict[str, Any]:
         "standings": room.standings(),
         "round": room.round_view(uid),
         "me": room.players.get(uid),
+        "feedback": (room.players.get(uid) or {}).get("feedback"),
     }
 
 

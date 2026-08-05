@@ -85,6 +85,8 @@
     <!-- ── Live / finished ───────────────────────────────────────────── -->
     <section id="liveView" class="hidden">
       <div class="msp-live-grid">
+        <div id="fbkBox" class="hidden"></div>
+
         <div class="card msp-panel">
           <div class="head">
             <h3>Leaderboard</h3>
@@ -146,6 +148,7 @@
     window.RUN_ID = "{{ run_id }}";
     window.POSITION_LIMIT = {{ position_limit }};
   </script>
+  <script src="/static/feedback.js?v=1"></script>
   <script src="/static/swe_prep.js"></script>
   <script src="/static/tutorial.js"></script>
   <script>

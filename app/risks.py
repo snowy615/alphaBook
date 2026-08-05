@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import feedback as fb
 from app import risk_episodes as ep_lib
 from app import scores
 from app.auth import current_user
@@ -249,17 +250,23 @@ async def stop_game(game_id: str, user: User = Depends(current_user)):
 
 
 async def _record_scores(game_id: str, game: dict, day: int) -> None:
-    """Feed each player's risk-adjusted score into the cross-game ratings."""
+    """Rate each player and write them a note on how they carried the risk."""
     try:
         episode = _episode_of(game)
         trades = game.get("trades", {})
+        feedback_by_user = {}
         for p in game.get("players", []):
             card = ep_lib.score_player(episode, trades.get(p["user_id"], []), day)
+            coaching = fb.analyse("risks", {**card, "gross_limit": ep_lib.GROSS_LIMIT})
+            feedback_by_user[p["user_id"]] = coaching
             await scores.record_result(
                 "risks", p["user_id"], p.get("username", ""), card["score"],
                 game_id=game_id,
                 detail={"pnl": card["pnl"], "max_drawdown": card["max_drawdown"]},
+                feedback=coaching,
             )
+        await db_module.db.collection(COLLECTION).document(game_id).update(
+            {"feedback": feedback_by_user})
     except Exception:
         log.warning("Risks score recording failed for game %s", game_id, exc_info=True)
 
@@ -387,12 +394,12 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     out["leaderboard"] = leaderboard
 
     if just_finished:
-        for row in leaderboard:
-            await scores.record_result(
-                "risks", row["user_id"], row["username"], row["score"],
-                game_id=game_id,
-                detail={"pnl": row["pnl"], "max_drawdown": row["max_drawdown"]},
-            )
+        # Same path as a host-ended round, so the coaching is identical either way.
+        await _record_scores(game_id, game, day)
+        game["feedback"] = (await doc.reference.get()).to_dict().get("feedback", {})
+
+    if status == "finished":
+        out["feedback"] = (game.get("feedback") or {}).get(uid)
 
     if any(p["user_id"] == uid for p in players):
         mine = ep_lib.score_player(episode, trades.get(uid, []), day)

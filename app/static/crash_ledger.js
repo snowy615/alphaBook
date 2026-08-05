@@ -544,7 +544,9 @@
               <td class="cl-num">${r.score.toLocaleString()}</td>
             </tr>`).join("")}
         </tbody></table>
+        <div id="fbkBox" class="hidden"></div>
         <button class="btn primary" id="clPlayAgain">Back to Crash Call</button>`;
+      if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", state.feedback);
       $("#clPlayAgain").addEventListener("click", () => {
         room = null;
         show("start");
@@ -619,7 +621,9 @@
           ${f.xp_earned ? ` &middot; <strong>+${f.xp_earned} XP</strong>` : ""}</div>
         <div class="cl-final-flags">${bits.join("")}</div>
         ${levelBar}
+        <div id="fbkBox" class="hidden"></div>
         <button class="btn primary" id="clPlayAgain">Play again</button>`;
+      if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", f.feedback);
       $("#clPlayAgain").addEventListener("click", () => { startGame(); });
       show("final");
       loadProfile();

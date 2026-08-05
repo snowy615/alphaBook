@@ -162,6 +162,7 @@ async def record_result(
     *,
     game_id: Optional[str] = None,
     detail: Optional[Dict[str, Any]] = None,
+    feedback: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Record one finished game for one player.
@@ -203,6 +204,10 @@ async def record_result(
         recent.append(value)
         agg["recent"] = recent[-RECENT_KEEP:]
         agg["updated_at"] = now
+        if feedback:
+            # The dashboard shows the most recent game's coaching per mode, so
+            # keep it on the aggregate rather than re-querying the event log.
+            agg["last_feedback"] = feedback
 
         modes[mode] = agg
         await ref.set({
@@ -350,6 +355,7 @@ def compute_ratings(players: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "best": agg.get("best"),
                 "last": agg.get("last"),
                 "recent": list(agg.get("recent") or []),
+                "last_feedback": agg.get("last_feedback"),
             }
             per_mode_values[mode].append(value)
         prepared.append({
@@ -375,6 +381,8 @@ def compute_ratings(players: List[Dict[str, Any]]) -> Dict[str, Any]:
                 "last": info["last"],
                 "provisional": info["games"] < MIN_GAMES_FULL,
                 "trend": _trend(info["recent"]),
+                "last_feedback": info.get("last_feedback"),
+                "recent": info["recent"],
             }
         row["ratings"] = ratings
 

@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app import algo_engine as engine
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.algo_engine import OrderRejected
 from app.algo_ratelimit import RateLimiter
@@ -136,10 +137,20 @@ async def _persist_results(run: engine.Run) -> None:
     for r in run.results:
         if r.get("is_bot"):
             continue
+        # Attached to the result row itself so the run page can show it without
+        # another round trip.
+        coaching = fb.analyse("market_sim_py", r)
+        r["feedback"] = coaching
+        # Leaderboard rows are rebuilt on every poll, so the run itself
+        # carries the coaching for the state endpoint to hand back.
+        if not hasattr(run, "feedback"):
+            run.feedback = {}
+        run.feedback[r.get("user_id", "")] = coaching
         await scores.record_result(
             "market_sim_py", r.get("user_id", ""), r.get("username", ""), r.get("pnl", 0.0),
             game_id=run.id,
             detail={"fills": r.get("fills", 0), "volume": r.get("volume", 0)},
+            feedback=coaching,
         )
 
 
@@ -358,6 +369,7 @@ async def market(run_id: str, user: User = Depends(current_user)):
         "items": engine.ITEM_SYMBOLS,
         "market": run.market_snapshot(reveal_fair=finished),
         "me": run.player_view(str(user.id)),
+        "feedback": getattr(run, "feedback", {}).get(str(user.id)),
     }
 
 

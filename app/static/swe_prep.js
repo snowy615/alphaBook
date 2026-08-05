@@ -462,6 +462,7 @@
         renderMarket(state.market, state.status === "finished");
         renderMe(state.me, state.market, state.status);
         renderTape(state.tape);
+        if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", state.feedback);
         if (state.status === "finished" && lastStatus === "running") {
           showMsg(msg, "Run complete — fair values are revealed and the leaderboard is final.", "ok");
         }

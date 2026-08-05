@@ -422,6 +422,8 @@
           <h2>🏆 Results</h2>
         </div>
 
+        <div id="fbkBox" class="hidden"></div>
+
         <div class="mm-scoreboard-card">
           <h3>Scoreboard</h3>
           <div class="mm-scoreboard">
@@ -467,6 +469,8 @@
         </a>
       </div>
     `;
+
+        if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", myResults.feedback);
     }
 
     // ---- Init ----

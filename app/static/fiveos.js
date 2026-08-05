@@ -274,6 +274,8 @@
       <div class="fiveos-finished">
         <h2>🏆 Game Over!</h2>
 
+        <div id="fbkBox" class="hidden"></div>
+
         <div class="results-section">
           <h3>Actual Values</h3>
           <div class="actuals-grid">
@@ -316,6 +318,8 @@
         <a href="/" class="btn" style="margin-top: 24px; display: inline-block;">← Back to Home</a>
       </div>
     `;
+
+    if (window.AB && AB.feedback) AB.feedback.render("#fbkBox", state.feedback);
 
     // Draw charts after DOM is ready
     setTimeout(() => {

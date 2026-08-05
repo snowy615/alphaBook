@@ -192,25 +192,31 @@
     </div>
   </div>
 
-  <!-- Performance scorecard -->
-  <div class="profile-card" id="scorecard-card" style="max-width:900px;">
-    <h1 style="margin-bottom:4px;">My Performance</h1>
-    <p class="subtitle" id="scOverallLine">Loading your ratings…</p>
+  <!-- Performance dashboard -->
+  <div class="profile-card" id="scorecard-card" style="max-width:980px;">
+    <div class="dash-head">
+      <div>
+        <h1 style="margin-bottom:4px;">My Performance</h1>
+        <p class="subtitle" style="margin-bottom:0;" id="scOverallLine">Loading your ratings…</p>
+      </div>
+      <a class="btn" href="/leaderboard">Leaderboard →</a>
+    </div>
 
-    <div id="scModes" class="lbx-card-grid"></div>
+    <!-- Headline numbers -->
+    <div class="dash-tiles" id="scTiles"></div>
 
-    <div id="scFeedbackWrap" style="margin-top:22px;">
-      <h3 style="margin:0 0 10px;">What the numbers say</h3>
+    <!-- Per-mode performance, each with its own coaching -->
+    <h3 class="dash-section">By mode</h3>
+    <div id="scModes" class="dash-modes"></div>
+
+    <div id="scFeedbackWrap" class="dash-block">
+      <h3 class="dash-section">Across everything</h3>
       <ul class="lbx-feedback" id="scFeedback"></ul>
     </div>
 
-    <div id="scUntriedWrap" style="margin-top:22px;">
-      <h3 style="margin:0 0 8px;">Not played yet</h3>
+    <div id="scUntriedWrap" class="dash-block">
+      <h3 class="dash-section">Not played yet</h3>
       <div class="lbx-untried" id="scUntried"></div>
-    </div>
-
-    <div class="btn-row" style="margin-top:22px;">
-      <a class="btn primary" href="/leaderboard">Open the leaderboard</a>
     </div>
   </div>
 
@@ -229,6 +235,8 @@
   </div>
 
   <div id="toast" class="toast"></div>
+
+  <script src="/static/feedback.js?v=1"></script>
 
   <script src="/static/app.js"></script>
   <script>
@@ -270,31 +278,65 @@
         if (!d.found) {
           line.textContent = "No scored games yet — play any mode and your ratings appear here.";
           document.getElementById("scFeedbackWrap").style.display = "none";
+          document.getElementById("scTiles").style.display = "none";
         } else {
-          line.innerHTML = `Overall <strong>${d.overall}</strong> · rank
-            <strong>#${d.rank}</strong> of ${d.total_players} ·
-            ${d.modes_played} of ${d.total_modes} modes · ${d.total_games} games played`;
+          line.innerHTML = `Ranked <strong>#${d.rank}</strong> of ${d.total_players} players`;
+          document.getElementById("scTiles").innerHTML = `
+            <div class="dash-tile dash-tile-lead">
+              <div class="dash-tile-label">Overall rating</div>
+              <div class="dash-tile-value">${d.overall}</div>
+              <div class="lbx-bar"><span class="lbx-bar-fill"
+                style="width:${Math.max(0, Math.min(100, +d.overall))}%"></span></div>
+            </div>
+            <div class="dash-tile">
+              <div class="dash-tile-label">Rank</div>
+              <div class="dash-tile-value">#${d.rank}<span class="dash-tile-sub">of ${d.total_players}</span></div>
+            </div>
+            <div class="dash-tile">
+              <div class="dash-tile-label">Modes played</div>
+              <div class="dash-tile-value">${d.modes_played}<span class="dash-tile-sub">of ${d.total_modes}</span></div>
+            </div>
+            <div class="dash-tile">
+              <div class="dash-tile-label">Games</div>
+              <div class="dash-tile-value">${d.total_games}</div>
+            </div>`;
         }
 
-        document.getElementById("scModes").innerHTML = (d.modes || []).map((m) => `
-          <div class="lbx-mode-card">
-            <h4>
-              <span>${escHtml(m.label)}</span>
-              <span class="lbx-mode-rank">#${m.rank} of ${m.field}</span>
-            </h4>
-            <div class="lbx-rating">
-              <span class="lbx-rating-num${m.provisional ? " lbx-prov" : ""}">${(+m.rating).toFixed(1)}</span>
-              <span class="lbx-bar"><span class="lbx-bar-fill"
-                style="width:${Math.max(0, Math.min(100, +m.rating))}%"></span></span>
-            </div>
-            <div class="lbx-mode-meta">
-              <span>${escHtml(m.metric)} ${fmtVal(m.value, m.unit)}</span>
-              <span>best ${fmtVal(m.best, m.unit)}</span>
-              <span>${m.games} games</span>
-              <span>${TREND_LABEL[m.trend] || ""}</span>
-              ${m.provisional ? '<span class="lbx-prov-tag">provisional</span>' : ""}
-            </div>
-          </div>`).join("");
+        // Each mode gets its rating, its numbers, and the coaching from the
+        // last game played in it — folded away so the page stays scannable.
+        document.getElementById("scModes").innerHTML = (d.modes || []).map((m) => {
+          const f = m.last_feedback;
+          const coaching = f ? `
+            <details class="dash-coach">
+              <summary>
+                <span class="dash-coach-grade dash-grade-${escHtml(f.grade || "mixed")}">
+                  ${escHtml((f.grade || "mixed").toUpperCase())}</span>
+                <span class="dash-coach-line">${escHtml(f.headline || "")}</span>
+              </summary>
+              ${(f.notes || []).length ? AB.feedback.markup({ ...f, headline: "", stats: [] }) : ""}
+            </details>` : "";
+
+          return `
+            <div class="dash-mode">
+              <div class="dash-mode-top">
+                <a class="dash-mode-name" href="${escHtml(m.href)}">${escHtml(m.label)}</a>
+                <span class="dash-mode-rank">#${m.rank} of ${m.field}</span>
+              </div>
+              <div class="lbx-rating">
+                <span class="lbx-rating-num${m.provisional ? " lbx-prov" : ""}">${(+m.rating).toFixed(1)}</span>
+                <span class="lbx-bar"><span class="lbx-bar-fill"
+                  style="width:${Math.max(0, Math.min(100, +m.rating))}%"></span></span>
+              </div>
+              <div class="lbx-mode-meta">
+                <span>${escHtml(m.metric)} ${fmtVal(m.value, m.unit)}</span>
+                <span>best ${fmtVal(m.best, m.unit)}</span>
+                <span>${m.games} games</span>
+                <span>${TREND_LABEL[m.trend] || ""}</span>
+                ${m.provisional ? '<span class="lbx-prov-tag">provisional</span>' : ""}
+              </div>
+              ${coaching}
+            </div>`;
+        }).join("");
 
         document.getElementById("scFeedback").innerHTML = (d.feedback || [])
           .map((f) => `<li class="kind-${escHtml(f.kind)}">${escHtml(f.text)}</li>`).join("");

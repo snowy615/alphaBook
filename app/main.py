@@ -376,10 +376,19 @@ async def api_leaderboard(request: Request, limit: int = 100):
     me = await _optional_user(request)
     my_id = str(me.id) if me else None
 
+    # A player's own coaching and result history are private to their profile;
+    # the public board carries ratings only.
+    PRIVATE = ("last_feedback", "recent")
+
+    def public(d):
+        return {k: v for k, v in d.items() if k not in PRIVATE}
+
     def trim(rows):
         out = []
         for r in rows[:limit]:
-            row = dict(r)
+            row = public(r)
+            if isinstance(row.get("ratings"), dict):
+                row["ratings"] = {m: public(v) for m, v in row["ratings"].items()}
             row["is_me"] = bool(my_id) and row.get("user_id") == my_id
             out.append(row)
         return out
@@ -393,7 +402,7 @@ async def api_leaderboard(request: Request, limit: int = 100):
         "overall": overall,
         "mode_boards": {k: trim(v) for k, v in data["mode_boards"].items()},
         "total_players": len(data["players"]),
-        "me": ({**my_row, "is_me": True} if my_row else None),
+        "me": (trim([my_row])[0] if my_row else None),
         "signed_in": bool(my_id),
     }
 

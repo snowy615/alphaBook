@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from app import swe_prep_engine as engine
 from app import db as db_module
+from app import feedback as fb
 from app import scores
 from app.swe_prep_sandbox import SandboxError, StrategyTimeout, check_strategy
 from app.auth import current_user
@@ -99,10 +100,18 @@ async def _persist_results(run: engine.Run) -> None:
     for r in run.results:
         if r.get("is_bot"):
             continue
+        coaching = fb.analyse("swe_prep", r)
+        r["feedback"] = coaching
+        # Leaderboard rows are rebuilt on every poll, so the run itself carries
+        # the coaching for the state endpoint to hand back.
+        if not hasattr(run, "feedback"):
+            run.feedback = {}
+        run.feedback[r.get("user_id", "")] = coaching
         await scores.record_result(
             "swe_prep", r.get("user_id", ""), r.get("username", ""), r.get("pnl", 0.0),
             game_id=run.id,
             detail={"fills": r.get("fills", 0), "status": r.get("status", "")},
+            feedback=coaching,
         )
 
 
@@ -282,6 +291,7 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
         "leaderboard": run.leaderboard(),
         "tape": list(run.tape)[:25],
         "me": run.player_view(uid),
+        "feedback": getattr(run, "feedback", {}).get(uid),
     }
 
 
