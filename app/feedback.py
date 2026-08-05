@@ -46,6 +46,10 @@ def _money(n: float) -> str:
     return f"{sign}${abs(n):,.0f}"
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}" if n == 1 else f"{n} {word}s"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Crash Call — making markets on crash statistics
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,7 +130,8 @@ def _crash_ledger(p: Dict[str, Any]) -> Dict[str, Any]:
         if sum(worst_stat[1]) < 0:
             notes.append({"kind": "gap", "text":
                           f"{worst_stat[0].capitalize()} cost you "
-                          f"{sum(worst_stat[1])} points across {len(worst_stat[1])} rounds — "
+                          f"{sum(worst_stat[1])} points across "
+                          f"{_plural(len(worst_stat[1]), 'round')} — "
                           f"that's the statistic you have least feel for."})
 
     # One concrete thing to change

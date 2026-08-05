@@ -135,7 +135,7 @@ MODES: Dict[str, Dict[str, Any]] = {
         "unit": "",
         "href": "/crash-ledger",
         "kind": "per_game",
-        "blurb": "Calling which name behaved worse in past crashes.",
+        "blurb": "Making markets on how real names behaved in past crashes.",
     },
 }
 
@@ -579,7 +579,8 @@ def _feedback(me: Dict[str, Any], rows: List[Dict[str, Any]], untried: List[Dict
         out.append({
             "kind": "strength",
             "text": f"Strongest in {best['label']}: rating {best['rating']}"
-                    f" (rank {best['rank']} of {best['field']}) over {best['games']} games.",
+                    f" (rank {best['rank']} of {best['field']}) over"
+                    f" {best['games']} game{'' if best['games'] == 1 else 's'}.",
         })
 
     # Weakness — only worth saying when there's a real spread
