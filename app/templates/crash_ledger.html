@@ -64,6 +64,21 @@
       <button class="btn primary cl-play" id="clPlayBtn">Play Crash Call</button>
       <span class="msp-muted cl-play-hint">Round 1 is ready &middot; {{ rounds_per_game }} rounds &middot; {{ stock_count }} stocks in play</span>
     </div>
+
+    <!-- Head-to-head -->
+    <div class="cl-h2h">
+      <div class="cl-h2h-head">
+        <h3>Head-to-head</h3>
+        <span class="msp-muted">everyone answers the same rounds, live</span>
+      </div>
+      <div class="cl-h2h-row">
+        <button class="btn" id="clRoomCreate">Open a room</button>
+        <span class="cl-h2h-or">or</span>
+        <input id="clRoomCode" class="msp-input msp-code-input" type="text" maxlength="5"
+          placeholder="CODE" autocomplete="off" spellcheck="false">
+        <button class="btn" id="clRoomJoin">Join</button>
+      </div>
+    </div>
     <div class="cl-board-wrap">
       <div class="cl-board-head">
         <h3>League leaderboard</h3>
@@ -73,8 +88,24 @@
     </div>
   </div>
 
+  <!-- Room lobby -->
+  <div class="cl-view hidden" id="clRoomLobby">
+    <div class="cl-room-head">
+      <div>
+        <h3>Room <span class="cl-room-code" id="clRoomCodeOut">—</span></h3>
+        <p class="msp-muted" id="clRoomHint">Share the code. Everyone gets the same rounds.</p>
+      </div>
+      <div class="cl-room-actions">
+        <button class="btn primary hidden" id="clRoomStart">Start round</button>
+        <button class="btn ghost" id="clRoomLeave">Leave</button>
+      </div>
+    </div>
+    <table class="cl-board" id="clRoomPlayers"></table>
+  </div>
+
   <!-- A round -->
   <div class="cl-view hidden" id="clRound">
+    <div class="cl-live hidden" id="clLive"></div>
     <div class="cl-progress" id="clProgress"></div>
     <div class="cl-hud">
       <span class="cl-hud-round" id="clRoundNum">Round 1 / {{ rounds_per_game }}</span>

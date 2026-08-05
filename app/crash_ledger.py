@@ -33,7 +33,7 @@ import random
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.templating import Jinja2Templates
@@ -41,6 +41,7 @@ from google.cloud import firestore as gfs
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import scores
 from app.auth import current_user
 from app.models import User
 
@@ -359,12 +360,277 @@ async def _finalize(game: Game) -> Dict[str, Any]:
     except Exception:
         log.warning("Crash Ledger finalize failed for %s", game.uid, exc_info=True)
         final["xp_earned"] = 0
+
+    await scores.record_result(
+        "crash_ledger", game.uid, game.username, game.score,
+        game_id=game.id,
+        detail={"correct": game.correct, "total": game.total,
+                "best_streak": game.best_streak},
+    )
     return final
 
 
 # ---- Request schemas ----
 class AnswerRequest(BaseModel):
     pick: str
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Head-to-head rooms
+# ─────────────────────────────────────────────────────────────────────────────
+# The solo loop adapts difficulty per player, which is right for practice but
+# useless for a contest: two people would answer different questions. A room
+# therefore fixes one set of rounds on a rising difficulty ramp and serves it
+# to everybody, so scores are directly comparable. Rooms live in memory on the
+# single pinned instance, like the solo games.
+
+ROOM_DIFF_START = 0.25
+ROOM_DIFF_END = 0.85
+MAX_ROOMS = 200
+ROOM_TTL_SEC = 3 * 60 * 60
+
+
+class Room:
+    def __init__(self, rid: str, code: str, host_id: str, host_name: str):
+        self.id = rid
+        self.code = code
+        self.host_id = host_id
+        self.host_name = host_name
+        self.status = "lobby"           # lobby → active → finished
+        self.created = time.monotonic()
+        self.scored = False
+        self.players: Dict[str, Dict[str, Any]] = {}
+
+        rng = random.Random()
+        self.rounds: List[Dict[str, Any]] = []
+        span = max(1, ROUNDS_PER_GAME - 1)
+        for i in range(ROUNDS_PER_GAME):
+            diff = ROOM_DIFF_START + (ROOM_DIFF_END - ROOM_DIFF_START) * (i / span)
+            rnd = _make_round(rng, diff)
+            rnd["difficulty"] = diff
+            self.rounds.append(rnd)
+
+    # -- players --
+    def join(self, uid: str, username: str) -> Dict[str, Any]:
+        if uid not in self.players:
+            self.players[uid] = {
+                "username": username, "idx": 0, "score": 0, "correct": 0,
+                "streak": 0, "best_streak": 0, "done": False,
+            }
+        else:
+            self.players[uid]["username"] = username
+        return self.players[uid]
+
+    @property
+    def all_done(self) -> bool:
+        return bool(self.players) and all(p["done"] for p in self.players.values())
+
+    # -- views --
+    def round_view(self, uid: str) -> Optional[Dict[str, Any]]:
+        p = self.players.get(uid)
+        if not p or p["done"] or self.status != "active":
+            return None
+        r = self.rounds[p["idx"]]
+        return {
+            "index": p["idx"], "total": len(self.rounds),
+            "question": r["q"], "label": r["label"],
+            "a": _public_stock(r["a"]), "b": _public_stock(r["b"]),
+        }
+
+    def standings(self) -> List[Dict[str, Any]]:
+        rows = [{
+            "user_id": uid,
+            "username": p["username"],
+            "score": p["score"],
+            "correct": p["correct"],
+            "progress": p["idx"],
+            "total": len(self.rounds),
+            "done": p["done"],
+            "streak": p["streak"],
+            "is_host": uid == self.host_id,
+        } for uid, p in self.players.items()]
+        rows.sort(key=lambda r: (-r["score"], -r["correct"], r["username"].lower()))
+        for i, r in enumerate(rows, start=1):
+            r["rank"] = i
+        return rows
+
+    # -- play --
+    def answer(self, uid: str, pick: str) -> Dict[str, Any]:
+        p = self.players[uid]
+        r = self.rounds[p["idx"]]
+        correct = pick == r["answer"]
+        points = 0
+        milestone = 0
+
+        if correct:
+            p["streak"] += 1
+            p["best_streak"] = max(p["best_streak"], p["streak"])
+            p["correct"] += 1
+            # Same shape as the solo scoring, but off the round's fixed
+            # difficulty so every player earns identically for the same call.
+            points = int(70 + 80 * r["difficulty"]) + 25 * (p["streak"] - 1)
+            p["score"] += points
+            if p["streak"] in (3, 5, 7, 10):
+                milestone = p["streak"]
+        else:
+            p["streak"] = 0
+
+        p["idx"] += 1
+        p["done"] = p["idx"] >= len(self.rounds)
+
+        out: Dict[str, Any] = {
+            "correct": correct, "answer": r["answer"],
+            "a_value": r["va"], "b_value": r["vb"], "label": r["label"],
+            "points": points, "score": p["score"], "streak": p["streak"],
+            "milestone": milestone, "done": p["done"],
+            "difficulty_tag": _difficulty_tag(r["difficulty"]),
+        }
+        if not p["done"]:
+            out["round"] = self.round_view(uid)
+        if self.all_done:
+            self.status = "finished"
+        return out
+
+
+_rooms: Dict[str, Room] = {}
+
+
+def _prune_rooms() -> None:
+    now = time.monotonic()
+    stale = [rid for rid, r in _rooms.items() if now - r.created > ROOM_TTL_SEC]
+    for rid in stale:
+        _rooms.pop(rid, None)
+    if len(_rooms) > MAX_ROOMS:
+        for rid in sorted(_rooms, key=lambda r: _rooms[r].created)[: len(_rooms) - MAX_ROOMS]:
+            _rooms.pop(rid, None)
+
+
+def _new_room_code() -> str:
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"   # no look-alike characters
+    while True:
+        code = "".join(random.choice(alphabet) for _ in range(5))
+        if not any(r.code == code for r in _rooms.values()):
+            return code
+
+
+def _find_room_by_code(code: str) -> Optional[Room]:
+    code = (code or "").strip().upper()
+    for r in _rooms.values():
+        if r.code == code:
+            return r
+    return None
+
+
+class _RoomResult:
+    """Adapter letting a room result reuse the solo progression/scoring path."""
+
+    def __init__(self, room: Room, uid: str, p: Dict[str, Any]):
+        self.id = room.id
+        self.uid = uid
+        self.username = p["username"]
+        self.score = p["score"]
+        self.correct = p["correct"]
+        self.total = len(room.rounds)
+        self.best_streak = p["best_streak"]
+
+
+async def _finalize_room(room: Room) -> None:
+    """Award XP and file ratings for every player, once."""
+    if room.scored or not room.all_done:
+        return
+    room.scored = True
+    for uid, p in room.players.items():
+        try:
+            await _finalize(_RoomResult(room, uid, p))
+        except Exception:
+            log.warning("Crash Ledger room finalize failed for %s", uid, exc_info=True)
+
+
+def _room_state(room: Room, uid: str) -> Dict[str, Any]:
+    return {
+        "room_id": room.id,
+        "code": room.code,
+        "my_id": uid,
+        "status": room.status,
+        "host_id": room.host_id,
+        "is_host": uid == room.host_id,
+        "joined": uid in room.players,
+        "total_rounds": len(room.rounds),
+        "standings": room.standings(),
+        "round": room.round_view(uid),
+        "me": room.players.get(uid),
+    }
+
+
+class RoomJoinRequest(BaseModel):
+    code: str
+
+
+@router.post("/room/create")
+async def room_create(user: User = Depends(current_user)):
+    """Open a room and take the host seat."""
+    _prune_rooms()
+    rid = str(uuid.uuid4())
+    room = Room(rid, _new_room_code(), str(user.id), user.username)
+    room.join(str(user.id), user.username)
+    _rooms[rid] = room
+    return _room_state(room, str(user.id))
+
+
+@router.post("/room/join")
+async def room_join(req: RoomJoinRequest, user: User = Depends(current_user)):
+    room = _find_room_by_code(req.code)
+    if room is None:
+        raise HTTPException(status_code=404, detail="No room with that code")
+    uid = str(user.id)
+    if room.status != "lobby" and uid not in room.players:
+        raise HTTPException(status_code=400, detail="That room has already started")
+    room.join(uid, user.username)
+    return _room_state(room, uid)
+
+
+@router.post("/room/{room_id}/start")
+async def room_start(room_id: str, user: User = Depends(current_user)):
+    room = _rooms.get(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found (it may have expired)")
+    if str(user.id) != room.host_id and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only the host can start the round")
+    if room.status == "lobby":
+        room.status = "active"
+    return _room_state(room, str(user.id))
+
+
+@router.get("/room/{room_id}/state")
+async def room_state(room_id: str, user: User = Depends(current_user)):
+    room = _rooms.get(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found (it may have expired)")
+    if room.status == "finished":
+        await _finalize_room(room)
+    return _room_state(room, str(user.id))
+
+
+@router.post("/room/{room_id}/answer")
+async def room_answer(room_id: str, req: AnswerRequest, user: User = Depends(current_user)):
+    room = _rooms.get(room_id)
+    if room is None:
+        raise HTTPException(status_code=404, detail="Room not found (it may have expired)")
+    uid = str(user.id)
+    if uid not in room.players:
+        raise HTTPException(status_code=403, detail="You're not in this room")
+    if room.status != "active":
+        raise HTTPException(status_code=400, detail="This room isn't running")
+    if room.players[uid]["done"]:
+        raise HTTPException(status_code=400, detail="You've finished all your rounds")
+    if req.pick not in ("a", "b"):
+        raise HTTPException(status_code=400, detail="pick must be 'a' or 'b'")
+
+    out = room.answer(uid, req.pick)
+    out["standings"] = room.standings()
+    if room.status == "finished":
+        await _finalize_room(room)
+    return out
 
 
 # ---- Page ----

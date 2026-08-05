@@ -8,6 +8,7 @@ drawdown penalty, so surviving the panic window matters as much as calling it.
 Episode data and all the scoring maths live in app/risk_episodes.py.
 """
 import datetime as dt
+import logging
 import random
 import string
 from pathlib import Path
@@ -18,8 +19,11 @@ from pydantic import BaseModel
 
 from app import db as db_module
 from app import risk_episodes as ep_lib
+from app import scores
 from app.auth import current_user
 from app.models import User
+
+log = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/risks", tags=["risks"])
 BASE_DIR = Path(__file__).parent
@@ -233,11 +237,31 @@ async def stop_game(game_id: str, user: User = Depends(current_user)):
     if str(user.id) != game.get("created_by") and not user.is_admin:
         raise HTTPException(status_code=403, detail="Only the host can end this round")
     if game["status"] == "active":
+        day = min(_current_day(game), game["days"] - 1)
         await doc.reference.update({
             "status": "finished",
-            "finished_day": min(_current_day(game), game["days"] - 1),
+            "finished_day": day,
+            "scored": True,
         })
+        if not game.get("scored"):
+            await _record_scores(game_id, game, day)
     return {"ok": True, "status": "finished"}
+
+
+async def _record_scores(game_id: str, game: dict, day: int) -> None:
+    """Feed each player's risk-adjusted score into the cross-game ratings."""
+    try:
+        episode = _episode_of(game)
+        trades = game.get("trades", {})
+        for p in game.get("players", []):
+            card = ep_lib.score_player(episode, trades.get(p["user_id"], []), day)
+            await scores.record_result(
+                "risks", p["user_id"], p.get("username", ""), card["score"],
+                game_id=game_id,
+                detail={"pnl": card["pnl"], "max_drawdown": card["max_drawdown"]},
+            )
+    except Exception:
+        log.warning("Risks score recording failed for game %s", game_id, exc_info=True)
 
 
 @router.post("/game/{game_id}/trade")
@@ -326,9 +350,12 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     if status == "finished" and game.get("finished_day") is not None:
         day = min(int(game["finished_day"]), total_days - 1)
 
-    # Auto-close once the clock runs past the last day.
+    # Auto-close once the clock runs past the last day. `scored` goes in the
+    # same write so concurrent pollers don't each record the round.
+    just_finished = False
     if finished and status == "active":
-        await doc.reference.update({"status": "finished", "finished_day": day})
+        await doc.reference.update({"status": "finished", "finished_day": day, "scored": True})
+        just_finished = not game.get("scored")
         status = "finished"
 
     out["status"] = status
@@ -358,6 +385,14 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     for i, row in enumerate(leaderboard, 1):
         row["rank"] = i
     out["leaderboard"] = leaderboard
+
+    if just_finished:
+        for row in leaderboard:
+            await scores.record_result(
+                "risks", row["user_id"], row["username"], row["score"],
+                game_id=game_id,
+                detail={"pnl": row["pnl"], "max_drawdown": row["max_drawdown"]},
+            )
 
     if any(p["user_id"] == uid for p in players):
         mine = ep_lib.score_player(episode, trades.get(uid, []), day)

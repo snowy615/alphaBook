@@ -32,6 +32,7 @@ from pydantic import BaseModel, Field
 
 from app import algo_engine as engine
 from app import db as db_module
+from app import scores
 from app.algo_engine import OrderRejected
 from app.algo_ratelimit import RateLimiter
 from app.auth import create_token, current_user
@@ -131,6 +132,15 @@ async def _persist_results(run: engine.Run) -> None:
         })
     except Exception:
         log.warning("Failed to persist Market Sim Py run %s", run.id, exc_info=True)
+
+    for r in run.results:
+        if r.get("is_bot"):
+            continue
+        await scores.record_result(
+            "market_sim_py", r.get("user_id", ""), r.get("username", ""), r.get("pnl", 0.0),
+            game_id=run.id,
+            detail={"fills": r.get("fills", 0), "volume": r.get("volume", 0)},
+        )
 
 
 # ---- Pages ----

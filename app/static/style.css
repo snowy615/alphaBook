@@ -5593,3 +5593,378 @@ body.tut-locked {
   right: 12px;
   z-index: 50;
 }
+
+/* ── Leaderboard ─────────────────────────────────────────────────────────────
+   The cross-game board. Ratings are shown as a number plus a bar so a column
+   can be scanned at a glance; the signed-in player's row is pinned visually
+   with a left accent rather than a fill, so it stays readable in both themes. */
+
+.lbx-strip {
+  margin-bottom: 20px;
+}
+
+.lbx-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.lbx-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 13px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+
+.lbx-tab:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.lbx-tab-on {
+  color: var(--text);
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+
+.lbx-tab-n {
+  font-size: 11px;
+  color: var(--muted);
+  border-left: 1px solid var(--border);
+  padding-left: 7px;
+}
+
+.lbx-scroll {
+  max-height: 62vh;
+  overflow: auto;
+}
+
+.lbx-empty {
+  text-align: center;
+  color: var(--muted);
+  padding: 38px 12px;
+}
+
+.lbx-rank {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.lbx-name {
+  font-weight: 600;
+}
+
+.lbx-mid {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.lbx-w-rank { width: 46px; }
+.lbx-w-rating { width: 190px; }
+.lbx-w-mid { width: 90px; }
+
+.lbx-me {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.lbx-me .lbx-rank,
+.lbx-me .lbx-name {
+  color: var(--brand);
+}
+
+.lbx-you {
+  margin-left: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  padding: 1px 5px;
+}
+
+.lbx-rating {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lbx-rating-num {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  min-width: 42px;
+}
+
+.lbx-prov {
+  color: var(--muted);
+}
+
+.lbx-bar {
+  flex: 1 1 auto;
+  height: 5px;
+  background: var(--border);
+  min-width: 40px;
+}
+
+.lbx-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+}
+
+.lbx-prov-tag {
+  font-size: 10px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+
+.lbx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.lbx-chip {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.lbx-chip-prov {
+  opacity: .55;
+}
+
+.lbx-up { color: var(--green); }
+.lbx-down { color: var(--red); }
+.lbx-flat { color: var(--muted); }
+
+.lbx-foot {
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+/* Profile scorecard */
+.lbx-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+
+.lbx-mode-card {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 13px 14px;
+}
+
+.lbx-mode-card h4 {
+  margin: 0 0 9px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.lbx-mode-rank {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.lbx-mode-meta {
+  margin-top: 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.lbx-feedback {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.lbx-feedback li {
+  font-size: 13px;
+  line-height: 1.5;
+  padding-left: 13px;
+  border-left: 2px solid var(--border);
+}
+
+.lbx-feedback li.kind-strength { border-left-color: var(--green); }
+.lbx-feedback li.kind-gap { border-left-color: var(--red); }
+.lbx-feedback li.kind-trend_up { border-left-color: var(--green); }
+.lbx-feedback li.kind-trend_down { border-left-color: var(--red); }
+.lbx-feedback li.kind-standing { border-left-color: var(--brand); }
+
+.lbx-untried {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.lbx-untried a {
+  font-size: 12px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.lbx-untried a:hover {
+  border-color: var(--brand);
+  color: var(--text);
+}
+
+/* ── Crash Call head-to-head ─────────────────────────────────────────────────
+   Rooms reuse the solo round view; the only additions are the lobby, a live
+   standings strip above the duel, and the final table. */
+
+.cl-h2h {
+  margin: 18px 0 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+}
+
+.cl-h2h-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.cl-h2h-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.cl-h2h-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.cl-h2h-or {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cl-h2h-row .msp-code-input {
+  width: 110px;
+  text-transform: uppercase;
+}
+
+.cl-room-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.cl-room-head h3 {
+  margin: 0 0 4px;
+}
+
+.cl-room-head p {
+  margin: 0;
+  font-size: 13px;
+}
+
+.cl-room-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .18em;
+  color: var(--brand);
+}
+
+.cl-room-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cl-host-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 1px 5px;
+}
+
+.cl-row-me {
+  box-shadow: inset 3px 0 0 var(--brand);
+}
+
+.cl-row-me td {
+  color: var(--brand);
+}
+
+.cl-live {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+
+.cl-live-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cl-live-me {
+  border-color: var(--brand);
+}
+
+.cl-live-rank {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.cl-live-name {
+  font-weight: 600;
+}
+
+.cl-live-score {
+  color: var(--brand);
+  font-weight: 700;
+}
+
+.cl-live-prog {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.cl-final-board {
+  margin: 16px auto 18px;
+  width: 100%;
+  max-width: 420px;
+}

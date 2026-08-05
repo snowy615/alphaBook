@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 
 from app import swe_prep_engine as engine
 from app import db as db_module
+from app import scores
 from app.swe_prep_sandbox import SandboxError, StrategyTimeout, check_strategy
 from app.auth import current_user
 from app.models import User
@@ -93,7 +94,16 @@ async def _persist_results(run: engine.Run) -> None:
             "bots": [r for r in run.results if r["is_bot"]],
         })
     except Exception:
-        log.warning("Failed to persist Market Sim Py run %s", run.id, exc_info=True)
+        log.warning("Failed to persist SWE Prep run %s", run.id, exc_info=True)
+
+    for r in run.results:
+        if r.get("is_bot"):
+            continue
+        await scores.record_result(
+            "swe_prep", r.get("user_id", ""), r.get("username", ""), r.get("pnl", 0.0),
+            game_id=run.id,
+            detail={"fills": r.get("fills", 0), "status": r.get("status", "")},
+        )
 
 
 # ---- Pages ----

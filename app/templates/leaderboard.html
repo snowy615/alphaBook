@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Leaderboard - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Leaderboard</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName"></span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="msp-hero">
+      <h2>Leaderboard</h2>
+      <p>Every mode scores you against everyone else who has played it, on a 0–100 rating. Your
+        overall is the average of the modes you've played, plus a small bonus for breadth — so
+        playing one mode repeatedly can't inflate it, but being good across several does.</p>
+    </div>
+
+    <div class="msp-strip lbx-strip">
+      <div class="msp-stat">
+        <div class="msp-stat-label">Players ranked</div>
+        <div class="msp-stat-value" id="lbTotal">—</div>
+      </div>
+      <div class="msp-stat">
+        <div class="msp-stat-label">Your rank</div>
+        <div class="msp-stat-value" id="lbMyRank">—</div>
+        <div class="msp-stat-sub" id="lbMyRankSub"></div>
+      </div>
+      <div class="msp-stat">
+        <div class="msp-stat-label">Your overall</div>
+        <div class="msp-stat-value" id="lbMyOverall">—</div>
+        <div class="msp-stat-sub" id="lbMyModes"></div>
+      </div>
+      <div class="msp-stat msp-stat-wide">
+        <div class="msp-stat-label">Best mode</div>
+        <div class="msp-stat-value" id="lbMyBest">—</div>
+        <div class="msp-stat-sub" id="lbMyBestSub"></div>
+      </div>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <div class="lbx-tabs" id="lbTabs"></div>
+
+    <div class="card msp-panel">
+      <div class="head">
+        <h3 id="lbBoardTitle">Overall</h3>
+        <span class="msp-muted" id="lbBoardNote"></span>
+      </div>
+      <div class="msp-panel-body msp-scroll lbx-scroll">
+        <table class="msp-table" id="lbTable">
+          <thead id="lbHead"></thead>
+          <tbody id="lbBody">
+            <tr>
+              <td colspan="6" class="lbx-empty">Loading…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <p class="msp-muted lbx-foot">
+      Ratings with fewer than <span id="lbMinGames">3</span> results are provisional and held near
+      50 until you've played enough for the number to mean something.
+    </p>
+  </div>
+
+  <script src="/static/leaderboard.js?v=1"></script>
+</body>
+
+</html>

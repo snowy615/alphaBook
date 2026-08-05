@@ -192,6 +192,28 @@
     </div>
   </div>
 
+  <!-- Performance scorecard -->
+  <div class="profile-card" id="scorecard-card" style="max-width:900px;">
+    <h1 style="margin-bottom:4px;">My Performance</h1>
+    <p class="subtitle" id="scOverallLine">Loading your ratings…</p>
+
+    <div id="scModes" class="lbx-card-grid"></div>
+
+    <div id="scFeedbackWrap" style="margin-top:22px;">
+      <h3 style="margin:0 0 10px;">What the numbers say</h3>
+      <ul class="lbx-feedback" id="scFeedback"></ul>
+    </div>
+
+    <div id="scUntriedWrap" style="margin-top:22px;">
+      <h3 style="margin:0 0 8px;">Not played yet</h3>
+      <div class="lbx-untried" id="scUntried"></div>
+    </div>
+
+    <div class="btn-row" style="margin-top:22px;">
+      <a class="btn primary" href="/leaderboard">Open the leaderboard</a>
+    </div>
+  </div>
+
   <!-- Analyst password modal -->
   <div class="modal-backdrop" id="pwModal">
     <div class="modal-box">
@@ -210,6 +232,83 @@
 
   <script src="/static/app.js"></script>
   <script>
+    // ── Performance scorecard ────────────────────────────────────────────────
+    (function () {
+      const escHtml = (s) => String(s ?? "")
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+
+      const fmtVal = (v, unit) => {
+        if (v === null || v === undefined || !isFinite(+v)) return "—";
+        const n = +v;
+        const body = Math.abs(n) >= 1000
+          ? n.toLocaleString(undefined, { maximumFractionDigits: 0 })
+          : n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+        if (unit === "$") return (n < 0 ? "-$" : "$") + body.replace("-", "");
+        if (unit === "%") return body + "%";
+        return body;
+      };
+
+      const TREND_LABEL = {
+        improving: "▲ improving", slipping: "▼ slipping",
+        steady: "― steady", new: "· new",
+      };
+
+      async function loadScorecard() {
+        let d;
+        try {
+          const res = await fetch("/api/me/scorecard", { credentials: "include" });
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          d = await res.json();
+        } catch (err) {
+          document.getElementById("scOverallLine").textContent =
+            "Could not load your ratings right now.";
+          return;
+        }
+
+        const line = document.getElementById("scOverallLine");
+        if (!d.found) {
+          line.textContent = "No scored games yet — play any mode and your ratings appear here.";
+          document.getElementById("scFeedbackWrap").style.display = "none";
+        } else {
+          line.innerHTML = `Overall <strong>${d.overall}</strong> · rank
+            <strong>#${d.rank}</strong> of ${d.total_players} ·
+            ${d.modes_played} of ${d.total_modes} modes · ${d.total_games} games played`;
+        }
+
+        document.getElementById("scModes").innerHTML = (d.modes || []).map((m) => `
+          <div class="lbx-mode-card">
+            <h4>
+              <span>${escHtml(m.label)}</span>
+              <span class="lbx-mode-rank">#${m.rank} of ${m.field}</span>
+            </h4>
+            <div class="lbx-rating">
+              <span class="lbx-rating-num${m.provisional ? " lbx-prov" : ""}">${(+m.rating).toFixed(1)}</span>
+              <span class="lbx-bar"><span class="lbx-bar-fill"
+                style="width:${Math.max(0, Math.min(100, +m.rating))}%"></span></span>
+            </div>
+            <div class="lbx-mode-meta">
+              <span>${escHtml(m.metric)} ${fmtVal(m.value, m.unit)}</span>
+              <span>best ${fmtVal(m.best, m.unit)}</span>
+              <span>${m.games} games</span>
+              <span>${TREND_LABEL[m.trend] || ""}</span>
+              ${m.provisional ? '<span class="lbx-prov-tag">provisional</span>' : ""}
+            </div>
+          </div>`).join("");
+
+        document.getElementById("scFeedback").innerHTML = (d.feedback || [])
+          .map((f) => `<li class="kind-${escHtml(f.kind)}">${escHtml(f.text)}</li>`).join("");
+
+        const untried = d.untried || [];
+        document.getElementById("scUntriedWrap").style.display = untried.length ? "" : "none";
+        document.getElementById("scUntried").innerHTML = untried
+          .map((u) => `<a href="${escHtml(u.href)}" title="${escHtml(u.blurb || "")}">${escHtml(u.label)}</a>`)
+          .join("");
+      }
+
+      loadScorecard();
+    })();
+
     const ANALYST_TRACKS = new Set(['Fundamental', 'Quant']);
     const TRACK_HINTS = {
       'Fundamental': '✓ Included in CV book as a Fundamental Analyst',

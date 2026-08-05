@@ -108,11 +108,18 @@
   (function () {
     if (!$("#clGame")) return;
 
-    const views = { start: $("#clStart"), round: $("#clRound"), final: $("#clFinal") };
+    const views = {
+      start: $("#clStart"), round: $("#clRound"), final: $("#clFinal"),
+      roomLobby: $("#clRoomLobby"),
+    };
     const msg = $("#clMsg");
     let gameId = null;
     let answering = false;
     let profile = null;
+    // Head-to-head state. `room` is null for solo play, which is what every
+    // shared function keys off.
+    let room = null;
+    let roomPoll = null;
 
     const TIER_ICON = { bronze: "🥉", silver: "🥈", gold: "🥇", platinum: "💠", diamond: "💎" };
 
@@ -269,7 +276,10 @@
       $("#clDuel").querySelectorAll(".cl-pick").forEach((b) => { b.disabled = true; });
       let res;
       try {
-        res = await postJSON(`/crash-ledger/game/${gameId}/answer`, { pick });
+        res = await postJSON(
+          room ? `/crash-ledger/room/${room.room_id}/answer`
+               : `/crash-ledger/game/${gameId}/answer`,
+          { pick });
       } catch (err) {
         showMsg(err.message);
         answering = false;
@@ -300,12 +310,178 @@
       $("#clStreak").textContent = res.streak ? `🔥 ${res.streak}` : "";
       setDiff(res.difficulty_tag);
 
+      if (room && res.standings) renderLive(markMe(res.standings));
+
       if (res.done) {
-        setTimeout(() => finish(res.final), 950);
+        if (room) {
+          setTimeout(() => waitForRoom(), 950);
+        } else {
+          setTimeout(() => finish(res.final), 950);
+        }
       } else {
         const next = $("#clNextBtn");
         next.classList.remove("hidden");
         next.onclick = () => renderRound(res.round, res.score, res.streak, res.difficulty_tag);
+      }
+    }
+
+    // ── Head-to-head rooms ──────────────────────────────────────────────
+    function stopRoomPoll() {
+      if (roomPoll) { clearInterval(roomPoll); roomPoll = null; }
+    }
+
+    function renderLive(standings) {
+      const el = $("#clLive");
+      if (!el) return;
+      if (!room || !standings || !standings.length) { el.classList.add("hidden"); return; }
+      el.classList.remove("hidden");
+      el.innerHTML = standings.map((r) => `
+        <span class="cl-live-chip${r.is_me ? " cl-live-me" : ""}">
+          <span class="cl-live-rank">${r.rank}</span>
+          <span class="cl-live-name">${esc(r.username)}</span>
+          <span class="cl-live-score">${r.score.toLocaleString()}</span>
+          <span class="cl-live-prog">${r.done ? "done" : `${r.progress}/${r.total}`}</span>
+        </span>`).join("");
+    }
+
+    function markMe(standings) {
+      const myId = room && room.my_id;
+      return (standings || []).map((r) => ({ ...r, is_me: r.user_id === myId }));
+    }
+
+    function renderRoomPlayers(state) {
+      $("#clRoomCodeOut").textContent = state.code;
+      const rows = markMe(state.standings);
+      $("#clRoomPlayers").innerHTML = `
+        <tbody>${rows.map((r) => `
+          <tr class="${r.is_me ? "cl-row-me" : ""}">
+            <td class="cl-num">${r.rank}</td>
+            <td>${esc(r.username)}${r.is_host ? ' <span class="cl-host-tag">host</span>' : ""}</td>
+            <td class="cl-num">${state.status === "lobby" ? "ready" : `${r.progress}/${r.total}`}</td>
+            <td class="cl-num">${r.score.toLocaleString()}</td>
+          </tr>`).join("")}</tbody>`;
+
+      const startBtn = $("#clRoomStart");
+      startBtn.classList.toggle("hidden", !(state.is_host && state.status === "lobby"));
+      $("#clRoomHint").textContent = state.status === "lobby"
+        ? (state.is_host
+            ? `Share code ${state.code}. Start when everyone's in.`
+            : `Waiting for the host to start. ${rows.length} in the room.`)
+        : "Round in progress.";
+    }
+
+    async function pollRoom() {
+      if (!room) return;
+      let state;
+      try {
+        state = await api(`/crash-ledger/room/${room.room_id}/state`);
+      } catch (err) {
+        showMsg(err.message);
+        stopRoomPoll();
+        return;
+      }
+      room = state;
+
+      if (state.status === "lobby") {
+        renderRoomPlayers(state);
+        show("roomLobby");
+      } else if (state.status === "active") {
+        if (state.round) {
+          // First time we see an active round, drop into it.
+          if (views.round.classList.contains("hidden")) {
+            show("round");
+            renderRound(state.round, state.me ? state.me.score : 0,
+                        state.me ? state.me.streak : 0, "");
+          }
+          renderLive(markMe(state.standings));
+        } else {
+          renderLive(markMe(state.standings));
+        }
+      } else if (state.status === "finished") {
+        finishRoom(state);
+      }
+    }
+
+    function waitForRoom() {
+      // This player is done; keep watching until everyone else finishes.
+      const reveal = $("#clReveal");
+      reveal.className = "cl-reveal cl-reveal-ok";
+      reveal.innerHTML = "<strong>All your rounds are in.</strong> Waiting for the rest of the room…";
+      reveal.classList.remove("hidden");
+      $("#clNextBtn").classList.add("hidden");
+    }
+
+    function finishRoom(state) {
+      stopRoomPoll();
+      const rows = markMe(state.standings);
+      const me = rows.find((r) => r.is_me);
+      const winner = rows[0];
+      $("#clFinalBody").innerHTML = `
+        <div class="cl-final-score">${me ? me.score.toLocaleString() : "—"}</div>
+        <div class="cl-final-label">your points · room ${esc(state.code)}</div>
+        <div class="cl-final-detail">
+          ${me ? `${me.correct} of ${me.total} correct` : ""}
+          ${winner ? ` &middot; winner <strong>${esc(winner.username)}</strong> on ${winner.score.toLocaleString()}` : ""}
+        </div>
+        <table class="cl-board cl-final-board"><tbody>
+          ${rows.map((r) => `
+            <tr class="${r.is_me ? "cl-row-me" : ""}">
+              <td class="cl-num">${r.rank}</td>
+              <td>${esc(r.username)}</td>
+              <td class="cl-num">${r.correct}/${r.total}</td>
+              <td class="cl-num">${r.score.toLocaleString()}</td>
+            </tr>`).join("")}
+        </tbody></table>
+        <button class="btn primary" id="clPlayAgain">Back to Crash Call</button>`;
+      $("#clPlayAgain").addEventListener("click", () => {
+        room = null;
+        show("start");
+        loadProfile();
+        loadBoard();
+      });
+      show("final");
+    }
+
+    async function enterRoom(state) {
+      room = state;
+      stopRoomPoll();
+      renderRoomPlayers(state);
+      show("roomLobby");
+      roomPoll = setInterval(pollRoom, 2000);
+    }
+
+    async function createRoom() {
+      msg.classList.add("hidden");
+      try {
+        enterRoom(await postJSON("/crash-ledger/room/create", {}));
+      } catch (err) {
+        showMsg(err.status === 401 ? "Please log in to open a room." : err.message);
+      }
+    }
+
+    async function joinRoom() {
+      const code = ($("#clRoomCode").value || "").trim().toUpperCase();
+      if (!code) { showMsg("Enter a room code."); return; }
+      msg.classList.add("hidden");
+      try {
+        enterRoom(await postJSON("/crash-ledger/room/join", { code }));
+      } catch (err) {
+        showMsg(err.status === 401 ? "Please log in to join a room." : err.message);
+      }
+    }
+
+    async function startRoom() {
+      if (!room) return;
+      try {
+        const state = await postJSON(`/crash-ledger/room/${room.room_id}/start`, {});
+        room = state;
+        if (state.round) {
+          show("round");
+          renderRound(state.round, 0, 0, "");
+          renderLive(markMe(state.standings));
+        }
+      } catch (err) {
+        showMsg(err.message);
       }
     }
 
@@ -356,6 +532,17 @@
     }
 
     $("#clPlayBtn").addEventListener("click", startGame);
+    $("#clRoomCreate")?.addEventListener("click", createRoom);
+    $("#clRoomJoin")?.addEventListener("click", joinRoom);
+    $("#clRoomCode")?.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") joinRoom();
+    });
+    $("#clRoomStart")?.addEventListener("click", startRoom);
+    $("#clRoomLeave")?.addEventListener("click", () => {
+      stopRoomPoll();
+      room = null;
+      show("start");
+    });
     loadProfile();
     loadBoard();
   })();

@@ -346,6 +346,67 @@ async def profile_page(request: Request):
     return templates.TemplateResponse("profile.html", {"request": request})
 
 
+@app.get("/leaderboard", include_in_schema=False)
+async def leaderboard_page(request: Request):
+    return templates.TemplateResponse(
+        "leaderboard.html",
+        {"request": request, "app_name": "AlphaBook"},
+    )
+
+
+async def _optional_user(request: Request):
+    """Current user if signed in, else None — the board is readable by anyone."""
+    from app.auth import COOKIE_NAME, get_user_from_token
+    token = request.cookies.get(COOKIE_NAME)
+    if not token:
+        return None
+    try:
+        return await get_user_from_token(token)
+    except Exception:
+        return None
+
+
+@app.get("/api/leaderboard")
+async def api_leaderboard(request: Request, limit: int = 100):
+    """Overall standings plus a board per mode."""
+    from app import scores
+
+    await scores.sync_market_sim()
+    data = await scores.leaderboard()
+    me = await _optional_user(request)
+    my_id = str(me.id) if me else None
+
+    def trim(rows):
+        out = []
+        for r in rows[:limit]:
+            row = dict(r)
+            row["is_me"] = bool(my_id) and row.get("user_id") == my_id
+            out.append(row)
+        return out
+
+    overall = trim(data["players"])
+    my_row = next((r for r in data["players"] if r["user_id"] == my_id), None) if my_id else None
+
+    return {
+        "modes": data["modes"],
+        "min_games_full": data["min_games_full"],
+        "overall": overall,
+        "mode_boards": {k: trim(v) for k, v in data["mode_boards"].items()},
+        "total_players": len(data["players"]),
+        "me": ({**my_row, "is_me": True} if my_row else None),
+        "signed_in": bool(my_id),
+    }
+
+
+@app.get("/api/me/scorecard")
+async def api_my_scorecard(user: User = Depends(current_user)):
+    """This player's ratings across every mode, with written feedback."""
+    from app import scores
+
+    await scores.sync_market_sim()
+    return await scores.scorecard(str(user.id))
+
+
 @app.get("/about", include_in_schema=False)
 async def about_page(request: Request):
     import datetime

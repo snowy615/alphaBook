@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import scores
 from app.auth import current_user
 from app.models import User
 
@@ -508,7 +509,25 @@ async def finish_player(game_id: str, user: User = Depends(current_user)):
 
     await doc.reference.update(update_data)
 
+    if all_finished and game_data.get("status") != "finished":
+        await _record_scores(game_id, game_data, results)
+
     return {"ok": True, "all_finished": all_finished}
+
+
+async def _record_scores(game_id: str, game_data: dict, results: dict) -> None:
+    """Feed each player's accuracy into the cross-game rating system."""
+    total = len(game_data.get("questions", [])) or 1
+    for p in game_data.get("players", []):
+        uid = p.get("user_id")
+        r = results.get(uid) or {}
+        accuracy = 100.0 * int(r.get("score", 0)) / total
+        await scores.record_result(
+            "mental_math", uid, p.get("username", ""), accuracy,
+            game_id=game_id,
+            detail={"score": int(r.get("score", 0)), "total": total,
+                    "difficulty": (game_data.get("settings") or {}).get("difficulty", "")},
+        )
 
 
 # ---- Game state (polling) ----

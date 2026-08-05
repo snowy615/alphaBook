@@ -15,6 +15,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import scores
 from app.auth import current_user
 from app.models import User
 
@@ -514,6 +515,17 @@ async def advance(game_id: str, user: User = Depends(current_user)):
             "poker_hands": poker_hands,
             "card_listings": card_listings,
         })
+
+        # Everyone on a team is scored on that team's final bankroll.
+        for team in teams:
+            hand = poker_hands.get(team["team_id"], {})
+            for uid in team.get("user_ids", []):
+                await scores.record_result(
+                    "poker_auction", uid, team.get("team_name", ""), team.get("money", 0),
+                    game_id=game_id,
+                    detail={"team_id": team["team_id"], "hand": hand.get("rank_name", "")},
+                )
+
         return {"ok": True, "action": "finished"}
 
     raise HTTPException(status_code=400, detail=f"Cannot advance from status={status}, phase={phase}")

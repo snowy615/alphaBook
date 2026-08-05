@@ -13,6 +13,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import scores
 from app.auth import current_user
 from app.models import User
 
@@ -454,8 +455,12 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     tick = min(int(elapsed), duration)
 
     # Auto-finish if time is up
+    just_finished = False
     if tick >= duration and status == "active":
-        await doc.reference.update({"status": "finished"})
+        # `scored` is set in the same write so concurrent pollers hitting this
+        # branch together don't each record the game.
+        await doc.reference.update({"status": "finished", "scored": True})
+        just_finished = not game_data.get("scored")
         status = "finished"
         result["status"] = "finished"
 
@@ -506,5 +511,14 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
     result["my_position"] = my_position
     result["my_pnl"] = my_pnl
     result["my_trades"] = trades.get(uid, [])
+
+    if just_finished:
+        for row in leaderboard:
+            await scores.record_result(
+                "headline", row["user_id"], row["username"], row["pnl"],
+                game_id=game_id,
+                detail={"template": game_data.get("template_name", ""),
+                        "position": row["position"]},
+            )
 
     return result

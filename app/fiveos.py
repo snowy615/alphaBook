@@ -3,6 +3,7 @@
 ====================
 Endpoints for creating, joining, playing, and managing 5Os games.
 """
+import logging
 import random
 import string
 import statistics
@@ -14,8 +15,11 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import scores
 from app.auth import current_user
 from app.models import User
+
+log = logging.getLogger("uvicorn.error")
 
 router = APIRouter(prefix="/5os", tags=["5os"])
 BASE_DIR = Path(__file__).parent
@@ -227,6 +231,7 @@ async def advance_round(game_id: str, user: User = Depends(current_user)):
         if current_round >= 5:
             # Game over
             await doc.reference.update({"status": "finished"})
+            await _record_scores(game_id, {**game_data, "status": "finished"})
             return {"ok": True, "status": "finished"}
         next_round = current_round + 1
     elif status == "finished":
@@ -504,6 +509,20 @@ def _compute_optimal_estimates(game_data: dict, user_id: str):
         }
 
     return optimal
+
+
+async def _record_scores(game_id: str, game_data: dict) -> None:
+    """Feed each player's final P&L into the cross-game rating system."""
+    try:
+        pnl = await _compute_pnl(game_id, game_data)
+        for uid, row in (pnl.get("players") or {}).items():
+            await scores.record_result(
+                "fiveos", uid, row.get("username", ""), row.get("pnl", 0.0),
+                game_id=game_id,
+                detail={"team": row.get("team", "")},
+            )
+    except Exception:
+        log.warning("5Os score recording failed for game %s", game_id, exc_info=True)
 
 
 async def _compute_pnl(game_id: str, game_data: dict):
