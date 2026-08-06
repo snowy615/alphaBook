@@ -61,10 +61,20 @@ class TestRoles:
 
 
 class TestOptIns:
-    def test_contact_is_off_by_default(self):
-        assert not mb.contactable({})
-        assert not mb.contactable({"membership": mb.M_QUANT_ANALYST})
+    def test_contact_is_on_by_default(self):
+        """Listing is opt-out, not opt-in: students join to be seen by firms.
+
+        This reverses the original rule. An opt-in nobody found left the
+        directory empty, which made the sponsorship pitch hollow.
+        """
+        assert mb.contactable({})
+        assert mb.contactable({"membership": mb.M_QUANT_ANALYST})
         assert mb.contactable({"opt_in_contact": True})
+
+    def test_opting_out_of_contact_is_respected(self):
+        assert not mb.contactable({"opt_in_contact": False})
+        assert not mb.contactable({"membership": mb.M_QUANT_ANALYST,
+                                   "opt_in_contact": False})
 
     def test_only_analysts_are_cv_book_eligible(self):
         for m in (mb.M_PUBLIC, mb.M_SPONSOR, mb.M_MEMBER,

@@ -149,8 +149,9 @@
       <input type="checkbox" id="optContact" onchange="saveOptIns()">
       <span>
         <strong>Let firms contact me</strong>
-        <span class="optin-sub">Approved recruiters can see your name, membership, graduation year,
-          performance and email address.</span>
+        <span class="optin-sub"><strong>On by default.</strong> Approved recruiters can see your
+          name, membership, graduation year, performance and email address. Untick to opt out —
+          you come off the directory immediately and stay off.</span>
       </span>
     </label>
 
@@ -432,7 +433,7 @@
         setCvStatus(data.cv_uploaded);
 
         // Opt-ins
-        document.getElementById('optContact').checked = !!data.opt_in_contact;
+        document.getElementById('optContact').checked = data.opt_in_contact !== false;
         document.getElementById('optCvBook').checked = !!data.cv_book_included;
         renderIdentity(data);
         renderRole(data);

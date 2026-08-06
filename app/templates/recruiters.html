@@ -28,14 +28,22 @@
   </div>
 
   <div class="container">
-    <div class="msp-hero">
-      <h2>Students open to being contacted</h2>
-      <p>Everyone here chose to appear: the opt-in is off by default and they can withdraw at any
-        time from their profile. Ratings are their percentile against every other player, so they
-        compare across cohorts.</p>
+    <div class="market-page-header">
+      <div>
+        <h2>Student directory</h2>
+        <p>Everyone on the platform who has not opted out, with how they actually perform.
+          Ratings are percentiles against every other player, so they compare across cohorts.</p>
+      </div>
+      <div class="rec-head-actions">
+        <a class="btn primary" id="exportBtn" href="/recruiters/export.xlsx">Export to Excel</a>
+        <button class="btn" id="mailAll" type="button">Email everyone shown</button>
+        <button class="btn ghost" id="copyAll" type="button">Copy addresses</button>
+      </div>
     </div>
 
     <div id="gate" class="msp-msg hidden"></div>
+
+    <div id="summary" class="rec-summary hidden"></div>
 
     <div id="tools" class="rec-tools hidden">
       <input id="search" type="search" class="msp-input rec-search"
@@ -43,18 +51,29 @@
       <select id="membershipFilter" class="msp-input rec-filter">
         <option value="">All memberships</option>
       </select>
+      <select id="yearFilter" class="msp-input rec-filter">
+        <option value="">Any graduation year</option>
+      </select>
       <select id="sort" class="msp-input rec-filter">
         <option value="rating">Sort: strongest first</option>
         <option value="name">Sort: name</option>
         <option value="year">Sort: graduation year</option>
       </select>
+      <label class="rec-check"><input type="checkbox" id="cvOnly"> CV only</label>
       <span class="msp-muted" id="count"></span>
+      <div class="rec-viewtoggle">
+        <button class="btn ghost is-on" id="viewTable" type="button">Table</button>
+        <button class="btn ghost" id="viewCards" type="button">Cards</button>
+      </div>
     </div>
 
-    <div id="grid" class="rec-grid"></div>
+    <div id="tableWrap" class="rec-tablewrap hidden">
+      <table class="rec-table" id="table"></table>
+    </div>
+    <div id="grid" class="rec-grid hidden"></div>
   </div>
 
-  <script src="/static/recruiters.js?v=1"></script>
+  <script src="/static/recruiters.js?v=2"></script>
 </body>
 
 </html>

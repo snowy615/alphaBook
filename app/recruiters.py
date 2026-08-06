@@ -18,6 +18,7 @@ Blacklisted accounts and staff never appear.
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
@@ -88,11 +89,8 @@ async def directory_page(request: Request):
     })
 
 
-@router.get("/directory")
-async def directory(user: User = Depends(current_user)):
-    """Opted-in students, with performance and contact details."""
-    await _require_recruiter(user)
-
+async def _rows_for_recruiter() -> Dict[str, Any]:
+    """Every contactable student, strongest first, with performance and contact."""
     board = await scores.leaderboard()
     ratings = {p["user_id"]: p for p in board["players"]}
     total = len(board["players"])
@@ -139,6 +137,107 @@ async def directory(user: User = Depends(current_user)):
         "total_ranked": total,
         "memberships": mb.MEMBERSHIPS,
     }
+
+
+@router.get("/directory")
+async def directory(user: User = Depends(current_user)):
+    """Opted-in students, with performance and contact details."""
+    await _require_recruiter(user)
+    return await _rows_for_recruiter()
+
+
+@router.get("/export.xlsx", include_in_schema=False)
+async def export_xlsx(user: User = Depends(current_user)):
+    """The directory as a spreadsheet, for working through offline."""
+    from fastapi.responses import StreamingResponse
+    import io
+
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    await _require_recruiter(user)
+    data = await _rows_for_recruiter()
+    students = data["students"]
+
+    # Which modes to give columns to: every one anybody has actually played,
+    # in the platform's own order, so the sheet is stable between exports.
+    played = {m["key"] for s in students for m in s["modes"]}
+    mode_keys = [k for k in scores.MODE_KEYS if k in played]
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Students"
+
+    headers = ["Name", "Username", "Email", "Membership", "Club", "Graduation",
+               "Overall rating", "Rank", "Modes played", "Games", "CV on file"]
+    headers += [scores.mode_meta(k)["label"] for k in mode_keys]
+    ws.append(headers)
+
+    head_fill = PatternFill("solid", fgColor="1B75BC")
+    for cell in ws[1]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = head_fill
+        cell.alignment = Alignment(vertical="center")
+
+    for s in students:
+        by_mode = {m["key"]: m for m in s["modes"]}
+        row = [
+            s.get("full_name") or s.get("username", ""),
+            s.get("username", ""),
+            s.get("email", ""),
+            s.get("membership", ""),
+            s.get("club", ""),
+            s.get("graduation_year") or "",
+            s.get("overall") if s.get("overall") is not None else "",
+            s.get("rank") or "",
+            s.get("modes_played", 0),
+            s.get("total_games", 0),
+            "yes" if s.get("cv_uploaded") else "no",
+        ]
+        for k in mode_keys:
+            m = by_mode.get(k)
+            # A provisional rating is marked, not hidden — the number is real
+            # but thin, and a recruiter should see which is which.
+            row.append(f"{m['rating']}*" if m and m["provisional"]
+                       else (m["rating"] if m else ""))
+        ws.append(row)
+
+    widths = [24, 18, 30, 20, 16, 12, 14, 8, 13, 8, 11] + [16] * len(mode_keys)
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+    if students:
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(students) + 1}"
+
+    notes = wb.create_sheet("About")
+    for line in [
+        ["AlphaBook — recruiter directory export"],
+        [],
+        ["Ratings are percentiles against every other player on the platform,"],
+        ["so they compare across cohorts. 0-100, higher is better."],
+        ["A * marks a provisional rating: too few games to be firm yet."],
+        [],
+        ["Students appear here unless they opted out in their settings."],
+        ["Contact them from your own inbox; nothing is sent by AlphaBook."],
+        [],
+        [f"Students in this export: {len(students)}"],
+        [f"Ranked players on the platform: {data['total_ranked']}"],
+        [f"Generated: {dt.datetime.now(dt.timezone.utc):%Y-%m-%d %H:%M UTC}"],
+    ]:
+        notes.append(line)
+    notes.column_dimensions["A"].width = 70
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    stamp = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition":
+                 f'attachment; filename="alphabook-students-{stamp}.xlsx"'},
+    )
 
 
 @router.get("/students/{user_id}/cv", include_in_schema=False)

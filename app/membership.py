@@ -109,8 +109,17 @@ def can_host(data: Dict[str, Any]) -> bool:
 
 
 def contactable(data: Dict[str, Any]) -> bool:
-    """Whether this user agreed to appear in the recruiter directory."""
-    return bool((data or {}).get("opt_in_contact"))
+    """Whether this user appears in the recruiter directory.
+
+    On by default: students join to be seen by firms, and an opt-in that
+    nobody finds leaves the directory empty and the sponsorship pitch hollow.
+    A missing value therefore means yes; only an explicit False opts out, so
+    turning it off in settings is durable and is never re-defaulted on.
+    """
+    if data is None:
+        return False
+    value = data.get("opt_in_contact")
+    return True if value is None else bool(value)
 
 
 def cv_book_included(data: Dict[str, Any]) -> bool:

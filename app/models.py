@@ -22,7 +22,8 @@ class User(BaseModel):
     membership: Optional[str] = None            # e.g. "Quant Analyst"
     club: Optional[str] = None                  # e.g. "Alpha Fund"
     # Opt-ins, both default off; None on CV book means "before the opt-in existed"
-    opt_in_contact: bool = Field(default=False)
+    # On by default; a student turns it off in settings (see membership.contactable).
+    opt_in_contact: bool = Field(default=True)
     opt_in_cv_book: Optional[bool] = None
     # Pending Recruiter/Host request: {role, firm, note, status, created_at}
     role_request: Optional[dict] = None
