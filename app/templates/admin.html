@@ -1032,8 +1032,16 @@
         });
 
         if (res.ok) {
-          showToast('User deleted');
-          setTimeout(() => location.reload(), 600);
+          const data = await res.json();
+          // Say whether the email is actually free again — a delete that left
+          // the Firebase sign-in record behind used to report plain success.
+          showToast(data.message || 'User deleted');
+          if (data.auth_removed === false && data.auth_note) {
+            alert(`User removed, but ${data.auth_note}.\n\n` +
+                  `That email may not be reusable for a new sign-up until the ` +
+                  `record is cleared in the Firebase console.`);
+          }
+          setTimeout(() => location.reload(), 900);
         } else {
           const data = await res.json();
           alert('Error: ' + (data.detail || 'Failed to delete user'));

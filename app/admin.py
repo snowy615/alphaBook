@@ -1,17 +1,23 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
+from firebase_admin import auth as fb_auth
 from app import db as db_module
 from app import membership as mb
+from app import scores
 from app.auth import current_user
 from app.models import User, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 from pydantic import BaseModel
+import asyncio
 import datetime as dt
 import io
+import logging
 import uuid
 from decimal import Decimal
 from typing import Dict, Optional
+
+log = logging.getLogger("uvicorn.error")
 
 router = APIRouter()
 BASE_DIR = Path(__file__).parent
@@ -614,10 +620,55 @@ async def delete_user(
             await d.reference.delete()
             t_ids.add(d.id)
 
+    # Ratings and XP live outside the user document, so deleting only the user
+    # left them on the leaderboards as a ghost.
+    leftovers = [
+        ("player_scores", user_id),
+        ("crash_ledger_profiles", user_id),
+    ]
+    for coll, doc_id in leftovers:
+        try:
+            await db_module.db.collection(coll).document(str(doc_id)).delete()
+        except Exception as exc:
+            log.warning("delete_user: could not remove %s/%s: %s", coll, doc_id, exc)
+
     # Delete user
     await doc_ref.delete()
 
-    return {"ok": True, "message": f"User {u_data.get('username')} deleted"}
+    # The account also exists in Firebase Auth, and that is what owns the email
+    # address. Without this the record was gone from Firestore but signing up
+    # again with the same email failed with "email already exists".
+    auth_uid = u_data.get("firebase_uid") or user_id
+    auth_removed = False
+    auth_note = ""
+    try:
+        await asyncio.to_thread(fb_auth.delete_user, auth_uid)
+        auth_removed = True
+    except fb_auth.UserNotFoundError:
+        # Accounts created through /auth/direct never had a Firebase record.
+        auth_note = "no Firebase sign-in record to remove"
+    except Exception as exc:
+        log.error("delete_user: Firebase Auth delete failed for %s: %s", auth_uid, exc)
+        auth_note = f"Firebase sign-in record could NOT be removed ({exc})"
+
+    try:
+        scores.invalidate_cache()
+    except Exception:
+        pass
+
+    username = u_data.get("username")
+    message = f"User {username} deleted"
+    if auth_removed:
+        message += " — the email address is free to reuse"
+    elif auth_note:
+        message += f" — {auth_note}"
+
+    return {
+        "ok": True,
+        "message": message,
+        "auth_removed": auth_removed,
+        "auth_note": auth_note,
+    }
 
 
 @router.post("/admin/reset-all")
