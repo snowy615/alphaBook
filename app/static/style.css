@@ -4852,6 +4852,20 @@ body {
   }
 }
 
+.admin-role {
+  padding: 5px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.admin-role:disabled {
+  opacity: .5;
+}
+
 /* ============================================================
    Guided learning: placement quiz, path, next-step strip
    ============================================================ */

@@ -206,6 +206,7 @@ async def admin_dashboard(
             "trades": trade_counts.get(uid, 0),
             "is_admin": u.is_admin,
             "is_blacklisted": u.is_blacklisted,
+            "role": mb.role_of(u.model_dump()),
             "created_at": u.created_at
         })
 
@@ -276,7 +277,8 @@ async def admin_dashboard(
         "leaderboard": leaderboard,
         "total_users": len(users),
         "total_trades": total_trades,
-        "games": games
+        "games": games,
+        "roles": mb.ROLES,
     })
 
 

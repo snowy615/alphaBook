@@ -17,12 +17,14 @@ Blacklisted accounts and staff never appear.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.templating import Jinja2Templates
+from firebase_admin import auth as fb_auth
 
 from app import db as db_module
 from app import membership as mb
@@ -35,6 +37,35 @@ log = logging.getLogger("uvicorn.error")
 router = APIRouter(prefix="/recruiters", tags=["recruiters"])
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+async def _contact_email(doc_id: str, data: Dict[str, Any]) -> str:
+    """The student's address, healing the record if Firestore has not got one.
+
+    `users.email` only started being written when this directory was built, and
+    older documents fill in lazily on the owner's next sign-in. A student who
+    opted in but has not signed in since would appear here with no way to reach
+    them — which defeats the point. Firebase Auth has held the address all
+    along, so read it from there and write it back, once.
+    """
+    email = (data or {}).get("email")
+    if email:
+        return email
+
+    uid = str((data or {}).get("firebase_uid") or doc_id)
+    try:
+        email = await asyncio.to_thread(lambda: fb_auth.get_user(uid).email)
+    except Exception as exc:
+        log.info("recruiters: no Firebase address for %s: %s", uid, exc)
+        return ""
+
+    if not email:
+        return ""
+    try:
+        await db_module.db.collection("users").document(doc_id).update({"email": email})
+    except Exception as exc:
+        log.warning("recruiters: could not cache email for %s: %s", doc_id, exc)
+    return email
 
 
 async def _require_recruiter(user: User) -> Dict[str, Any]:
@@ -91,7 +122,7 @@ async def directory(user: User = Depends(current_user)):
 
         rows.append({
             **mb.public_profile(d.id, data),
-            "email": data.get("email") or "",
+            "email": await _contact_email(d.id, data),
             "cv_uploaded": bool(data.get("cv_blob_path")),
             "in_cv_book": mb.cv_book_included(data),
             "overall": me["overall"] if me else None,

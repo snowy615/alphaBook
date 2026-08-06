@@ -336,6 +336,7 @@
             <th>Orders</th>
             <th>Trades</th>
             <th>Status</th>
+            <th>Role</th>
             <th>Joined</th>
             <th>Actions</th>
           </tr>
@@ -363,6 +364,7 @@
               <span class="badge badge-active">Active</span>
               {% endif %}
             </td>
+            <td><select class="admin-role" data-user="{{ u.id }}" onchange="setUserRole(this)">{% for r in roles %}<option value="{{ r.key }}" {% if (u.role or "general") == r.key %}selected{% endif %}>{{ r.label }}</option>{% endfor %}</select></td>
             <td>{{ u.created_at.strftime('%Y-%m-%d') }}</td>
             <td>
               {% if not u.is_admin %}
@@ -1019,6 +1021,35 @@
         }
       } catch (err) {
         alert('Network error: ' + err.message);
+      }
+    }
+
+    async function setUserRole(sel) {
+      const role = sel.value;
+      const prev = sel.dataset.prev || '';
+      if (role === 'recruiter' && !confirm(
+          'Recruiters can see the contact details and performance of every ' +
+          'student who opted in. Grant that?')) {
+        if (prev) sel.value = prev;
+        return;
+      }
+      sel.disabled = true;
+      try {
+        const res = await fetch(`/admin/users/${sel.dataset.user}/role`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'include',
+          body: JSON.stringify({ role }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.detail || 'Failed to set role');
+        sel.dataset.prev = role;
+        showToast(`Role set to ${role}`);
+      } catch (err) {
+        alert('Error: ' + err.message);
+        if (prev) sel.value = prev;
+      } finally {
+        sel.disabled = false;
       }
     }
 
