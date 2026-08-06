@@ -973,3 +973,6 @@ app.include_router(competitions.router)
 from app import recruiters
 app.include_router(recruiters.router)
 
+from app import learning_routes
+app.include_router(learning_routes.router)
+

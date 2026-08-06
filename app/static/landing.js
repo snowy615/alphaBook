@@ -59,6 +59,7 @@
                "real prices. A market-maker bot always quotes, so it works solo too.",
         chips: ["Multiplayer", "Live order book", marketGames.length + " stocks"],
         href: "/market",
+        mode: "market_sim",
         featured: true,
       } : null,
       {
@@ -67,6 +68,7 @@
         blurb: "Write a trading bot, run it on your own machine, and trade it against everyone else's for ten minutes.",
         chips: ["Multiplayer", "Python", "10 min"],
         href: "/market-sim-py",
+        mode: "market_sim_py",
       },
       {
         icon: ICON.terminal,
@@ -74,6 +76,7 @@
         blurb: "The same market, but you write Python in the browser and the server runs it. Nothing to install.",
         chips: ["Solo", "Sandboxed", "No setup"],
         href: "/swe-prep",
+        mode: "swe_prep",
       },
       {
         icon: ICON.risk,
@@ -81,6 +84,7 @@
         blurb: "Run a market-neutral book through a synthetic crash. Beta is published, the panic is not.",
         chips: ["Multiplayer", "Portfolio", "Drawdown scored"],
         href: "/risks",
+        mode: "risks",
       },
       {
         icon: ICON.news,
@@ -88,6 +92,7 @@
         blurb: "News hits the wire and the price moves. Read the story and take a position before the bell.",
         chips: ["Multiplayer", "5 min", "Futures"],
         href: "/headline",
+        mode: "headline",
       },
       {
         icon: ICON.stats,
@@ -95,6 +100,7 @@
         blurb: "Estimate the five statistics of a hidden hand of cards, then trade your estimate against the room.",
         chips: ["Multiplayer", "Calibration", "5 rounds"],
         href: "/5os",
+        mode: "fiveos",
       },
       {
         icon: ICON.cards,
@@ -102,6 +108,7 @@
         blurb: "Bid sealed-envelope for cards, build the best hand, then trade the hands in a post-auction market.",
         chips: ["Teams", "Auction", "Pricing"],
         href: "/poker-auction",
+        mode: "poker_auction",
       },
       {
         icon: ICON.calc,
@@ -109,6 +116,7 @@
         blurb: "Timed arithmetic drills at the speed a trading floor expects. Configurable types and difficulty.",
         chips: ["Solo or group", "Timed", "Adjustable"],
         href: "/mental-math",
+        mode: "mental_math",
       },
       {
         icon: ICON.crash,
@@ -116,10 +124,14 @@
         blurb: "Make a market on how real S&P 500 names behaved in past crashes. Quote a bid and an ask; the house trades against you at the true number.",
         chips: ["Market making", "6 crashes", "Head-to-head"],
         href: "/crash-ledger",
+        mode: "crash_ledger",
       },
     ].filter(Boolean);
 
-    modes.forEach((m) => grid.appendChild(createCard(m)));
+    // Signed-in players with a level see their path first and the rest folded
+    // away. Nine cards at once is the thing that makes this place feel like a
+    // menu instead of a course.
+    applyLearningOrder(modes, grid);
 
     // Instructor-created games sit after the built-in modes.
     (groups.other || []).forEach((game) => {
@@ -136,6 +148,54 @@
     if (modesEl) modesEl.textContent = String(modes.length);
     const stocksEl = $("#factStocks");
     if (stocksEl && marketGames.length) stocksEl.textContent = String(marketGames.length);
+  }
+
+  // Order and fold the board around the player's path, if they have one.
+  async function applyLearningOrder(modes, grid) {
+    const render = (list, opts) => {
+      list.forEach((m) => grid.appendChild(createCard({ ...m, ...(opts || {}) })));
+    };
+
+    let plan = null;
+    if (window.AlphaLearn) {
+      try { plan = await window.AlphaLearn.state(); } catch { plan = null; }
+    }
+
+    if (!plan || !plan.placed) {
+      render(modes);
+      return;
+    }
+
+    const onPath = plan.steps.map((s) => s.mode);
+    const nextMode = plan.next ? plan.next.mode : null;
+    const seen = new Set();
+    const path = [];
+    onPath.forEach((key) => {
+      if (seen.has(key)) return;
+      const m = modes.find((x) => x.mode === key);
+      if (m) { seen.add(key); path.push(m); }
+    });
+    const rest = modes.filter((m) => !seen.has(m.mode));
+
+    render(path.map((m) => ({ ...m, featured: m.mode === nextMode })));
+
+    if (!rest.length) return;
+
+    // Everything else stays one click away rather than on screen by default.
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "btn ghost mode-more";
+    more.textContent = `Show the other ${rest.length} mode${rest.length === 1 ? "" : "s"}`;
+    more.addEventListener("click", () => {
+      more.remove();
+      render(rest);
+    });
+    grid.parentElement.appendChild(more);
+
+    const note = document.querySelector(".board-head .board-note");
+    if (note) note.textContent = `Your ${plan.level_label.toLowerCase()} path · in order`;
+    const head = document.querySelector(".board-head h2");
+    if (head) head.textContent = "Your path";
   }
 
   function createCard({ icon, name, blurb, chips, href, featured }) {

@@ -82,7 +82,8 @@
               });
 
               if (loginRes.ok) {
-                window.location.href = "/";
+                // New accounts go to placement so they get a path, not a menu.
+                window.location.href = "/welcome";
               } else {
                 const err = await loginRes.json();
                 alert("Account created but backend sync failed: " + (err.message || err.detail || "Unknown error"));

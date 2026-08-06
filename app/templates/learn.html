@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Learning path - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Learning path</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/leaderboard" class="btn ghost">Leaderboard</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+      <form method="post" action="/logout" style="display:inline">
+        <button type="submit" class="btn ghost">Logout</button>
+      </form>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="market-page-header">
+      <div>
+        <h2>Your path</h2>
+        <p>One route through the platform, in order. Each step is a mode, and it ticks
+          off once you finish a scored game in it.</p>
+      </div>
+      <div class="learn-levelpick" id="levelPick"></div>
+    </div>
+
+    <div id="learnNext" class="learn-next hidden"></div>
+
+    <div id="learnSteps" class="learn-steps"></div>
+
+    <div class="learn-tiers">
+      <h3>The three levels</h3>
+      <div class="learn-tier-grid">
+        {% for lv in levels %}
+        <div class="learn-tier" data-level="{{ lv.key }}">
+          <div class="learn-tier-head">
+            <h4>{{ lv.label }}</h4>
+            <span>{{ lv.steps }} steps</span>
+          </div>
+          <p>{{ lv.blurb }}</p>
+          <button class="btn ghost learn-switch" data-level="{{ lv.key }}" type="button">
+            Switch to {{ lv.label }}</button>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="msp-muted learn-foot">Placed wrong? <a href="/welcome">Retake the questions</a>,
+        or just switch level above — nothing is locked.</p>
+    </div>
+  </div>
+
+  <script src="/static/learning.js"></script>
+</body>
+
+</html>

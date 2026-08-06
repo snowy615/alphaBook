@@ -66,6 +66,8 @@
       </aside>
     </section>
 
+    <div id="nextStep" class="hidden"></div>
+
     <section class="modes" id="modes">
       <div class="board-head">
         <h2>Choose a mode</h2>
@@ -83,6 +85,7 @@
     window.SYMBOLS = {{ symbols_json|safe }};
     window.GAME_GROUPS = {{ game_groups_json|safe }};
   </script>
+  <script src="/static/learning.js"></script>
   <script src="/static/landing.js"></script>
 </body>
 

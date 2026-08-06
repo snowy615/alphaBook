@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Where to start - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body class="wiz-body">
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Getting started</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/" class="btn ghost" id="skipLink">Skip for now</a>
+    </div>
+  </div>
+
+  <div class="container wiz-container">
+    <div class="wiz-head">
+      <span class="wiz-eyebrow">Four questions · about 30 seconds</span>
+      <h2>Where should you start?</h2>
+      <p>There are nine modes here and they are not all for beginners. Answer these and
+        we'll put you on a path instead of a menu. You can change it later.</p>
+    </div>
+
+    <div id="wizCard" class="wiz-card">
+      <div class="wiz-progress" id="wizProgress"></div>
+      <div class="wiz-qbody">
+        <h3 id="wizPrompt">—</h3>
+        <p class="wiz-help" id="wizHelp"></p>
+        <div class="wiz-options" id="wizOptions"></div>
+      </div>
+      <div class="wiz-foot">
+        <button class="btn ghost wiz-back" id="wizBack" type="button">Back</button>
+        <span class="wiz-step" id="wizStep"></span>
+      </div>
+    </div>
+
+    <div id="wizResult" class="wiz-result hidden">
+      <span class="wiz-eyebrow">Your starting point</span>
+      <h2 id="resLevel">—</h2>
+      <p id="resWhy" class="wiz-why"></p>
+      <p id="resBlurb" class="wiz-blurb"></p>
+
+      <div class="wiz-path" id="resPath"></div>
+
+      <div class="wiz-actions">
+        <a class="btn primary" id="resStart" href="/learn">Start step 1</a>
+        <a class="btn" href="/learn">See the whole path</a>
+        <button class="btn ghost" id="resRetake" type="button">Retake</button>
+      </div>
+      <p class="wiz-note">Not right? Pick a different level on the
+        <a href="/learn">learning path</a> at any time.</p>
+    </div>
+  </div>
+
+  <script>
+    window.QUESTIONS = {{ questions|tojson }};
+  </script>
+  <script src="/static/learning.js"></script>
+</body>
+
+</html>

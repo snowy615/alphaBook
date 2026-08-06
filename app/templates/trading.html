@@ -270,6 +270,20 @@
       title: "Market Simulation",
       label: "How to play",
       fullRulesHref: "/about",
+      tour: [
+      { target: ".ladder", title: "The order book",
+        body: "Asks above, bids below. Each row is real resting size at that price — the top rows are what you'd trade against right now." },
+      { target: "#open-order", title: "Place an order",
+        body: "Opens the ticket. Set your own price and it rests until someone hits it; take the price on screen and you trade immediately." },
+      { target: "#position-summary", title: "Your position",
+        body: "How many shares you're holding and what it's worth at the current mid. Green is long, red is short." },
+      { target: "#my-orders-card", title: "Working orders",
+        body: "Orders you've placed that haven't filled yet. Cancel any of them from here." },
+      { target: "#recent-trades-card", title: "The tape",
+        body: "Every trade that just printed, newest first — including the market-maker bot's. This is how you see where the action is." },
+
+      ],
+
       steps: [
       { heading: "This is a real order book", body: "Bids and asks are matched on strict price and time priority, exactly as an exchange does it. Prices are anchored to the real market." },
       { heading: "Two ways to trade", body: "<p>Put a <strong>limit order</strong> at your price and wait to be filled, or <strong>cross the spread</strong> to trade right now at someone else's price.</p><p>A market-maker bot always quotes both sides, so you can trade even with nobody else in the room.</p>" },

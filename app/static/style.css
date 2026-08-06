@@ -477,6 +477,13 @@ body {
   padding: 3px 8px;
 }
 
+.mode-more {
+  display: block;
+  margin: 14px auto 0;
+  padding: 9px 18px;
+  font-size: 13px;
+}
+
 .mode-go {
   position: absolute;
   top: 20px;
@@ -4846,6 +4853,519 @@ body {
 }
 
 /* ============================================================
+   Guided learning: placement quiz, path, next-step strip
+   ============================================================ */
+.wiz-body {
+  min-height: 100vh;
+}
+
+.wiz-container {
+  max-width: 760px;
+  padding-bottom: 60px;
+}
+
+.wiz-head {
+  padding: 34px 0 22px;
+}
+
+.wiz-eyebrow {
+  display: block;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .1em;
+  color: var(--brand);
+  margin-bottom: 10px;
+}
+
+.wiz-head h2 {
+  margin: 0 0 10px;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -.015em;
+}
+
+.wiz-head p {
+  margin: 0;
+  max-width: 60ch;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.wiz-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  transition: opacity .15s ease;
+}
+
+.wiz-card.is-busy {
+  opacity: .5;
+  pointer-events: none;
+}
+
+.wiz-progress {
+  display: flex;
+  gap: 4px;
+  padding: 14px 20px 0;
+}
+
+.wiz-progress span {
+  flex: 1;
+  height: 3px;
+  background: var(--border);
+}
+
+.wiz-progress span.is-on {
+  background: var(--brand);
+}
+
+.wiz-progress span.is-done {
+  background: var(--green);
+}
+
+.wiz-qbody {
+  padding: 20px 20px 6px;
+}
+
+.wiz-qbody h3 {
+  margin: 0 0 6px;
+  font-size: 19px;
+  line-height: 1.3;
+}
+
+.wiz-help {
+  margin: 0 0 18px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.wiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.wiz-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 16px;
+  text-align: left;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+
+.wiz-option:hover,
+.wiz-option:focus-visible {
+  border-color: var(--brand);
+  background: var(--raised);
+  outline: none;
+}
+
+.wiz-option.is-on {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+
+.wiz-option-tick {
+  color: var(--brand);
+  opacity: 0;
+  transition: opacity .12s ease;
+}
+
+.wiz-option:hover .wiz-option-tick {
+  opacity: 1;
+}
+
+.wiz-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 16px 20px;
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.wiz-step {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* -- result -- */
+.wiz-result {
+  padding: 26px 0 0;
+}
+
+.wiz-result h2 {
+  margin: 0 0 8px;
+  font-size: 32px;
+  letter-spacing: -.015em;
+}
+
+.wiz-why {
+  margin: 0 0 6px;
+  font-size: 13.5px;
+  color: var(--brand);
+}
+
+.wiz-blurb {
+  margin: 0 0 22px;
+  max-width: 62ch;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+
+.wiz-path {
+  border: 1px solid var(--border);
+  margin-bottom: 22px;
+}
+
+.wiz-path-step {
+  display: grid;
+  grid-template-columns: 34px 1fr auto;
+  gap: 14px;
+  align-items: baseline;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.wiz-path-step:last-child {
+  border-bottom: none;
+}
+
+.wiz-path-num {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--brand);
+}
+
+.wiz-path-step strong {
+  display: block;
+  font-size: 14px;
+  margin-bottom: 3px;
+}
+
+.wiz-path-why {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.wiz-path-mins {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.wiz-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.wiz-note {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* -- /learn -- */
+.learn-levelpick {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.learn-level-badge {
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  padding: 4px 10px;
+}
+
+.learn-level-prog {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.learn-bar {
+  width: 130px;
+  height: 4px;
+  background: var(--border);
+}
+
+.learn-bar-fill {
+  height: 100%;
+  background: var(--green);
+  transition: width .4s ease;
+}
+
+.learn-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 18px 22px;
+  margin-bottom: 20px;
+  background: var(--raised);
+  border: 1px solid var(--brand);
+}
+
+.learn-next-eyebrow,
+.next-eyebrow {
+  display: block;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--brand);
+  margin-bottom: 5px;
+}
+
+.learn-next strong {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.learn-next p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 70ch;
+}
+
+.learn-steps {
+  border-top: 1px solid var(--border);
+  margin-bottom: 40px;
+}
+
+.learn-step {
+  display: grid;
+  grid-template-columns: 40px 1fr auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.learn-step.is-next {
+  background: var(--brand-wash);
+}
+
+.learn-step-num {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+}
+
+.learn-step.is-done .learn-step-num {
+  border-color: var(--green);
+  color: var(--green);
+}
+
+.learn-step.is-next .learn-step-num {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.learn-step-top {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+
+.learn-step-top strong {
+  font-size: 15px;
+}
+
+.learn-step-mode {
+  font-size: 11px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 2px 7px;
+}
+
+.learn-step-flag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--brand);
+}
+
+.learn-step-why {
+  margin: 0 0 4px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 74ch;
+}
+
+.learn-step-teaches {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.learn-step-teaches span {
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  font-size: 9.5px;
+  margin-right: 6px;
+}
+
+.learn-step-go {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.learn-step-mins {
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.learn-tiers h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.learn-tier-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.learn-tier {
+  padding: 16px 18px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+
+.learn-tier.is-on {
+  border-color: var(--brand);
+  background: var(--raised);
+}
+
+.learn-tier-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.learn-tier-head h4 {
+  margin: 0;
+  font-size: 14.5px;
+}
+
+.learn-tier-head span {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.learn-tier p {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.learn-foot {
+  font-size: 12.5px;
+  padding-bottom: 40px;
+}
+
+/* -- landing strip -- */
+.next-strip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+  padding: 18px 22px 20px;
+  background: var(--raised);
+  border: 1px solid var(--brand);
+  margin-bottom: 26px;
+}
+
+.next-strip strong {
+  display: block;
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.next-strip p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--muted);
+  max-width: 68ch;
+}
+
+.next-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.next-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: auto;
+}
+
+@media (max-width: 700px) {
+  .learn-step {
+    grid-template-columns: 32px 1fr;
+  }
+
+  .learn-step-go {
+    grid-column: 2;
+    justify-content: flex-start;
+  }
+
+  .learn-next,
+  .next-strip {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+/* ============================================================
    Pre-game tutorial (tutorial.js)
    ============================================================ */
 .tut-overlay {
@@ -5016,6 +5536,11 @@ body.tut-locked {
   visibility: hidden;
 }
 
+.tut-tourbtn {
+  font-size: 12.5px;
+  padding: 6px 12px;
+}
+
 .tut-full {
   font-size: 12.5px;
   color: var(--brand);
@@ -5034,6 +5559,87 @@ body.tut-locked {
   border: 1px solid var(--border-strong);
   padding: 1px 5px;
   color: var(--text);
+}
+
+/* -- anchored tour: spotlight one control, explain it in a sentence -- */
+.tut-tour {
+  position: fixed;
+  inset: 0;
+  z-index: 95;
+  cursor: pointer;
+}
+
+/* The hole. A huge spread shadow dims everything except this rectangle. */
+.tut-spot {
+  position: fixed;
+  box-shadow: 0 0 0 9999px rgba(4, 8, 15, .74);
+  border: 1px solid var(--brand);
+  pointer-events: none;
+  transition: top .18s ease, left .18s ease, width .18s ease, height .18s ease;
+}
+
+:root[data-theme="light"] .tut-spot {
+  box-shadow: 0 0 0 9999px rgba(16, 28, 51, .5);
+}
+
+.tut-call {
+  position: fixed;
+  width: min(340px, calc(100vw - 24px));
+  padding: 15px 17px 13px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  cursor: default;
+  outline: none;
+  transition: top .18s ease, left .18s ease;
+}
+
+.tut-call-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.tut-call-count {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+  color: var(--brand);
+}
+
+.tut-call-title {
+  margin: 0 0 6px;
+  font-size: 15.5px;
+  font-weight: 650;
+  line-height: 1.3;
+}
+
+.tut-call-body {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.tut-call-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 11px;
+  border-top: 1px solid var(--border);
+}
+
+.tut-call-foot .tut-dots {
+  margin-right: auto;
+}
+
+.tut-call-foot .btn {
+  padding: 6px 12px;
+  font-size: 12.5px;
+  min-width: 62px;
 }
 
 .tut-btn-float {

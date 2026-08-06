@@ -196,6 +196,20 @@
       title: "Risks",
       label: "How to play",
       fullRulesHref: "/risks",
+      tour: [
+      { target: "#myStats", title: "Your numbers",
+        body: "Day, P&L, worst drawdown, and the score you're ranked on. The two bars are your gross and net exposure against their limits." },
+      { target: "#riskWire", title: "The wire",
+        body: "One line of market commentary per day, with how strong a signal it is. It describes what already happened, not what's coming." },
+      { target: "#basketTable", title: "The basket",
+        body: "Click any row to set a position in that name. Beta is your prior for how hard it reacts; cohort tells you which names move together." },
+      { target: "#equityChart", title: "Your equity",
+        body: "Your book marked to market each day. The dashed line is where you started — staying near it through the panic is the whole skill." },
+      { target: "#leaderboard", title: "The ranking",
+        body: "Scored on P&L minus half your worst drawdown, so a steady book beats a wild one that ends in the same place." },
+
+      ],
+
       steps: [
       { heading: "You are running a book through a crash", body: "Twelve names, each starting at 100, replayed one trading day every few seconds. The path comes from a real stress episode, so there is a panic somewhere in it. You are not told where.", facts: [["Starting equity", "$1,000,000"], ["Names", "12"]] },
       { heading: "Two limits, and they decide the game", body: "<p>Gross exposure caps how much you can hold in total. Net exposure keeps you close to market-neutral.</p><p>That second one matters: every episode is a crash, so if you could just short everything the round would be a coin flip. Capped, it becomes a question of <strong>which</strong> names break.</p>", facts: [["Gross cap", "$2,000,000"], ["Net band", "±$250,000"]] },

@@ -28,6 +28,12 @@ class User(BaseModel):
     role_request: Optional[dict] = None
     # Competition the user has joined by code, if any
     active_competition: Optional[str] = None
+    # Guided learning (see app/learning.py). None means never placed.
+    level: Optional[str] = None                 # beginner | intermediate | advanced
+    level_source: Optional[str] = None          # quiz | manual
+    level_set_at: Optional[dt.datetime] = None
+    placement_answers: Optional[dict] = None
+    placement_points: Optional[int] = None
 
 class Order(BaseModel):
     id: Optional[str] = None
