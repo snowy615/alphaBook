@@ -110,7 +110,10 @@
 
   <div class="profile-card">
     <h1>My Profile</h1>
-    <p class="subtitle">Keep your details up to date so the CV book is accurate.</p>
+    <p class="subtitle">Who you are on the platform, and what you've chosen to share.</p>
+
+    <!-- Identity summary -->
+    <div class="ident-row" id="identRow"></div>
 
     <!-- Profile fields -->
     <div class="field-group">
@@ -122,19 +125,48 @@
       <input id="gradYear" type="number" placeholder="e.g. 2027" min="2024" max="2032">
     </div>
     <div class="field-group">
-      <label>Role / Track</label>
-      <select id="track" onchange="onTrackChange(this.value)">
-        <option value="">General Member</option>
-        <option value="Fundamental">Fundamental Analyst</option>
-        <option value="Quant">Quantitative Analyst</option>
-        <option value="Fundamental Bootcamp">Fundamental Bootcamp</option>
-        <option value="Quant Bootcamp">Quant Bootcamp</option>
-      </select>
+      <label>Membership</label>
+      <select id="track" onchange="onTrackChange(this.value)"></select>
       <div class="track-hint" id="trackHint"></div>
+    </div>
+    <div class="field-group">
+      <label>Club</label>
+      <select id="club"></select>
     </div>
     <div class="btn-row">
       <button class="btn primary" onclick="saveProfile()">Save Details</button>
     </div>
+
+    <hr class="divider">
+
+    <!-- Opt-ins -->
+    <h3 style="margin:0 0 6px;">Sharing</h3>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">
+      Both are off unless you turn them on, and you can turn them off again at any time.
+    </p>
+
+    <label class="optin" for="optContact">
+      <input type="checkbox" id="optContact" onchange="saveOptIns()">
+      <span>
+        <strong>Let firms contact me</strong>
+        <span class="optin-sub">Approved recruiters can see your name, membership, graduation year,
+          performance and email address.</span>
+      </span>
+    </label>
+
+    <label class="optin" for="optCvBook">
+      <input type="checkbox" id="optCvBook" onchange="saveOptIns()">
+      <span>
+        <strong>Include me in the CV book</strong>
+        <span class="optin-sub" id="cvBookSub">Analyst members can be included in the printed CV book.</span>
+      </span>
+    </label>
+
+    <hr class="divider">
+
+    <!-- Role -->
+    <h3 style="margin:0 0 6px;">Role</h3>
+    <div id="roleBox"></div>
 
     <hr class="divider">
 
@@ -351,17 +383,23 @@
       loadScorecard();
     })();
 
-    const ANALYST_TRACKS = new Set(['Fundamental', 'Quant']);
-    const TRACK_HINTS = {
-      'Fundamental': '✓ Included in CV book as a Fundamental Analyst',
-      'Quant': '✓ Included in CV book as a Quantitative Analyst',
-      'Fundamental Bootcamp': 'Bootcamp participant — not included in the CV book',
-      'Quant Bootcamp': 'Bootcamp participant — not included in the CV book',
-      '': '',
-    };
+    // Memberships needing a password, filled from the server's vocabulary so
+    // the rules live in one place.
+    let ANALYST_TRACKS = new Set();
+    let BOOTCAMP_TRACKS = new Set();
+    let CV_ELIGIBLE = new Set();
+    let PROFILE = null;
 
-    let pendingTrack = null;   // track the user wants to switch to, awaiting password
+    const ROLE_LABELS = { general: 'General account', recruiter: 'Recruiter', host: 'Host' };
+
+    let pendingTrack = null;   // membership awaiting its password
     let confirmedPassword = null;  // password already verified this session
+
+    function esc(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]));
+    }
 
     async function loadProfile() {
       try {
@@ -369,27 +407,170 @@
         if (res.status === 401) { location.href = '/login'; return; }
         if (!res.ok) throw new Error();
         const data = await res.json();
+        PROFILE = data;
+
+        const v = data.vocabulary || {};
+        ANALYST_TRACKS = new Set(v.analyst_memberships || []);
+        BOOTCAMP_TRACKS = new Set(v.bootcamp_memberships || []);
+        CV_ELIGIBLE = new Set(v.cv_book_eligible || []);
+
+        // Membership + club options
+        const sel = document.getElementById('track');
+        sel.innerHTML = (v.memberships || []).map(
+          (m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+        sel.value = data.membership || '';
+        sel.dataset.saved = sel.value;
+
+        const club = document.getElementById('club');
+        club.innerHTML = (v.clubs || []).map(
+          (c) => `<option value="${esc(c)}">${esc(c)}</option>`).join('');
+        club.value = data.club || (v.clubs || [])[0] || '';
 
         document.getElementById('fullName').value = data.full_name || '';
-        document.getElementById('gradYear').value  = data.graduation_year || '';
-        const sel = document.getElementById('track');
-        sel.value = data.track || '';
-        updateTrackHint(data.track || '');
+        document.getElementById('gradYear').value = data.graduation_year || '';
+        updateTrackHint(sel.value);
         setCvStatus(data.cv_uploaded);
+
+        // Opt-ins
+        document.getElementById('optContact').checked = !!data.opt_in_contact;
+        document.getElementById('optCvBook').checked = !!data.cv_book_included;
+        renderIdentity(data);
+        renderRole(data);
+        loadCompetitionState();
       } catch {
         showToast('Failed to load profile', 'error');
       }
     }
 
-    function onTrackChange(value) {
-      if (ANALYST_TRACKS.has(value)) {
-        if (!confirmedPassword) {
-          // Revert the select and show the password modal
-          pendingTrack = value;
-          document.getElementById('track').value = getPreviousTrack();
-          openPasswordModal();
-          return;
+    function renderIdentity(d) {
+      document.getElementById('identRow').innerHTML = `
+        <span class="ident-chip ident-role">${esc(ROLE_LABELS[d.role] || d.role)}</span>
+        <span class="ident-chip">${esc(d.membership)}</span>
+        <span class="ident-chip">${esc(d.club)}</span>
+        <span class="ident-chip ident-mode" id="modeChip">Practice</span>`;
+
+      const sub = document.getElementById('cvBookSub');
+      const eligible = CV_ELIGIBLE.has(d.membership);
+      document.getElementById('optCvBook').disabled = !eligible;
+      sub.textContent = eligible
+        ? 'You are eligible — tick this to appear in the printed CV book.'
+        : 'Only Fundamental and Quant Analysts are eligible for the CV book.';
+    }
+
+    async function loadCompetitionState() {
+      try {
+        const r = await fetch('/competitions/mine', { credentials: 'include' });
+        if (!r.ok) return;
+        const s = await r.json();
+        const chip = document.getElementById('modeChip');
+        if (!chip) return;
+        if (s.mode === 'competition') {
+          chip.textContent = 'In competition: ' + (s.competition?.name || '');
+          chip.classList.add('ident-mode-live');
+        } else {
+          chip.textContent = 'Practice';
+          chip.classList.remove('ident-mode-live');
         }
+      } catch { /* the chip just stays on Practice */ }
+    }
+
+    function renderRole(d) {
+      const box = document.getElementById('roleBox');
+      const req = d.role_request;
+      const isGeneral = d.role === 'general';
+
+      if (!isGeneral) {
+        box.innerHTML = `<p class="role-now">You hold the <strong>${esc(ROLE_LABELS[d.role])}</strong> role.
+          ${d.role === 'recruiter'
+            ? '<a href="/recruiters">Open the recruiter directory →</a>'
+            : '<a href="/competitions">Run a competition →</a>'}</p>`;
+        return;
+      }
+
+      if (req && req.status === 'pending') {
+        box.innerHTML = `<p class="role-now">Your request for the
+          <strong>${esc(ROLE_LABELS[req.role] || req.role)}</strong> role is waiting for review.
+          <button class="btn ghost" onclick="withdrawRole()">Withdraw</button></p>`;
+        return;
+      }
+
+      box.innerHTML = `
+        <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
+          ${req && req.status === 'rejected'
+            ? 'Your last request was not approved. You can ask again with more detail.'
+            : 'Recruiters can see students who opted in to be contacted. Hosts can run competitions. Both are approved by an admin.'}
+        </p>
+        <div class="field-group">
+          <label>Request a role</label>
+          <select id="roleWanted">
+            <option value="recruiter">Recruiter</option>
+            <option value="host">Host</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Firm or society</label>
+          <input id="roleFirm" type="text" placeholder="e.g. Jane Street">
+        </div>
+        <div class="field-group">
+          <label>Anything else <span style="color:var(--muted);font-weight:400">(optional)</span></label>
+          <input id="roleNote" type="text" placeholder="Why you need it">
+        </div>
+        <button class="btn primary" onclick="requestRole()">Send request</button>`;
+    }
+
+    async function requestRole() {
+      const payload = {
+        role: document.getElementById('roleWanted').value,
+        firm: document.getElementById('roleFirm').value.trim(),
+        note: document.getElementById('roleNote').value.trim(),
+      };
+      try {
+        const res = await fetch('/me/role-request', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        showToast('Request sent — an admin will review it', 'success');
+        loadProfile();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    async function withdrawRole() {
+      try {
+        await fetch('/me/role-request', { method: 'DELETE', credentials: 'include' });
+        showToast('Request withdrawn', 'success');
+        loadProfile();
+      } catch { showToast('Could not withdraw', 'error'); }
+    }
+
+    async function saveOptIns() {
+      const payload = {
+        opt_in_contact: document.getElementById('optContact').checked,
+        opt_in_cv_book: document.getElementById('optCvBook').checked,
+      };
+      try {
+        const res = await fetch('/me/profile', {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
+        showToast('Sharing preferences saved', 'success');
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
+
+    function onTrackChange(value) {
+      // Analyst and bootcamp tiers both need their password.
+      if ((ANALYST_TRACKS.has(value) || BOOTCAMP_TRACKS.has(value)) && !confirmedPassword) {
+        pendingTrack = value;
+        document.getElementById('track').value = getPreviousTrack();
+        openPasswordModal();
+        return;
       }
       updateTrackHint(value);
     }
@@ -401,9 +582,16 @@
 
     function updateTrackHint(value) {
       const hint = document.getElementById('trackHint');
-      const msg  = TRACK_HINTS[value] || '';
+      let msg = '';
+      if (CV_ELIGIBLE.has(value)) {
+        msg = 'Eligible for the CV book — tick the box below to be included.';
+      } else if (BOOTCAMP_TRACKS.has(value)) {
+        msg = 'Bootcamp participant — not eligible for the CV book.';
+      } else if (ANALYST_TRACKS.has(value) || BOOTCAMP_TRACKS.has(value)) {
+        msg = 'This membership needs a password.';
+      }
       hint.textContent = msg;
-      hint.className   = 'track-hint' + (msg ? ' visible' : '');
+      hint.className = 'track-hint' + (msg ? ' visible' : '');
     }
 
     function openPasswordModal() {
@@ -426,14 +614,14 @@
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ track: pendingTrack, analyst_password: pw }),
+          body: JSON.stringify({ membership: pendingTrack, analyst_password: pw }),
         });
         if (res.status === 403) {
           document.getElementById('pwError').textContent = 'Incorrect password — try again.';
           return;
         }
         if (!res.ok) throw new Error((await res.json()).detail || 'Error');
-        // Password accepted — apply the track
+        // Password accepted — apply the membership
         confirmedPassword = pw;
         const sel = document.getElementById('track');
         sel.value = pendingTrack;
@@ -441,7 +629,8 @@
         updateTrackHint(pendingTrack);
         pendingTrack = null;
         document.getElementById('pwModal').classList.remove('open');
-        showToast('Track updated to ' + sel.value, 'success');
+        showToast('Membership updated to ' + sel.value, 'success');
+        loadProfile();
       } catch (err) {
         document.getElementById('pwError').textContent = err.message;
       }
@@ -450,13 +639,13 @@
     async function saveProfile() {
       const track = document.getElementById('track').value;
       const gradRaw = document.getElementById('gradYear').value;
+      const gated = ANALYST_TRACKS.has(track) || BOOTCAMP_TRACKS.has(track);
       const payload = {
         full_name: document.getElementById('fullName').value.trim() || null,
         graduation_year: gradRaw ? parseInt(gradRaw) : null,
-        track: track,
-        ...(ANALYST_TRACKS.has(track) && confirmedPassword
-          ? { analyst_password: confirmedPassword }
-          : {}),
+        membership: track,
+        club: document.getElementById('club').value || null,
+        ...(gated && confirmedPassword ? { analyst_password: confirmedPassword } : {}),
       };
       try {
         const res = await fetch('/me/profile', {

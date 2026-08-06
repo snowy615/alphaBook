@@ -13,9 +13,21 @@ class User(BaseModel):
     firebase_uid: Optional[str] = None
     # CV Book fields
     graduation_year: Optional[int] = None       # e.g. 2027
-    track: Optional[str] = None                 # "Fundamental" or "Quant"
+    track: Optional[str] = None                 # legacy; superseded by `membership`
     cv_blob_path: Optional[str] = None          # Firebase Storage path
     full_name: Optional[str] = None             # Display name for CV book
+    email: Optional[str] = None                 # from Firebase, shown to recruiters
+    # Identity (see app/membership.py)
+    role: Optional[str] = None                  # general | recruiter | host
+    membership: Optional[str] = None            # e.g. "Quant Analyst"
+    club: Optional[str] = None                  # e.g. "Alpha Fund"
+    # Opt-ins, both default off; None on CV book means "before the opt-in existed"
+    opt_in_contact: bool = Field(default=False)
+    opt_in_cv_book: Optional[bool] = None
+    # Pending Recruiter/Host request: {role, firm, note, status, created_at}
+    role_request: Optional[dict] = None
+    # Competition the user has joined by code, if any
+    active_competition: Optional[str] = None
 
 class Order(BaseModel):
     id: Optional[str] = None

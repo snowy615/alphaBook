@@ -136,7 +136,13 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         user = None
 
         if doc.exists:
-            user = User(id=doc.id, **doc.to_dict())
+            data = doc.to_dict()
+            user = User(id=doc.id, **data)
+            # Accounts created before the recruiter directory have no email
+            # stored; backfill it from the verified token on next sign-in.
+            if email and not data.get("email"):
+                await doc_ref.update({"email": email})
+                user.email = email
         else:
             # First time logic (Signup)
             if not username:
@@ -154,6 +160,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
                 id=firebase_uid, # Use firebase_uid as Firestore ID
                 username=username,
                 firebase_uid=firebase_uid, # explicit field too
+                email=email or None,
                 balance=10000.0,
                 is_admin=False,
                 is_blacklisted=False

@@ -177,6 +177,19 @@ async def record_result(
     except (TypeError, ValueError):
         return
 
+    # A result counts toward a competition when the player is enrolled in one
+    # that is running, and that competition scores this mode. Resolved here so
+    # every mode stays unaware of competitions.
+    competition_id = ""
+    try:
+        from app import competitions
+
+        comp = await competitions.active_for_user(str(user_id))
+        if comp and (not comp.get("modes") or mode in comp["modes"]):
+            competition_id = comp["id"]
+    except Exception:
+        log.warning("competition tagging failed (mode=%s user=%s)", mode, user_id, exc_info=True)
+
     try:
         now = dt.datetime.utcnow()
         await db_module.db.collection(EVENTS_COLLECTION).document(str(uuid.uuid4())).set({
@@ -185,6 +198,7 @@ async def record_result(
             "username": username or "",
             "value": value,
             "game_id": game_id or "",
+            "competition_id": competition_id,
             "detail": detail or {},
             "created_at": now,
         })

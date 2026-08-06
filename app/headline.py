@@ -22,6 +22,12 @@ router = APIRouter(prefix="/headline", tags=["headline"])
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _require_host(game_data: dict, user: User) -> None:
+    """Whoever opened the room runs it; admins can step in."""
+    if game_data.get("created_by") != str(user.id) and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only the host of this room can do that")
+
 # ---- Templates ----
 # strength: "strong" → prob ~0.88, "moderate" → ~0.72, "weak" → ~0.58
 STRENGTH_TO_PROB = {"strong": 0.38, "moderate": 0.22, "weak": 0.08}
@@ -245,9 +251,6 @@ async def list_templates():
 # ---- Admin: Create game ----
 @router.post("/create")
 async def create_game(req: CreateRequest, user: User = Depends(current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     if req.template not in TEMPLATES:
         raise HTTPException(status_code=400, detail=f"Unknown template: {req.template}")
 
@@ -312,14 +315,12 @@ async def join_game(req: JoinRequest, user: User = Depends(current_user)):
 # ---- Admin: Start game ----
 @router.post("/game/{game_id}/start")
 async def start_game(game_id: str, user: User = Depends(current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("headline_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     if game_data["status"] != "lobby":
         return {"ok": True, "status": game_data["status"]}
 
@@ -431,6 +432,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         "join_code": game_data.get("join_code", ""),
         "template_name": game_data.get("template_name", ""),
         "is_admin": is_admin,
+        # Host controls follow whoever opened the room, not staff status.
+        "is_host": game_data.get("created_by") == uid or is_admin,
         "duration": game_data.get("duration", 300),
         "start_price": game_data.get("start_price", 100),
     }

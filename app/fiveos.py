@@ -26,6 +26,12 @@ router = APIRouter(prefix="/5os", tags=["5os"])
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _require_host(game_data: dict, user: User) -> None:
+    """Whoever opened the room runs it; admins can step in."""
+    if game_data.get("created_by") != str(user.id) and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only the host of this room can do that")
+
 # ---- Card helpers ----
 SUITS = ["hearts", "diamonds", "clubs", "spades"]
 RANKS = list(range(1, 14))  # 1=Ace .. 13=King
@@ -107,9 +113,6 @@ async def game_page(game_id: str, request: Request):
 @router.post("/create")
 async def create_game(user: User = Depends(current_user)):
     """Admin creates a new 5Os game."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     # Build deck and select 15 cards
     deck = FULL_DECK.copy()
     random.shuffle(deck)
@@ -185,14 +188,12 @@ async def join_game(req: JoinRequest, user: User = Depends(current_user)):
 @router.post("/game/{game_id}/team")
 async def assign_team(game_id: str, req: AssignTeamRequest, user: User = Depends(current_user)):
     """Admin assigns a player to a team."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("fiveos_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     players = game_data.get("players", [])
 
     found = False
@@ -213,14 +214,12 @@ async def assign_team(game_id: str, req: AssignTeamRequest, user: User = Depends
 @router.post("/game/{game_id}/advance")
 async def advance_round(game_id: str, user: User = Depends(current_user)):
     """Admin advances the game to the next round or finishes it."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("fiveos_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     status = game_data["status"]
 
     if status == "lobby":
@@ -367,6 +366,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         "players": players,
         "join_code": game_data.get("join_code", ""),
         "is_admin": is_admin,
+        # Host controls follow whoever opened the room, not staff status.
+        "is_host": game_data.get("created_by") == uid or is_admin,
         "my_cards": {},       # cards shown to this player per round
         "common_cards": {},   # common cards per odd round
         "round_medians": game_data.get("round_medians", {}),

@@ -77,7 +77,7 @@
       </div>
     `).join("");
 
-    const adminPanel = state.is_admin ? `
+    const adminPanel = state.is_host ? `
       <div class="admin-controls">
         <div class="join-code-display">
           <span class="label">Join Code</span>
@@ -96,7 +96,7 @@
         ${adminPanel}
         <h3>Players (${players.length})</h3>
         <div class="lobby-players">${playerRows || '<p class="muted">Waiting for players to join...</p>'}</div>
-        ${!state.is_admin ? '<p class="muted" style="margin-top:16px;">Waiting for admin to start the game...</p>' : ''}
+        ${!state.is_host ? '<p class="muted" style="margin-top:16px;">Waiting for the host to start the game…</p>' : ''}
       </div>
     `;
   }

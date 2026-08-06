@@ -967,3 +967,9 @@ app.include_router(risks.router)
 from app import crash_ledger
 app.include_router(crash_ledger.router)
 
+from app import competitions
+app.include_router(competitions.router)
+
+from app import recruiters
+app.include_router(recruiters.router)
+

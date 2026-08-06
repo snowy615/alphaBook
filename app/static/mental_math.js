@@ -72,7 +72,7 @@
     function renderLobby(area) {
         const players = gameState.players || [];
         const settings = gameState.settings || {};
-        const isAdmin = gameState.is_admin;
+        const isAdmin = gameState.is_host;
 
         area.innerHTML = `
       <div class="mm-lobby">
@@ -110,7 +110,7 @@
         ` : `
           <div class="mm-waiting-msg">
             <div class="mm-pulse"></div>
-            Waiting for admin to start the game...
+            Waiting for the host to start the game…
           </div>
         `}
       </div>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Recruiter directory - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Recruiter directory</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/leaderboard" class="btn ghost">Leaderboard</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName"></span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="msp-hero">
+      <h2>Students open to being contacted</h2>
+      <p>Everyone here chose to appear: the opt-in is off by default and they can withdraw at any
+        time from their profile. Ratings are their percentile against every other player, so they
+        compare across cohorts.</p>
+    </div>
+
+    <div id="gate" class="msp-msg hidden"></div>
+
+    <div id="tools" class="rec-tools hidden">
+      <input id="search" type="search" class="msp-input rec-search"
+        placeholder="Search name, username or membership…">
+      <select id="membershipFilter" class="msp-input rec-filter">
+        <option value="">All memberships</option>
+      </select>
+      <select id="sort" class="msp-input rec-filter">
+        <option value="rating">Sort: strongest first</option>
+        <option value="name">Sort: name</option>
+        <option value="year">Sort: graduation year</option>
+      </select>
+      <span class="msp-muted" id="count"></span>
+    </div>
+
+    <div id="grid" class="rec-grid"></div>
+  </div>
+
+  <script src="/static/recruiters.js?v=1"></script>
+</body>
+
+</html>

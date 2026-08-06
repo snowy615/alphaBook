@@ -112,7 +112,8 @@
                 document.getElementById("loginBox").classList.add("hidden");
                 document.getElementById("userBox").classList.remove("hidden");
                 document.getElementById("userName").textContent = me.username || "user";
-                if (me.is_admin) {
+                {
+                    // Anyone signed in can open a room; whoever creates it hosts it.
                     document.getElementById("adminCreate").classList.remove("hidden");
                     // Load templates
                     const tmpls = await fetchJSON("/headline/templates");

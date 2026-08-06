@@ -26,6 +26,12 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+def _require_host(game_data: dict, user: User) -> None:
+    """Whoever opened the room runs it; admins can step in."""
+    if game_data.get("created_by") != str(user.id) and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only the host of this room can do that")
+
+
 # ---- Request schemas ----
 class CreateGameRequest(BaseModel):
     question_types: List[str]  # ["addition", "subtraction", ...]
@@ -332,9 +338,6 @@ async def game_page(game_id: str, request: Request):
 @router.post("/create")
 async def create_game(req: CreateGameRequest, user: User = Depends(current_user)):
     """Admin creates a new Mental Math game."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     # Validate
     types = [t for t in req.question_types if t in VALID_TYPES]
     if not types:
@@ -413,14 +416,12 @@ async def join_game(req: JoinRequest, user: User = Depends(current_user)):
 @router.post("/game/{game_id}/start")
 async def start_game(game_id: str, user: User = Depends(current_user)):
     """Admin starts the game."""
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("mental_math_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     if game_data["status"] != "lobby":
         raise HTTPException(status_code=400, detail="Game already started")
 
@@ -575,6 +576,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         "players": players,
         "join_code": game_data.get("join_code", ""),
         "is_admin": is_admin,
+        # Host controls follow whoever opened the room, not staff status.
+        "is_host": game_data.get("created_by") == uid or is_admin,
         "settings": settings,
     }
 

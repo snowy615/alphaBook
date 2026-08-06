@@ -97,7 +97,7 @@
       </div>
     `).join("");
 
-    const adminPanel = state.is_admin ? `
+    const adminPanel = state.is_host ? `
       <div class="admin-controls">
         <div class="join-code-display">
           <span class="label">Join Code</span>
@@ -115,7 +115,7 @@
         ${adminPanel}
         <h3>Teams (${teams.length})</h3>
         <div class="lobby-players">${teamRows || '<p class="muted">Waiting for teams to join...</p>'}</div>
-        ${!state.is_admin ? '<p class="muted" style="margin-top:16px;">Waiting for admin to start the game...</p>' : ''}
+        ${!state.is_host ? '<p class="muted" style="margin-top:16px;">Waiting for the host to start the game…</p>' : ''}
       </div>
     `;
   }
@@ -181,7 +181,7 @@
       `;
     }
 
-    const adminBtn = state.is_admin ? `
+    const adminBtn = state.is_host ? `
       <button onclick="paAdvance()" class="btn" id="advanceBtn" style="margin-top:16px;">
         ${phase === 'bidding' ? '🔒 Close Bidding' : round < 13 ? '➡️ Next Round' : '📦 Start Post-Auction'}
       </button>
@@ -235,7 +235,7 @@
       return `<span class="pa-submit-status ${done ? 'done' : ''}">${t.team_name}: ${done ? '✅' : '⏳'}</span>`;
     }).join("");
 
-    const adminBtn = state.is_admin ? `
+    const adminBtn = state.is_host ? `
       <button onclick="paAdvance()" class="btn" id="advanceBtn" style="margin-top:16px;">
         🔨 Close Post-Auction & Start Bidding
       </button>
@@ -318,7 +318,7 @@
       `;
     }).join("");
 
-    const adminBtn = state.is_admin ? `
+    const adminBtn = state.is_host ? `
       <button onclick="paAdvance()" class="btn" id="advanceBtn" style="margin-top:16px;">
         🏆 Close Bidding & Evaluate Hands
       </button>

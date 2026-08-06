@@ -96,7 +96,7 @@
     const players = state.players || [];
     const playerRows = players.map(p => {
       const teamBadge = p.team ? `<span class="team-badge team-${p.team.toLowerCase()}">${p.team}</span>` : '<span class="team-badge unassigned">—</span>';
-      const adminControls = state.is_admin ? `
+      const adminControls = state.is_host ? `
         <button onclick="assignTeam('${p.user_id}','A')" class="btn small ${p.team === 'A' ? 'active' : 'ghost'}">A</button>
         <button onclick="assignTeam('${p.user_id}','B')" class="btn small ${p.team === 'B' ? 'active' : 'ghost'}">B</button>
       ` : '';
@@ -107,7 +107,7 @@
       </div>`;
     }).join("");
 
-    const adminPanel = state.is_admin ? `
+    const adminPanel = state.is_host ? `
       <div class="admin-controls">
         <div class="join-code-display">
           <span class="label">Join Code</span>
@@ -125,7 +125,7 @@
         ${adminPanel}
         <h3>Players (${players.length})</h3>
         <div class="lobby-players">${playerRows || '<p class="muted">Waiting for players to join...</p>'}</div>
-        ${!state.is_admin ? `<p class="muted" style="margin-top:16px;">Waiting for admin to start the game...</p>` : ''}
+        ${!state.is_host ? `<p class="muted" style="margin-top:16px;">Waiting for the host to start the game…</p>` : ''}
       </div>
     `;
   }
@@ -178,9 +178,9 @@
           <span>Q2: ${sub.est_q2}</span>
           <span>Q3: ${sub.est_q3}</span>
         </div>
-        <p class="muted">Waiting for admin to advance to next round...</p>
+        <p class="muted">Waiting for the host to advance to the next round…</p>
       </div>`;
-    } else if (!state.is_admin) {
+    } else if (!state.is_host) {
       formHTML = `<div class="submit-form">
         <h3>Submit Your Estimates</h3>
         <p class="muted" style="margin-bottom:12px;">Your position (long/short) is determined by whether your estimate is above or below the group median.</p>
@@ -216,7 +216,7 @@
     }
 
     // Admin controls
-    const adminPanel = state.is_admin ? `
+    const adminPanel = state.is_host ? `
       <div class="admin-controls" style="margin-bottom:24px;">
         <button onclick="advanceRound()" class="btn">
           ${roundNum >= 5 ? 'Finish Game' : `End Round ${roundNum} → Start Round ${roundNum + 1}`}

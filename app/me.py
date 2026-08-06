@@ -388,13 +388,7 @@ async def cancel_my_order_delete(
 
 import os
 
-# Tracks that require the analyst password to select
-ANALYST_TRACKS = {"Fundamental", "Quant"}
-BOOTCAMP_TRACKS = {"Fundamental Bootcamp", "Quant Bootcamp"}
-# Tracks included in the CV book
-CV_BOOK_TRACKS = {"Fundamental", "Quant"}
-# All valid track choices (empty string = general)
-VALID_TRACKS = {"", "Fundamental", "Quant", "Fundamental Bootcamp", "Quant Bootcamp"}
+from app import membership as mb
 
 _ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "AlphaFund")
 _BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "AlphaFundBootcamp")
@@ -403,21 +397,38 @@ _BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "AlphaFundBootcamp")
 class ProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     graduation_year: Optional[int] = None
-    track: Optional[str] = None
-    analyst_password: Optional[str] = None  # required when upgrading to analyst track
+    membership: Optional[str] = None
+    club: Optional[str] = None
+    # Required when moving to an analyst or bootcamp membership. Named
+    # `analyst_password` for backwards compatibility with the old profile form.
+    analyst_password: Optional[str] = None
+    opt_in_contact: Optional[bool] = None
+    opt_in_cv_book: Optional[bool] = None
+
+
+class RoleRequest(BaseModel):
+    role: str
+    firm: Optional[str] = None
+    note: Optional[str] = None
 
 
 @router.get("/me/profile")
 async def get_my_profile(user: User = Depends(current_user)):
-    """Return CV-book profile fields for the current user."""
+    """Identity, opt-ins and CV state for the signed-in user."""
     doc = await db_module.db.collection("users").document(str(user.id)).get()
     data = doc.to_dict() if doc.exists else {}
+    req = data.get("role_request") or None
     return {
-        "username": user.username,
-        "full_name": data.get("full_name") or "",
-        "graduation_year": data.get("graduation_year"),
-        "track": data.get("track") or "",
+        **mb.public_profile(str(user.id), {**data, "username": user.username}),
+        "email": data.get("email") or "",
         "cv_uploaded": bool(data.get("cv_blob_path")),
+        "cv_book_included": mb.cv_book_included(data),
+        "cv_book_eligible": mb.membership_of(data) in mb.CV_BOOK_ELIGIBLE,
+        "opt_in_contact": mb.contactable(data),
+        "opt_in_cv_book": data.get("opt_in_cv_book"),
+        "role_request": ({"role": req.get("role"), "status": req.get("status"),
+                          "firm": req.get("firm", "")} if req else None),
+        "vocabulary": mb.vocabulary(),
     }
 
 
@@ -426,31 +437,80 @@ async def update_my_profile(
     payload: ProfileUpdate,
     user: User = Depends(current_user),
 ):
-    """Update name, graduation year, and track.
-
-    Analyst tracks (Fundamental, Quant) require analyst_password.
-    Bootcamp tracks are freely selectable. Leaving track empty = general member.
     """
-    if payload.track is not None:
-        if payload.track not in VALID_TRACKS:
-            raise HTTPException(400, f"Invalid track. Choose from: {', '.join(sorted(VALID_TRACKS) or ['(none)'])}")
-        if payload.track in ANALYST_TRACKS:
-            if payload.analyst_password != _ANALYST_PASSWORD:
-                raise HTTPException(403, "Incorrect password for analyst track")
-        elif payload.track in BOOTCAMP_TRACKS:
-            if payload.analyst_password != _BOOTCAMP_PASSWORD:
-                raise HTTPException(403, "Incorrect password for bootcamp track")
+    Update name, graduation year, membership, club and the two opt-ins.
 
+    Analyst and bootcamp memberships stay password-gated. Role is deliberately
+    absent: it is granted by an admin, never self-selected.
+    """
+    doc_ref = db_module.db.collection("users").document(str(user.id))
     update: Dict[str, Any] = {}
+
+    if payload.membership is not None:
+        err = mb.validate_membership_change(
+            payload.membership, payload.analyst_password,
+            _ANALYST_PASSWORD, _BOOTCAMP_PASSWORD,
+        )
+        if err:
+            raise HTTPException(403 if "password" in err else 400, err)
+        update["membership"] = payload.membership
+        # Keep the legacy field in step so anything still reading it agrees.
+        update["track"] = {v: k for k, v in mb.LEGACY_TRACK_TO_MEMBERSHIP.items()}.get(
+            payload.membership, "")
+
+    if payload.club is not None:
+        if payload.club not in mb.CLUBS:
+            raise HTTPException(400, f"Unknown club. Choose from: {', '.join(mb.CLUBS)}")
+        update["club"] = payload.club
+
     if payload.full_name is not None:
         update["full_name"] = payload.full_name.strip()
     if payload.graduation_year is not None:
         update["graduation_year"] = payload.graduation_year
-    if payload.track is not None:
-        update["track"] = payload.track
+    if payload.opt_in_contact is not None:
+        update["opt_in_contact"] = bool(payload.opt_in_contact)
+    if payload.opt_in_cv_book is not None:
+        update["opt_in_cv_book"] = bool(payload.opt_in_cv_book)
 
     if update:
-        await db_module.db.collection("users").document(str(user.id)).update(update)
+        await doc_ref.update(update)
+    return {"ok": True}
+
+
+@router.post("/me/role-request")
+async def request_role(payload: RoleRequest, user: User = Depends(current_user)):
+    """
+    Ask for the Recruiter or Host role. An admin approves or rejects it.
+
+    Nothing is granted here — a recruiter can see other students' performance
+    and contact details, so the grant has to be a human decision.
+    """
+    if payload.role not in mb.REQUESTABLE_ROLES:
+        raise HTTPException(400, f"You can request: {', '.join(sorted(mb.REQUESTABLE_ROLES))}")
+
+    doc_ref = db_module.db.collection("users").document(str(user.id))
+    doc = await doc_ref.get()
+    data = doc.to_dict() if doc.exists else {}
+    if mb.role_of(data) == payload.role:
+        raise HTTPException(400, f"You already have the {payload.role} role")
+
+    existing = data.get("role_request") or {}
+    if existing.get("status") == "pending":
+        raise HTTPException(400, "You already have a request waiting for review")
+
+    await doc_ref.update({"role_request": {
+        "role": payload.role,
+        "firm": (payload.firm or "").strip()[:120],
+        "note": (payload.note or "").strip()[:500],
+        "status": "pending",
+        "created_at": dt.datetime.utcnow(),
+    }})
+    return {"ok": True, "status": "pending"}
+
+
+@router.delete("/me/role-request")
+async def withdraw_role_request(user: User = Depends(current_user)):
+    await db_module.db.collection("users").document(str(user.id)).update({"role_request": None})
     return {"ok": True}
 
 

@@ -128,10 +128,8 @@
                 document.getElementById("loginBox").classList.add("hidden");
                 document.getElementById("userBox").classList.remove("hidden");
                 document.getElementById("userName").textContent = me.username || "user";
-                // Show admin panel if admin
-                if (me.is_admin) {
-                    document.getElementById("adminCreate").classList.remove("hidden");
-                }
+                // Anyone signed in can open a room; whoever creates it hosts it.
+                document.getElementById("adminCreate").classList.remove("hidden");
             } catch {
                 document.getElementById("loginBox").classList.remove("hidden");
                 document.getElementById("userBox").classList.add("hidden");

@@ -313,6 +313,8 @@
       <button class="admin-tab" data-tab="games" onclick="switchTab('games', this)">Custom Games</button>
       <button class="admin-tab" data-tab="leaderboard" onclick="switchTab('leaderboard', this)">Leaderboard</button>
       <button class="admin-tab" data-tab="news" onclick="switchTab('news', this)">Market News</button>
+      <button class="admin-tab" data-tab="roles" onclick="switchTab('roles', this)">Role requests<span
+          id="roleReqCount" class="lbx-tab-n hidden"></span></button>
       <button class="admin-tab" data-tab="cvbook" onclick="switchTab('cvbook', this)">CV Book</button>
       <button class="admin-tab" data-tab="settings" onclick="switchTab('settings', this)">Settings</button>
     </div>
@@ -796,6 +798,34 @@
       </div>
     </div>
 
+    <!-- Role Requests Tab -->
+    <div id="roles-tab" class="tab-content">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:16px;margin-bottom:18px;">
+        <div>
+          <h2 style="margin:0 0 6px;">Role requests</h2>
+          <p style="color:var(--muted);margin:0;">Recruiters can see every student who opted in to be
+            contacted, with their performance and email — approve people you know.</p>
+        </div>
+        <button class="btn" onclick="loadRoleRequests()"
+          style="background:var(--card);border:1px solid var(--border);">Refresh</button>
+      </div>
+      <table class="users-table">
+        <thead>
+          <tr>
+            <th>User</th>
+            <th>Requested</th>
+            <th>Firm / society</th>
+            <th>Note</th>
+            <th>Current</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="roleReqBody">
+          <tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px;">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- CV Book Tab -->
     <div id="cvbook-tab" class="tab-content">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:24px;">
@@ -867,13 +897,15 @@
               style="width:100%; padding:10px; border-radius: 0; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px; box-sizing:border-box;">
           </div>
           <div style="margin-bottom:24px;">
-            <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Track</label>
+            <label style="display:block; font-size:13px; color:var(--muted); margin-bottom:6px;">Membership</label>
             <select id="editTrack" style="width:100%; padding:10px; border-radius: 0; border:1px solid var(--border); background:var(--bg); color:var(--text); font-size:14px;">
-              <option value="">General Member</option>
-              <option value="Fundamental">Fundamental Analyst ✓ CV book</option>
-              <option value="Quant">Quantitative Analyst ✓ CV book</option>
+              <option value="General public">General public</option>
+              <option value="Sponsor">Sponsor</option>
+              <option value="General Alpha Fund member">General Alpha Fund member</option>
               <option value="Fundamental Bootcamp">Fundamental Bootcamp</option>
               <option value="Quant Bootcamp">Quant Bootcamp</option>
+              <option value="Fundamental Analyst">Fundamental Analyst · CV book eligible</option>
+              <option value="Quant Analyst">Quant Analyst · CV book eligible</option>
             </select>
           </div>
           <div style="display:flex; gap:12px; justify-content:flex-end;">
@@ -1184,6 +1216,10 @@
       switchTab(savedTab, btn);
 
       loadAdminNews();
+      loadRoleRequests();     // also fills the pending-count badge
+
+      document.querySelector('.admin-tab[data-tab="roles"]')
+        ?.addEventListener('click', () => loadRoleRequests());
 
       // Auto-load CV status when the tab becomes active
       document.querySelector('.admin-tab[data-tab="cvbook"]').addEventListener('click', () => {
@@ -1191,6 +1227,63 @@
       });
       if (savedTab === 'cvbook') loadCvStatus();
     });
+
+    // ── Role requests ────────────────────────────────────────────────────────
+
+    const ROLE_LABEL = { general: 'General account', recruiter: 'Recruiter', host: 'Host' };
+
+    async function loadRoleRequests() {
+      const body = document.getElementById('roleReqBody');
+      try {
+        const res = await fetch('/admin/role-requests', { credentials: 'include' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+        const rows = data.requests || [];
+
+        const badge = document.getElementById('roleReqCount');
+        badge.textContent = rows.length;
+        badge.classList.toggle('hidden', !rows.length);
+
+        if (!rows.length) {
+          body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:40px;">
+            Nothing waiting.</td></tr>`;
+          return;
+        }
+
+        body.innerHTML = rows.map(r => `
+          <tr>
+            <td>
+              <strong>${escapeHtml(r.full_name || r.username)}</strong>
+              <div class="small" style="color:var(--muted);">${escapeHtml(r.email || r.username)}</div>
+            </td>
+            <td><span class="badge badge-admin">${escapeHtml(ROLE_LABEL[r.requested_role] || r.requested_role)}</span></td>
+            <td>${escapeHtml(r.firm || '—')}</td>
+            <td style="max-width:280px;">${escapeHtml(r.note || '—')}</td>
+            <td>${escapeHtml(ROLE_LABEL[r.role] || r.role)}</td>
+            <td>
+              <button class="action-btn btn-game" onclick="decideRole('${escapeHtml(r.id)}','approve')">Approve</button>
+              <button class="action-btn btn-delete" onclick="decideRole('${escapeHtml(r.id)}','reject')">Reject</button>
+            </td>
+          </tr>`).join('');
+      } catch (err) {
+        body.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--red);padding:40px;">
+          ${escapeHtml(err.message)}</td></tr>`;
+      }
+    }
+
+    async function decideRole(userId, action) {
+      if (action === 'approve' && !confirm('Grant this role? A recruiter can see opted-in students and their contact details.')) return;
+      try {
+        const res = await fetch(`/admin/users/${userId}/role-request/${action}`, {
+          method: 'POST', credentials: 'include',
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Failed');
+        showToast(action === 'approve' ? 'Role granted' : 'Request rejected');
+        loadRoleRequests();
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    }
 
     // ── CV Book ──────────────────────────────────────────────────────────────
 
@@ -1293,7 +1386,7 @@
       const payload = {
         full_name: document.getElementById('editFullName').value.trim() || null,
         graduation_year: gradYearRaw ? parseInt(gradYearRaw) : null,
-        track: document.getElementById('editTrack').value || null,
+        membership: document.getElementById('editTrack').value || null,
       };
       try {
         const res = await fetch(`/admin/users/${userId}/cv-profile`, {

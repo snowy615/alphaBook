@@ -24,6 +24,12 @@ router = APIRouter(prefix="/poker-auction", tags=["poker-auction"])
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+
+def _require_host(game_data: dict, user: User) -> None:
+    """Whoever opened the room runs it; admins can step in."""
+    if game_data.get("created_by") != str(user.id) and not user.is_admin:
+        raise HTTPException(status_code=403, detail="Only the host of this room can do that")
+
 # ---- Card & Deck ----
 SUITS = ["hearts", "diamonds", "clubs", "spades"]
 RANKS = list(range(1, 14))  # 1=Ace .. 13=King
@@ -212,9 +218,6 @@ async def game_page(game_id: str, request: Request):
 # ---- Admin: Create game ----
 @router.post("/create")
 async def create_game(user: User = Depends(current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     join_code = generate_join_code()
 
     game_data = {
@@ -288,14 +291,12 @@ async def join_game(req: JoinRequest, user: User = Depends(current_user)):
 # ---- Admin: Start game ----
 @router.post("/game/{game_id}/start")
 async def start_game(game_id: str, user: User = Depends(current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("poker_auction_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     if game_data["status"] != "lobby":
         return {"ok": True, "status": game_data["status"]}
 
@@ -327,14 +328,12 @@ async def start_game(game_id: str, user: User = Depends(current_user)):
 # ---- Admin: Advance round/phase ----
 @router.post("/game/{game_id}/advance")
 async def advance(game_id: str, user: User = Depends(current_user)):
-    if not user.is_admin:
-        raise HTTPException(status_code=403, detail="Admin only")
-
     doc = await db_module.db.collection("poker_auction_games").document(game_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail="Game not found")
 
     game_data = doc.to_dict()
+    _require_host(game_data, user)
     status = game_data["status"]
     current_round = game_data.get("round", 0)
     phase = game_data.get("round_phase", "")
@@ -754,6 +753,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         "my_cards": my_cards,
         "my_money": my_money,
         "is_admin": is_admin,
+        # Host controls follow whoever opened the room, not staff status.
+        "is_host": game_data.get("created_by") == uid or is_admin,
         "join_code": game_data.get("join_code", ""),
         "round_schedule": ROUND_SCHEDULE,
     }

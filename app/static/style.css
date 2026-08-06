@@ -6438,3 +6438,206 @@ body.tut-locked {
 }
 
 .dash-coach .fbk-head { display: none; }
+
+/* ── Competitions ────────────────────────────────────────────────────────────
+   Practice is the default state, so the "where am I" card is the first thing
+   on the page and says plainly which of the two you're in. */
+
+.cmp-state { margin-bottom: 18px; }
+
+.cmp-now {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.cmp-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  margin-right: 10px;
+}
+
+.cmp-badge-practice { color: var(--muted); }
+.cmp-badge-live { color: var(--green); }
+
+.cmp-now-text { font-size: 14px; }
+
+.cmp-join {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cmp-join .msp-code-input { width: 120px; text-transform: uppercase; }
+
+.cmp-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: .16em;
+  color: var(--brand);
+}
+
+.cmp-hint { font-size: 12.5px; margin: 10px 0 0; }
+
+.cmp-list { display: flex; flex-direction: column; }
+
+.cmp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 13px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.cmp-row:last-child { border-bottom: none; }
+.cmp-row-mine { box-shadow: inset 3px 0 0 var(--brand); }
+
+.cmp-row-name { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cmp-row-meta { font-size: 12px; color: var(--muted); margin-top: 4px; }
+.cmp-row-actions { display: flex; gap: 8px; }
+
+.cmp-pill {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  padding: 2px 6px;
+  border: 1px solid currentColor;
+}
+
+.cmp-pill-draft { color: var(--muted); }
+.cmp-pill-live { color: var(--green); }
+.cmp-pill-done { color: var(--muted); opacity: .7; }
+.cmp-pill-you { color: var(--brand); }
+
+.cmp-empty { padding: 34px 16px; text-align: center; color: var(--muted); }
+
+.cmp-w-rank { width: 46px; }
+.cmp-w-rating { width: 190px; }
+.cmp-w-mid { width: 90px; }
+
+/* ── Recruiter directory ─────────────────────────────────────────────────── */
+
+.rec-tools {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 18px;
+}
+
+.rec-search { flex: 1 1 260px; max-width: 340px; }
+.rec-filter { flex: 0 0 auto; }
+
+.rec-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 12px;
+}
+
+.rec-card {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.rec-card-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rec-name { font-weight: 700; font-size: 15px; }
+.rec-sub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+.rec-overall { text-align: right; flex: 0 0 auto; }
+.rec-overall-num {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+  line-height: 1.1;
+}
+.rec-overall-sub { font-size: 10.5px; color: var(--muted); }
+.rec-overall-none { align-self: center; }
+
+.rec-modes { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.rec-mode {
+  font-size: 11px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.rec-mode strong { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.rec-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.rec-foot .btn { font-size: 12px; }
+
+.rec-empty {
+  grid-column: 1 / -1;
+  padding: 40px;
+  text-align: center;
+  color: var(--muted);
+  border: 1px solid var(--border);
+}
+
+/* ── Profile identity + opt-ins ─────────────────────────────────────────────*/
+
+.ident-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 26px;
+}
+
+.ident-chip {
+  font-size: 11px;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.ident-role { color: var(--brand); border-color: var(--brand); }
+.ident-mode-live { color: var(--green); border-color: var(--green); }
+
+.optin {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.optin input { margin-top: 3px; flex: 0 0 auto; width: 16px; height: 16px; accent-color: var(--brand); }
+.optin input:disabled { opacity: .4; cursor: not-allowed; }
+.optin > span { display: flex; flex-direction: column; gap: 3px; }
+.optin-sub { font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+
+.role-now { font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.role-now a { color: var(--brand); }

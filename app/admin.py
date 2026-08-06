@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from app import db as db_module
+from app import membership as mb
 from app.auth import current_user
 from app.models import User, Trade, CustomGame, MarketNews
 from fastapi.templating import Jinja2Templates
@@ -742,7 +743,7 @@ async def admin_delete_news(
 class CvProfileUpdate(BaseModel):
     full_name: Optional[str] = None
     graduation_year: Optional[int] = None
-    track: Optional[str] = None
+    membership: Optional[str] = None
 
 
 @router.put("/admin/users/{user_id}/cv-profile")
@@ -751,10 +752,9 @@ async def admin_update_cv_profile(
     payload: CvProfileUpdate,
     admin: User = Depends(require_admin),
 ):
-    """Admin can set graduation year / track for any user."""
-    VALID_TRACKS = {"", "Fundamental", "Quant", "Fundamental Bootcamp", "Quant Bootcamp"}
-    if payload.track is not None and payload.track not in VALID_TRACKS:
-        raise HTTPException(400, "Invalid track value")
+    """Admin can set graduation year and membership for any user."""
+    if payload.membership is not None and payload.membership not in mb.MEMBERSHIPS:
+        raise HTTPException(400, "Invalid membership value")
 
     doc_ref = db_module.db.collection("users").document(user_id)
     doc = await doc_ref.get()
@@ -766,12 +766,96 @@ async def admin_update_cv_profile(
         update["full_name"] = payload.full_name.strip()
     if payload.graduation_year is not None:
         update["graduation_year"] = payload.graduation_year
-    if payload.track is not None:
-        update["track"] = payload.track
+    if payload.membership is not None:
+        update["membership"] = payload.membership
+        update["track"] = {v: k for k, v in mb.LEGACY_TRACK_TO_MEMBERSHIP.items()}.get(
+            payload.membership, "")
 
     if update:
         await doc_ref.update(update)
     return {"ok": True}
+
+
+# ── Roles ─────────────────────────────────────────────────────────────────────
+
+class RoleUpdate(BaseModel):
+    role: str
+
+
+@router.get("/admin/role-requests")
+async def list_role_requests(admin: User = Depends(require_admin)):
+    """Pending Recruiter/Host requests, oldest first."""
+    docs = await db_module.db.collection("users").get()
+    rows = []
+    for d in docs:
+        data = d.to_dict() or {}
+        req = data.get("role_request") or {}
+        if req.get("status") != "pending":
+            continue
+        rows.append({
+            **mb.public_profile(d.id, data),
+            "email": data.get("email") or "",
+            "requested_role": req.get("role"),
+            "firm": req.get("firm", ""),
+            "note": req.get("note", ""),
+            "created_at": req.get("created_at"),
+        })
+    rows.sort(key=lambda r: r.get("created_at") or dt.datetime.min.replace(tzinfo=dt.timezone.utc))
+    return {"requests": rows, "roles": mb.ROLES}
+
+
+@router.post("/admin/users/{user_id}/role-request/approve")
+async def approve_role_request(user_id: str, admin: User = Depends(require_admin)):
+    """Grant the requested role."""
+    doc_ref = db_module.db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "User not found")
+
+    req = (doc.to_dict() or {}).get("role_request") or {}
+    role = req.get("role")
+    if req.get("status") != "pending" or role not in mb.REQUESTABLE_ROLES:
+        raise HTTPException(400, "No pending request for this user")
+
+    await doc_ref.update({
+        "role": role,
+        "role_request": {**req, "status": "approved",
+                         "decided_at": dt.datetime.utcnow(),
+                         "decided_by": str(admin.id)},
+    })
+    return {"ok": True, "role": role}
+
+
+@router.post("/admin/users/{user_id}/role-request/reject")
+async def reject_role_request(user_id: str, admin: User = Depends(require_admin)):
+    doc_ref = db_module.db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "User not found")
+
+    req = (doc.to_dict() or {}).get("role_request") or {}
+    if req.get("status") != "pending":
+        raise HTTPException(400, "No pending request for this user")
+
+    await doc_ref.update({"role_request": {**req, "status": "rejected",
+                                           "decided_at": dt.datetime.utcnow(),
+                                           "decided_by": str(admin.id)}})
+    return {"ok": True}
+
+
+@router.put("/admin/users/{user_id}/role")
+async def set_user_role(user_id: str, payload: RoleUpdate, admin: User = Depends(require_admin)):
+    """Set a role directly, without waiting for a request."""
+    if payload.role not in mb.ROLE_KEYS:
+        raise HTTPException(400, f"Unknown role. Choose from: {', '.join(sorted(mb.ROLE_KEYS))}")
+
+    doc_ref = db_module.db.collection("users").document(user_id)
+    doc = await doc_ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "User not found")
+
+    await doc_ref.update({"role": payload.role})
+    return {"ok": True, "role": payload.role}
 
 
 @router.delete("/admin/users/{user_id}/cv")
@@ -808,14 +892,14 @@ async def cv_book_status(admin: User = Depends(require_admin)):
         if data.get("is_admin"):
             continue
         result.append({
-            "id": d.id,
-            "username": data.get("username", ""),
-            "full_name": data.get("full_name") or "",
-            "graduation_year": data.get("graduation_year"),
-            "track": data.get("track") or "",
+            **mb.public_profile(d.id, data),
+            "track": mb.membership_of(data),          # kept for the existing column
             "cv_uploaded": bool(data.get("cv_blob_path")),
+            "cv_book_included": mb.cv_book_included(data),
+            "opt_in_cv_book": data.get("opt_in_cv_book"),
+            "opt_in_contact": mb.contactable(data),
         })
-    result.sort(key=lambda x: (x["graduation_year"] or 9999, x["track"], x["username"]))
+    result.sort(key=lambda x: (x["graduation_year"] or 9999, x["membership"], x["username"]))
     return result
 
 
@@ -838,6 +922,10 @@ async def generate_cv_book(
         data = d.to_dict()
         if data.get("is_admin") or data.get("is_blacklisted"):
             continue
+        # Inclusion is now the member's own choice: analyst membership makes
+        # them eligible, the CV-book opt-in decides.
+        if not mb.cv_book_included(data):
+            continue
         blob_path = data.get("cv_blob_path")
         cv_bytes = None
         if blob_path:
@@ -850,7 +938,7 @@ async def generate_cv_book(
             "username": data.get("username", ""),
             "full_name": data.get("full_name") or data.get("username", ""),
             "graduation_year": data.get("graduation_year"),
-            "track": data.get("track"),
+            "track": mb.membership_of(data),
             "cv_bytes": cv_bytes,
         })
 
