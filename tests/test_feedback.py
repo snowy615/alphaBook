@@ -90,8 +90,8 @@ class TestBotRun:
         assert "No fills" in texts(out)
 
     def test_heavy_rejection_rate_is_called_out(self):
-        out = fb.analyse("swe_prep", {"pnl": 10, "fills": 3, "volume": 30,
-                                      "orders_accepted": 10, "orders_rejected": 10})
+        out = fb.analyse("market_sim_py", {"pnl": 10, "fills": 3, "volume": 30,
+                                           "orders_accepted": 10, "orders_rejected": 10})
         assert "rejected" in texts(out)
 
     def test_a_crashed_strategy_reports_its_error(self):

@@ -445,7 +445,7 @@ def _poker_auction(p: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Coding modes (Market Sim Py / SWE Prep)
+# Coding modes (Market Sim Py)
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _bot_run(p: Dict[str, Any]) -> Dict[str, Any]:
@@ -548,7 +548,6 @@ ANALYSERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "risks": _risks,
     "poker_auction": _poker_auction,
     "market_sim_py": _bot_run,
-    "swe_prep": _bot_run,
     "market_sim": _market_sim,
 }
 

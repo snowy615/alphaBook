@@ -26,8 +26,6 @@
     market: svg('<path d="M7 3v3M7 16v5M17 3v5M17 18v3"/><rect x="4.5" y="6" width="5" height="10"/><rect x="14.5" y="8" width="5" height="10"/>'),
     // angle brackets over a slash
     code: svg('<path d="M8.5 8L4 12l4.5 4M15.5 8l4.5 4-4.5 4M13.5 5l-3 14"/>'),
-    // terminal window
-    terminal: svg('<rect x="3" y="4" width="18" height="16"/><path d="M3 8h18M7 12.5l2.5 2.5L7 17.5M13 17.5h4"/>'),
     // newspaper
     news: svg('<path d="M17 6H4v13a1 1 0 0 0 1 1h13"/><path d="M17 6h3v11a3 3 0 0 1-3 3"/><path d="M7 10h7M7 13h7M7 16h4"/>'),
     // box-and-whisker
@@ -65,18 +63,10 @@
       {
         icon: ICON.code,
         name: "Market Simulation Coding",
-        blurb: "Write a trading bot, run it on your own machine, and trade it against everyone else's for ten minutes.",
-        chips: ["Multiplayer", "Python", "10 min"],
+        blurb: "Write a trading bot, run it on your own machine, then spend everything it makes building an empire on a shared map.",
+        chips: ["Multiplayer", "Python", "Build + conquer"],
         href: "/market-sim-py",
         mode: "market_sim_py",
-      },
-      {
-        icon: ICON.terminal,
-        name: "SWE Prep",
-        blurb: "The same market, but you write Python in the browser and the server runs it. Nothing to install.",
-        chips: ["Solo", "Sandboxed", "No setup"],
-        href: "/swe-prep",
-        mode: "swe_prep",
       },
       {
         icon: ICON.risk,

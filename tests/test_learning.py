@@ -98,12 +98,10 @@ class TestPaths:
                 assert s["mode"] in scores.MODES, f"{level}: {s['mode']}"
 
     def test_beginner_path_has_no_coding_mode(self):
-        coding = {"market_sim_py", "swe_prep"}
-        assert not coding & {s["mode"] for s in learning.path_for("beginner")}
+        assert "market_sim_py" not in {s["mode"] for s in learning.path_for("beginner")}
 
-    def test_advanced_path_includes_the_coding_modes(self):
-        assert {"market_sim_py", "swe_prep"} <= {
-            s["mode"] for s in learning.path_for("advanced")}
+    def test_advanced_path_includes_the_coding_mode(self):
+        assert "market_sim_py" in {s["mode"] for s in learning.path_for("advanced")}
 
     def test_unknown_level_falls_back_to_beginner(self):
         assert learning.path_for("wizard") == learning.path_for("beginner")

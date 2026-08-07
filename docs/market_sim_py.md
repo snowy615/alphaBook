@@ -6,11 +6,9 @@ built, the logic underneath, and how to write a bot that wins.
 If you've never looked at the code, start here. It assumes you know a little
 Python but nothing about how the game is put together.
 
-> **Two related games.** *Market Simulation Py* (this doc) runs your strategy on
-> **your own machine** and takes orders over an API — the model built for an open
-> public service. Its sibling **SWE Prep** runs your Python **on the server** in
-> a sandbox, in-browser, for coding/interview practice. Same market, two
-> execution models. See [§10](#10-swe-prep-the-server-run-sibling).
+> **Two halves, one strategy.** Your bot runs on **your own machine** and reaches
+> the market over an API. What it earns becomes the budget for an empire on a
+> shared map. See [§10](#10-the-world-layer).
 
 ---
 
@@ -342,17 +340,47 @@ def on_tick(ctx):
 
 ---
 
-## 10. SWE Prep: the server-run sibling
+## 10. The world layer
 
-If you'd rather write Python in the browser and have the server run it for you —
-no client, no token, no local setup — that's **SWE Prep** (`/swe-prep`). Same
-market and same items, but your strategy executes **on the server inside a
-sandbox** ([`app/swe_prep_sandbox.py`](../app/swe_prep_sandbox.py)): an AST
-whitelist (no imports, no attribute escapes), a stripped `__builtins__`, and a
-trace-based deadline that kills runaway loops. Because untrusted code runs
-server-side there, it is intended for **trusted audiences** (a classroom or
-coding-practice session), not the open internet — which is precisely why Market
-Simulation Py exists in the client-side form documented above.
+Trading profit is not the end of the run. Every player who joins gets a base on
+a shared map ([`app/world.py`](../app/world.py)), and one line of arithmetic
+decides what they can do with it:
+
+```
+credits = 2,000 grant + trading P&L + what buildings earn - what has been spent
+```
+
+Credits floor at zero rather than going negative, so a drawdown stalls new
+spending but never claws back what is already standing.
+
+The module is pure and synchronous — no I/O, no clock, no framework — for the
+same reason [`app/risk_episodes.py`](../app/risk_episodes.py) is: the entire
+ruleset is then testable without standing up a market, and the HTTP layer stays
+a thin transport over it. Map generation and combat jitter both come from the
+run's seed, so a run replays identically and tests assert exact outcomes.
+
+Two endpoints sit beside the order gateway, with the same auth and the same rate
+limiter:
+
+```
+GET  /market-sim-py/run/{id}/world           # the whole map, your empire, the standings
+POST /market-sim-py/run/{id}/world/actions   # build, train, move, attack, found, trade
+GET  /market-sim-py/world/catalogue          # costs, yields and unit stats (static)
+```
+
+An action is validated JSON, exactly like an order, so no player code runs on
+the server here either. Actions apply in order and are reported on one by one:
+a batch of six builds you can only half afford gets you the ones you can pay for
+plus a readable reason for the rest.
+
+The world advances once every five market heartbeats, off the same
+request-driven clock as the market, so it cannot drift from the contest funding
+it. Everything a bot can do from `on_world_tick`, a player can do by hand from
+the Empire tab, and both go through `World.act`.
+
+There is deliberately **no fog of war**: the dashboard is meant to be read at a
+glance, and hiding the board would put the interesting decisions out of reach of
+a strategy that can only see through a JSON view.
 
 ---
 
@@ -365,5 +393,8 @@ Run with the rest of the suite: `./venv/bin/python -m pytest tests -q`.
   the rate-limit allowance, fair-value scoring, and the run lifecycle.
 - [`tests/test_algo_ratelimit.py`](../tests/test_algo_ratelimit.py) — the token
   bucket: burst, refill, partial grants, per-key independence.
-- SWE Prep's sandbox and engine have their own suites
-  (`tests/test_swe_prep_sandbox.py`, `tests/test_swe_prep_engine.py`).
+- [`tests/test_world.py`](../tests/test_world.py) — the world ruleset: the
+  budget link to trading P&L, map generation, building, production and
+  starvation, movement, combat, sieges and elimination, the exchange, the
+  development score, and the shipped starter strategy played against a real
+  world.

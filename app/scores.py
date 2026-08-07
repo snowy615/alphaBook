@@ -81,14 +81,6 @@ MODES: Dict[str, Dict[str, Any]] = {
         "kind": "per_game",
         "blurb": "Your Python bot trading a live book.",
     },
-    "swe_prep": {
-        "label": "SWE Prep",
-        "metric": "P&L",
-        "unit": "$",
-        "href": "/swe-prep",
-        "kind": "per_game",
-        "blurb": "Strategy coding sandbox.",
-    },
     "risks": {
         "label": "Risks",
         "metric": "Score",
