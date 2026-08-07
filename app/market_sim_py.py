@@ -34,6 +34,7 @@ from app import algo_engine as engine
 from app import db as db_module
 from app import feedback as fb
 from app import scores
+from app import world as world_mod
 from app.algo_engine import OrderRejected
 from app.algo_ratelimit import RateLimiter
 from app.auth import create_token, current_user
@@ -84,6 +85,26 @@ class AddBotRequest(BaseModel):
     skill: str
     activate_seconds: int = 0
     name: Optional[str] = Field(default=None, max_length=40)
+
+
+class WorldActionIn(BaseModel):
+    """One empire action. Loosely typed on purpose — every field is optional
+    here and the world engine owns the real validation, so a player gets one
+    consistent, explanatory error style rather than a Pydantic dump."""
+    type: str
+    building: Optional[str] = None
+    unit: Optional[str] = None
+    unit_id: Optional[str] = None
+    x: Optional[int] = None
+    y: Optional[int] = None
+    count: Optional[int] = None
+    side: Optional[str] = None
+    resource: Optional[str] = None
+    qty: Optional[float] = None
+
+
+class WorldActionsRequest(BaseModel):
+    actions: List[WorldActionIn] = Field(default_factory=list)
 
 
 # ---- Helpers ----
@@ -441,6 +462,80 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
         "bots": run.bots_view(),
         "tape": list(run.tape)[:25],
         "me": run.player_view(str(user.id)),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# The world layer
+#
+# The same authenticated, rate-limited shape as the order gateway: the client
+# posts intents, the server owns the rules. Nothing here executes player code
+# either — a world action is validated JSON, exactly like an order.
+# ─────────────────────────────────────────────────────────────────────────────
+
+@router.get("/world/catalogue")
+async def world_catalogue():
+    """Costs, yields and stats. Static, so a client can fetch it once."""
+    return world_mod.catalogue()
+
+
+@router.get("/run/{run_id}/world")
+async def world_state(run_id: str, user: User = Depends(current_user)):
+    """The whole board plus your own empire. Polled by the dashboard and bots."""
+    run = _require_run(run_id)
+    await _advance_and_maybe_persist(run)
+    p = run.member(str(user.id))
+    if p is not None:
+        p.last_seen = time.monotonic()
+    return {
+        "status": run.status,
+        "tick": run.tick,
+        "world_tick": run.world.tick_no,
+        "world_tick_seconds": world_mod.WORLD_TICK_SECONDS,
+        "map": run.world.map_view(),
+        "me": run.world.player_view(str(user.id)),
+        "standings": run.world.standings(),
+    }
+
+
+@router.post("/run/{run_id}/world/actions")
+async def world_actions(run_id: str, req: WorldActionsRequest,
+                        user: User = Depends(current_user)):
+    """Apply a batch of world actions in order.
+
+    Each action is reported on individually rather than the batch failing as a
+    whole: a strategy that queues six builds and can afford four should get the
+    four, plus a readable reason for the two it missed.
+    """
+    run = _require_run(run_id)
+    _require_member(run, user)
+    await _advance_and_maybe_persist(run)
+
+    if run.status != "running":
+        raise HTTPException(status_code=400,
+                            detail="The world is only open while the run is live")
+    if not req.actions:
+        raise HTTPException(status_code=400, detail="No actions supplied")
+
+    allowance = _order_limiter.take(str(user.id),
+                                    min(len(req.actions), engine.MAX_ORDERS_PER_REQUEST))
+    results = []
+    applied = 0
+    for i, action in enumerate(req.actions[:engine.MAX_ORDERS_PER_REQUEST]):
+        if i >= allowance:
+            results.append({"ok": False, "rate_limited": True,
+                            "error": "Slow down — you are over the action rate limit"})
+            continue
+        try:
+            results.append(run.world.act(str(user.id), action.model_dump(exclude_none=True)))
+            applied += 1
+        except world_mod.WorldRejected as exc:
+            results.append({"ok": False, "error": str(exc)})
+
+    return {
+        "applied": applied,
+        "results": results,
+        "me": run.world.player_view(str(user.id)),
     }
 
 

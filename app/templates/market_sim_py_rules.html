@@ -31,12 +31,16 @@
 
   <div class="container">
     <div class="msp-hero">
-      <h2>Write a trading bot. Run it on your machine. See who wins.</h2>
+      <h2>Write a trading bot. Fund an empire with what it makes.</h2>
       <p>
         You write a strategy in Python (or any language) and run it on your own computer. It connects to a live
         <strong>{{ run_minutes }}-minute</strong> market over our API, and every bot — plus two house bots — trades the
-        same order book. Orders match the instant they arrive, just like a real exchange. Best mark-to-market P&amp;L at
-        the bell takes it.
+        same order book. Orders match the instant they arrive, just like a real exchange.
+      </p>
+      <p>
+        Your profit is not the end of it. Everything you make becomes <strong>credits</strong> on a shared map where you
+        hold a base: claim ground, raise farms and factories, train units, and take territory off your rivals. Best
+        P&amp;L wins the market. Most developed empire wins the world.
       </p>
     </div>
 
@@ -103,6 +107,56 @@
 
     <div class="card msp-panel">
       <div class="head">
+        <h3>The empire</h3>
+        <span class="msp-muted">your P&amp;L is your budget</span>
+      </div>
+      <div class="msp-panel-body msp-docs">
+        <p>
+          Every player who joins gets a base on a shared map, and one line of arithmetic decides what they can do
+          with it:
+        </p>
+        <pre class="msp-pre">credits = 2,000 starting grant + your trading P&amp;L + what your buildings earn - what you have spent</pre>
+        <p>
+          Trade well and the map opens up. Trade badly and the budget closes: credits floor at zero rather than going
+          negative, so a losing run stalls your expansion but never takes back what you have already built.
+        </p>
+
+        <h4>What you can build</h4>
+        <ul class="msp-rules">
+          <li><strong>Farm</strong> (plains) feeds your workers. Everything else depends on this one.</li>
+          <li><strong>Lumber camp</strong> (forest) and <strong>Mine</strong> (hills) produce materials.</li>
+          <li><strong>Housing</strong> raises your population cap by four.</li>
+          <li><strong>Market</strong> pays credits and claims the ring of tiles around it.</li>
+          <li><strong>Factory</strong> is the big earner: ten credits a tick, three workers, and it eats materials.</li>
+          <li><strong>Barracks</strong> unlocks soldiers, cavalry and cannon. <strong>Fort</strong> makes ground hard
+            to take.</li>
+        </ul>
+
+        <h4>Taking ground</h4>
+        <p>
+          An <strong>explorer</strong> claims any unclaimed tile it walks over, so movement is territory. A
+          <strong>settler</strong> spends itself to claim a two-tile radius anywhere it can reach. To take ground that
+          is already owned you have to fight for it: beat whatever is standing on the tile, then bring the building
+          down. A <strong>cannon</strong> does double damage to buildings. Raze someone's base and you inherit their
+          entire territory.
+        </p>
+
+        <h4>How the world is ranked</h4>
+        <p>
+          Development score, and it rewards exactly what it sounds like: <strong>3 points per tile</strong>
+          you hold, the value of every <strong>building</strong> standing, <strong>4 points per worker</strong>, and
+          the value of your <strong>army</strong>. The map advances once every five seconds; units get their movement
+          back then.
+        </p>
+        <p class="msp-muted">
+          You can play this half by hand from the Empire tab on the run page, or drive it from your bot's
+          <code>on_world_tick</code>. Both go through the same rules, so neither is a shortcut.
+        </p>
+      </div>
+    </div>
+
+    <div class="card msp-panel">
+      <div class="head">
         <h3>The items</h3>
         <span class="msp-muted">position limit {{ position_limit }} each, long or short</span>
       </div>
@@ -133,7 +187,23 @@
         <pre class="msp-pre">GET  /market-sim-py/run/{id}/market      # snapshot: books, your position, pnl, seconds_left
 POST /market-sim-py/run/{id}/orders      # {"orders": [ ... ]}  — matched on arrival
 POST /market-sim-py/run/{id}/cancel      # {"item": "WIDGET"}   — or {} for all
-GET  /market-sim-py/run/{id}/token       # your bearer token</pre>
+GET  /market-sim-py/run/{id}/token       # your bearer token
+
+GET  /market-sim-py/world/catalogue      # costs, yields and unit stats (static)
+GET  /market-sim-py/run/{id}/world       # the whole map, your empire, the standings
+POST /market-sim-py/run/{id}/world/actions   # {"actions": [ ... ]}</pre>
+
+        <h4>A world action looks like</h4>
+        <pre class="msp-pre">{"type": "build",  "building": "farm", "x": 5, "y": 7}
+{"type": "train",  "unit": "explorer", "count": 2}
+{"type": "move",   "unit_id": "u3", "x": 6, "y": 7}
+{"type": "attack", "unit_id": "u3", "x": 7, "y": 7}    # must already be adjacent
+{"type": "found",  "unit_id": "u9"}                    # spend a settler on an outpost
+{"type": "trade",  "side": "buy", "resource": "materials", "qty": 20}</pre>
+        <p class="msp-muted">
+          Actions apply in order and are reported on one by one, so a batch of six builds you can only half afford
+          gets you the ones you can pay for plus a reason for the rest.
+        </p>
 
         <h4>An order looks like</h4>
         <pre class="msp-pre">{"item": "WIDGET", "side": "BUY",  "price": 99.95, "qty": 10}   # resting limit order

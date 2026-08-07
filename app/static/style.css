@@ -7404,3 +7404,320 @@ body.tut-locked {
 
 .role-now { font-size: 14px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .role-now a { color: var(--brand); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   The world layer — the empire half of the coding game.
+
+   Same fixed-height discipline as the market board: the map fills what is left
+   of the viewport and each panel scrolls inside itself, so the page never
+   scrolls and the key numbers stay where you left them.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.msp-switch {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  background: var(--panel-2);
+}
+
+.msp-switch-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  padding: 7px 16px;
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+
+.msp-switch-btn:hover {
+  color: var(--text);
+}
+
+.msp-switch-btn.is-on {
+  background: var(--brand-deep);
+  color: #fff;
+}
+
+.wld-board {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.wld-strip {
+  grid-column: 1 / -1;
+}
+
+.wld-board .card {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 0;
+}
+
+.wld-board .card .head {
+  flex: 0 0 auto;
+}
+
+.wld-board .msp-panel-body {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+.wld-side {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* -- the map -- */
+.wld-map-body {
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+}
+
+.wld-map {
+  display: block;
+  /* The canvas is sized in JS from its parent box; without this it reports its
+     own intrinsic size back and the two fight each other on every resize. */
+  position: absolute;
+  inset: 0;
+}
+
+.wld-hint {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: linear-gradient(to top, var(--panel), transparent);
+  pointer-events: none;
+}
+
+.wld-hint.is-bad {
+  color: var(--red);
+}
+
+.wld-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.wld-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.wld-key.is-out {
+  opacity: .45;
+  text-decoration: line-through;
+}
+
+.wld-key i,
+.wld-dot {
+  width: 9px;
+  height: 9px;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.wld-dot {
+  margin-right: 6px;
+  vertical-align: -1px;
+}
+
+/* -- the selection panel -- */
+.wld-sel-card {
+  flex: 1 1 40%;
+}
+
+.wld-rank-card {
+  flex: 0 0 auto;
+  max-height: 30%;
+}
+
+.wld-log-card {
+  flex: 1 1 22%;
+}
+
+.wld-block {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.wld-block:last-child {
+  border-bottom: none;
+}
+
+.wld-block-h {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+/* Only the exchange needs this — its headings are raw resource keys. */
+.wld-block-h.is-resource {
+  text-transform: capitalize;
+}
+
+.wld-opts {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 6px;
+}
+
+.wld-opt {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color .12s ease, background .12s ease;
+}
+
+.wld-opt:hover {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+
+/* Unaffordable options stay clickable: the server's refusal explains exactly
+   what is short, which teaches the economy faster than a dead button. */
+.wld-opt.is-off {
+  opacity: .5;
+}
+
+.wld-opt-n {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wld-opt-c {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.wld-units {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wld-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--raised);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wld-unit[disabled] {
+  opacity: .55;
+  cursor: default;
+}
+
+.wld-unit.is-on {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+
+.wld-unit i {
+  width: 8px;
+  height: 8px;
+}
+
+.wld-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.wld-act {
+  font-size: 12px;
+  padding: 6px 12px;
+}
+
+.wld-hp {
+  height: 4px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  margin: 6px 0 4px;
+}
+
+.wld-hp span {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+
+.wld-trade {
+  display: flex;
+  gap: 6px;
+}
+
+.wld-trade .msp-input {
+  width: auto;
+  flex: 1 1 60px;
+  min-width: 0;
+}
+
+.wld-mini {
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.wld-line {
+  font-size: 12px;
+  color: var(--muted);
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.wld-line:last-child {
+  border-bottom: none;
+}
+
+.wld-board .msp-table tr.is-me {
+  background: var(--brand-wash);
+}
+
+.wld-board .msp-table tr.is-out {
+  opacity: .45;
+}
+
+@media (max-width: 1100px) {
+  .wld-board {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(240px, 50vh) auto;
+  }
+}

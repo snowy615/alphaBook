@@ -39,6 +39,15 @@
         </div>
       </div>
       <div class="msp-run-actions">
+        <!-- Two games, one run. The switch is here rather than in the board so
+             it stays put when either side re-renders. -->
+        <div class="msp-switch hidden" id="boardSwitch" role="tablist"
+          aria-label="Which half of the game to show">
+          <button class="msp-switch-btn is-on" id="tabMarket" role="tab"
+            aria-selected="true" aria-controls="marketBoard">Market</button>
+          <button class="msp-switch-btn" id="tabWorld" role="tab"
+            aria-selected="false" aria-controls="worldBoard">Empire</button>
+        </div>
         <button id="setupToggle" class="btn ghost hidden" aria-expanded="false"
           aria-controls="setupDrawer">Setup</button>
         <button id="startBtn" class="btn primary hidden">Start run</button>
@@ -151,7 +160,7 @@
 
       <div class="msp-strip" id="myStats"></div>
 
-      <div class="msp-cols">
+      <div class="msp-cols" id="marketBoard">
         <div id="fbkBox" class="hidden"></div>
 
         <div class="card msp-panel">
@@ -211,6 +220,56 @@
           </div>
         </div>
       </div>
+
+      <!-- ── The empire half ───────────────────────────────────────────────
+           Your trading P&L is the budget here. The map is the whole board,
+           always: hiding it would put the interesting decisions out of reach
+           of a bot that can only see through the API. -->
+      <div class="wld-board hidden" id="worldBoard">
+        <div class="msp-strip wld-strip" id="wldStrip"></div>
+
+        <div class="card msp-panel wld-map-card">
+          <div class="head">
+            <h3>The map</h3>
+            <div class="wld-legend" id="wldLegend"></div>
+          </div>
+          <div class="msp-panel-body msp-flush wld-map-body">
+            <canvas id="wldMap" class="wld-map"></canvas>
+            <div class="wld-hint" id="wldHint">Click any tile to inspect it.</div>
+          </div>
+        </div>
+
+        <div class="wld-side">
+          <div class="card msp-panel wld-sel-card">
+            <div class="head">
+              <h3 id="wldSelTitle">Nothing selected</h3>
+              <span class="msp-muted" id="wldSelSub"></span>
+            </div>
+            <div class="msp-panel-body msp-scroll" id="wldSelBody">
+              <p class="msp-muted">Pick a tile on the map to build on it, or pick one of your
+                units to move it.</p>
+            </div>
+          </div>
+
+          <div class="card msp-panel wld-rank-card">
+            <div class="head">
+              <h3>Development</h3>
+              <span class="msp-muted">the world ranking</span>
+            </div>
+            <div class="msp-panel-body msp-flush msp-scroll">
+              <table class="msp-table" id="wldStandings"></table>
+            </div>
+          </div>
+
+          <div class="card msp-panel wld-log-card">
+            <div class="head">
+              <h3>Dispatches</h3>
+              <button class="btn ghost wld-mini" id="wldExchange">Exchange</button>
+            </div>
+            <div class="msp-panel-body msp-scroll" id="wldLog"></div>
+          </div>
+        </div>
+      </div>
     </section>
   </div>
 
@@ -220,11 +279,12 @@
   </script>
   <script src="/static/feedback.js?v=1"></script>
   <script src="/static/market_sim_py.js"></script>
+  <script src="/static/world.js"></script>
   <script src="/static/tutorial.js"></script>
   <script>
     AlphaTutorial.init({
       key: "market-sim-py",
-      version: 1,
+      version: 2,   // bumped for the empire half, so returning players see it
       title: "Market Simulation Coding",
       label: "How to play",
       fullRulesHref: "/market-sim-py",
@@ -232,6 +292,9 @@
       { heading: "Your bot runs on your machine", body: "Nothing you write is uploaded. Your strategy trades this market over an authenticated API, against everyone else's bots, for ten minutes.", facts: [["Round length", "10 min"], ["Order rate", "~10/sec"]] },
       { heading: "Three commands to get trading", body: "<p>Download your client from the Setup panel — your run id and token are already filled in. Then:</p><p><code>cd ~/Downloads</code><br><code>python3 algo_client.py</code></p><p>Edit <code>on_tick</code> and re-run to change your bot. Reconnecting mid-round is fine.</p>" },
       { heading: "Fair values are hidden until the bell", body: "You are marked at each item's hidden fair value, so the leaderboard is not just whoever traded most. Position limits are enforced per item; rejected orders show up in your stats.", facts: [["Position limit", "1,000 / item"]] },
+      { heading: "Your profit funds an empire", body: "<p>Switch to the <strong>Empire</strong> tab. You have a base on a shared map, and your trading P&amp;L is the budget you build it with:</p><p><code>credits = 2,000 + your P&amp;L + what you earn - what you spend</code></p><p>Trade well and the map opens up. Lose money and you simply cannot fund anything new.</p>", facts: [["Starting grant", "2,000 cr"], ["World tick", "5 sec"]] },
+      { heading: "Click a tile to do anything", body: "<p>Click ground you own to build on it. Click one of your units to pick it up, then click where it should go. An <strong>explorer</strong> claims every unclaimed tile it walks over, so moving is how you take land.</p><p>Build farms before factories: a factory needs three workers, and workers need feeding.</p>" },
+      { heading: "Ranked on development, not cash", body: "The world is won by the most developed empire at the bell: land held, buildings standing, workers fed, army raised. Everything you can do by clicking, your bot can do from <code>on_world_tick</code>.", facts: [["Per tile", "3 pts"], ["Per worker", "4 pts"]] },
       ],
     });
   </script>

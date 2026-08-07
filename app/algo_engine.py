@@ -38,7 +38,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
+from app import world as world_mod
 from app.order_book import Order as BookOrder, OrderBook
+from app.world import World
 
 log = logging.getLogger("uvicorn.error")
 
@@ -50,6 +52,10 @@ TOTAL_TICKS: int = int(RUN_SECONDS / TICK_SECONDS)
 
 MAX_PARTICIPANTS: int = 50        # humans per run
 MAX_CATCHUP_TICKS: int = 60       # heartbeat ticks replayed in one advance() call
+
+# The world map is sized at run creation, before anyone has joined. Four gives
+# a board where neighbours actually make contact within the ten minutes.
+WORLD_MAP_PLAYERS: int = 4
 
 # ── Order gateway limits ─────────────────────────────────────────────────────
 # The contest's timing fairness lives here: a bot may send at most ORDER_RATE
@@ -212,6 +218,17 @@ class Run:
         self.tape: Deque[Dict[str, Any]] = deque(maxlen=60)
         self.results: List[Dict[str, Any]] = []
 
+        # The empire layer, seeded from the same value as the market so a run
+        # replays identically end to end.
+        #
+        # The map has to be sized now, before anyone has joined, so it is built
+        # for a typical run rather than the eight-player maximum: at full size
+        # the bases end up so far apart that nobody meets inside ten minutes and
+        # the whole conflict half of the game never happens.
+        self.world = World(seed=seed if seed is not None else self.rng.randrange(1 << 30),
+                           players=WORLD_MAP_PLAYERS)
+        self.world_results: List[Dict[str, Any]] = []
+
         self._add_default_bots()
 
     # -- bots ------------------------------------------------------------
@@ -292,6 +309,12 @@ class Run:
             raise ValueError("this run has already finished")
         p = Participant(uid=uid, name=username)
         self.participants[uid] = p
+        # A seat at the market comes with a base on the map. If the map is full
+        # the player still trades — they just have nothing to spend it on.
+        try:
+            self.world.add_player(uid, username)
+        except world_mod.WorldRejected as exc:
+            log.info("world: %s could not be placed (%s)", username, exc)
         return p
 
     def member(self, uid: str) -> Optional[Participant]:
@@ -335,9 +358,27 @@ class Run:
             self.tick += 1
             executed += 1
 
+        self._advance_world()
+
         if self.tick >= TOTAL_TICKS:
             self.finish()
         return executed
+
+    def _advance_world(self) -> None:
+        """Push P&L into the empires, then run any world ticks now due.
+
+        The world runs on the market's tick counter rather than its own clock,
+        so it inherits the same catch-up behaviour and can never drift from the
+        contest it is funded by.
+        """
+        fair = {s: item.fair for s, item in self.items.items()}
+        for p in self.participants.values():
+            if not p.is_bot:
+                self.world.set_pnl(p.uid, p.pnl(fair))
+
+        ticks_due = int(self.tick * TICK_SECONDS / world_mod.WORLD_TICK_SECONDS)
+        while self.world.tick_no < ticks_due:
+            self.world.tick()
 
     def finish(self) -> None:
         """Close the run and freeze the leaderboard. Idempotent."""
@@ -348,6 +389,7 @@ class Run:
         for book in self.books.values():
             book.clear_all_orders()
         self.results = self.leaderboard()
+        self.world_results = self.world.standings()
 
     # -- the market heartbeat -------------------------------------------
     def _heartbeat(self) -> None:
