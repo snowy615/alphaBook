@@ -112,45 +112,139 @@
       </div>
       <div class="msp-panel-body msp-docs">
         <p>
-          Every player who joins gets a base on a shared map, and one line of arithmetic decides what they can do
-          with it:
+          Every player who joins gets a base on a shared map, and one line of arithmetic decides what
+          they can do with it:
         </p>
-        <pre class="msp-pre">credits = 2,000 starting grant + your trading P&amp;L + what your buildings earn - what you have spent</pre>
+        <pre class="msp-pre">credits = {{ start_grant }} starting grant + your trading P&amp;L + what your buildings earn - what you have spent</pre>
         <p>
-          Trade well and the map opens up. Trade badly and the budget closes: credits floor at zero rather than going
-          negative, so a losing run stalls your expansion but never takes back what you have already built.
+          Trade well and the map opens up. Trade badly and the budget closes: credits floor at zero
+          rather than going negative, so a losing run stalls your expansion but never takes back what
+          you have already built. The map advances once every <strong>{{ world_tick_seconds }} seconds</strong>;
+          production lands and units get their movement back on that beat.
         </p>
 
-        <h4>What you can build</h4>
+        <h4>The four resources</h4>
         <ul class="msp-rules">
-          <li><strong>Farm</strong> (plains) feeds your workers. Everything else depends on this one.</li>
-          <li><strong>Lumber camp</strong> (forest) and <strong>Mine</strong> (hills) produce materials.</li>
-          <li><strong>Housing</strong> raises your population cap by four.</li>
-          <li><strong>Market</strong> pays credits and claims the ring of tiles around it.</li>
-          <li><strong>Factory</strong> is the big earner: ten credits a tick, three workers, and it eats materials.</li>
-          <li><strong>Barracks</strong> unlocks soldiers, cavalry and cannon. <strong>Fort</strong> makes ground hard
-            to take.</li>
+          <li><strong>Credits</strong> pay for everything. They come from your trading P&amp;L, and
+            from factories and markets once you have built them.</li>
+          <li><strong>Materials</strong> come from lumber camps and mines, and are needed alongside
+            credits for most buildings and every military unit.</li>
+          <li><strong>Food</strong> comes from farms. Every worker eats one per tick. Run out and
+            workers start leaving.</li>
+          <li><strong>Workers</strong> staff your buildings and crew your units. You start with a cap
+            of {{ base_pop_cap }} and raise it with housing. Population grows on a food surplus.</li>
         </ul>
+        <p class="msp-muted">
+          Workers are the constraint that bites first. Food producers are staffed before anything
+          else, so a shortage idles a factory rather than starving the farm feeding it, but a factory
+          you cannot crew earns nothing at all.
+        </p>
+
+        <h4>Buildings</h4>
+        <div class="msp-scroll-x">
+          <table class="msp-table msp-ref">
+            <thead>
+              <tr><th>Building</th><th>Cost</th><th>Terrain</th><th class="rec-num">Workers</th>
+                <th>Produces</th><th class="rec-num">HP</th><th>What it is for</th></tr>
+            </thead>
+            <tbody>
+              {% for key in world_buildable %}{% set b = world.buildings[key] %}
+              <tr>
+                <td><strong>{{ b.label }}</strong></td>
+                <td class="msp-mono">{% for res, amt in b.cost.items() %}{{ amt }} {{ {'credits':'cr','materials':'mat','food':'food'}.get(res, res) }}{% if not loop.last %} + {% endif %}{% endfor %}</td>
+                <td>{% for t in b.terrain %}{{ world.terrain[t].label }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+                <td class="rec-num">{{ b.workers }}</td>
+                <td class="msp-mono">{% if b['yield'] %}{% for res, amt in b['yield'].items() %}+{{ amt }} {{ res }}{% if not loop.last %}, {% endif %}{% endfor %}{% else %}—{% endif %}{% if b.upkeep %}{% for res, amt in b.upkeep.items() %} <span class="msp-down">-{{ amt }} {{ res }}</span>{% endfor %}{% endif %}</td>
+                <td class="rec-num">{{ b.hp }}</td>
+                <td class="msp-muted">{{ b.desc }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        <p class="msp-muted">Your base cannot be built or demolished. It claims the ground around it
+          at the start, and losing it puts you out of the world game.</p>
+
+        <h4>Units</h4>
+        <div class="msp-scroll-x">
+          <table class="msp-table msp-ref">
+            <thead>
+              <tr><th>Unit</th><th>Cost</th><th class="rec-num">HP</th><th class="rec-num">Attack</th>
+                <th class="rec-num">Defence</th><th class="rec-num">Move</th><th class="rec-num">Workers</th>
+                <th>Needs</th><th>What it is for</th></tr>
+            </thead>
+            <tbody>
+              {% for key, u in world.units.items() %}
+              <tr>
+                <td><strong>{{ u.label }}</strong></td>
+                <td class="msp-mono">{% for res, amt in u.cost.items() %}{{ amt }} {{ {'credits':'cr','materials':'mat','food':'food'}.get(res, res) }}{% if not loop.last %} + {% endif %}{% endfor %}</td>
+                <td class="rec-num">{{ u.hp }}</td>
+                <td class="rec-num">{{ u.attack }}</td>
+                <td class="rec-num">{{ u.defense }}</td>
+                <td class="rec-num">{{ u.speed }}</td>
+                <td class="rec-num">{{ u.workers }}</td>
+                <td>{% if u.needs %}{{ world.buildings[u.needs].label }}{% else %}<span class="msp-muted">—</span>{% endif %}</td>
+                <td class="msp-muted">{{ u.desc }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        <h4>Terrain</h4>
+        <div class="msp-scroll-x">
+          <table class="msp-table msp-ref">
+            <thead>
+              <tr><th>Ground</th><th class="rec-num">Move cost</th><th class="rec-num">Defence bonus</th>
+                <th>Notes</th></tr>
+            </thead>
+            <tbody>
+              {% for key, t in world.terrain.items() %}
+              <tr>
+                <td><strong>{{ t.label }}</strong></td>
+                <td class="rec-num">{% if t.passable %}{{ t.move_cost }}{% else %}—{% endif %}</td>
+                <td class="rec-num">{% if t.defense %}+{{ (t.defense * 100) | int }}%{% else %}—{% endif %}</td>
+                <td class="msp-muted">
+                  {%- if key == 'plain' %}Builds almost anything. The only ground a farm or market will take.
+                  {%- elif key == 'forest' %}Lumber camps and housing. Slow to cross, and defenders get cover.
+                  {%- elif key == 'hills' %}The only ground for a mine, and the best ground to defend.
+                  {%- else %}Impassable. Nothing crosses it and nothing is built on it.{% endif %}
+                </td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
 
         <h4>Taking ground</h4>
-        <p>
-          An <strong>explorer</strong> claims any unclaimed tile it walks over, so movement is territory. A
-          <strong>settler</strong> spends itself to claim a two-tile radius anywhere it can reach. To take ground that
-          is already owned you have to fight for it: beat whatever is standing on the tile, then bring the building
-          down. A <strong>cannon</strong> does double damage to buildings. Raze someone's base and you inherit their
-          entire territory.
-        </p>
+        <ul class="msp-rules">
+          <li>An <strong>explorer</strong> claims any unclaimed tile it walks over, so movement is
+            territory. It never takes a tile someone already owns.</li>
+          <li>A <strong>settler</strong> spends itself to claim a two-tile radius anywhere it can
+            reach, which is how you jump to a distant patch of hills.</li>
+          <li>To take owned ground you have to fight for it. Units standing on a tile shield whatever
+            is underneath, so you beat the garrison first, then bring the building down.</li>
+          <li>Attacking costs the unit its turn, and the defender always strikes back. Probing a fort
+            with an explorer is a real loss, not a free look.</li>
+          <li>Terrain and forts add to the defender's strength, and a fort stiffens the tiles around
+            it as well as its own.</li>
+          <li>A <strong>cannon</strong> does double damage to buildings and folds quickly if it is
+            caught in the open.</li>
+          <li>Raze someone's base and you take their entire territory. They are out of the world half
+            of the game, though they keep trading.</li>
+        </ul>
 
         <h4>How the world is ranked</h4>
         <p>
-          Development score, and it rewards exactly what it sounds like: <strong>3 points per tile</strong>
-          you hold, the value of every <strong>building</strong> standing, <strong>4 points per worker</strong>, and
-          the value of your <strong>army</strong>. The map advances once every five seconds; units get their movement
-          back then.
+          Development score, and it rewards exactly what it sounds like:
+          <strong>{{ tile_points | int }} points per tile</strong> you hold, the value of every
+          <strong>building</strong> standing, <strong>{{ worker_points | int }} points per worker</strong>,
+          and the value of your <strong>army</strong>. A building is worth roughly a third of its
+          credit cost, so putting money into the map always beats sitting on it.
         </p>
         <p class="msp-muted">
-          You can play this half by hand from the Empire tab on the run page, or drive it from your bot's
-          <code>on_world_tick</code>. Both go through the same rules, so neither is a shortcut.
+          You can play this half by hand from the Empire tab on the run page, or drive it from your
+          bot's <code>on_world_tick</code>. Both go through the same rules, so neither is a shortcut.
         </p>
       </div>
     </div>

@@ -235,7 +235,8 @@
           </div>
           <div class="msp-panel-body msp-flush wld-map-body">
             <canvas id="wldMap" class="wld-map"></canvas>
-            <div class="wld-hint" id="wldHint">Click any tile to inspect it.</div>
+            <div class="wld-tip hidden" id="wldTip" role="tooltip"></div>
+            <div class="wld-hint" id="wldHint">Hover a tile to read it, click to act on it.</div>
           </div>
         </div>
 
@@ -284,17 +285,44 @@
   <script>
     AlphaTutorial.init({
       key: "market-sim-py",
-      version: 2,   // bumped for the empire half, so returning players see it
+      version: 3,   // bumped whenever the steps change, so returning players see them
       title: "Market Simulation Coding",
       label: "How to play",
       fullRulesHref: "/market-sim-py",
       steps: [
-      { heading: "Your bot runs on your machine", body: "Nothing you write is uploaded. Your strategy trades this market over an authenticated API, against everyone else's bots, for ten minutes.", facts: [["Round length", "10 min"], ["Order rate", "~10/sec"]] },
-      { heading: "Three commands to get trading", body: "<p>Download your client from the Setup panel — your run id and token are already filled in. Then:</p><p><code>cd ~/Downloads</code><br><code>python3 algo_client.py</code></p><p>Edit <code>on_tick</code> and re-run to change your bot. Reconnecting mid-round is fine.</p>" },
-      { heading: "Fair values are hidden until the bell", body: "You are marked at each item's hidden fair value, so the leaderboard is not just whoever traded most. Position limits are enforced per item; rejected orders show up in your stats.", facts: [["Position limit", "1,000 / item"]] },
-      { heading: "Your profit funds an empire", body: "<p>Switch to the <strong>Empire</strong> tab. You have a base on a shared map, and your trading P&amp;L is the budget you build it with:</p><p><code>credits = 2,000 + your P&amp;L + what you earn - what you spend</code></p><p>Trade well and the map opens up. Lose money and you simply cannot fund anything new.</p>", facts: [["Starting grant", "2,000 cr"], ["World tick", "5 sec"]] },
-      { heading: "Click a tile to do anything", body: "<p>Click ground you own to build on it. Click one of your units to pick it up, then click where it should go. An <strong>explorer</strong> claims every unclaimed tile it walks over, so moving is how you take land.</p><p>Build farms before factories: a factory needs three workers, and workers need feeding.</p>" },
-      { heading: "Ranked on development, not cash", body: "The world is won by the most developed empire at the bell: land held, buildings standing, workers fed, army raised. Everything you can do by clicking, your bot can do from <code>on_world_tick</code>.", facts: [["Per tile", "3 pts"], ["Per worker", "4 pts"]] },
+      // Deliberately one idea per card. The previous version tried to explain
+      // the empire in three, and the empire is half the game.
+      { heading: "Two games, one strategy",
+        body: "<p>This round has two halves. Your bot <strong>trades</strong> a live order book against everyone else's. Whatever it makes becomes the budget for an <strong>empire</strong> on a shared map.</p><p>You can win either half. Doing well at both is the point.</p>",
+        facts: [["Round length", "10 min"], ["Players", "up to 50"]] },
+
+      { heading: "Nothing you write is uploaded",
+        body: "<p>Your strategy runs on <em>your</em> machine and only ever sends us orders. Any language, any library, any amount of compute.</p><p>The server is just the exchange. It validates and matches, and it never runs your code.</p>" },
+
+      { heading: "Two commands to get trading",
+        body: "<p>Open the <strong>Setup</strong> panel and download the client. Your run id and token are already filled in.</p><p><code>cd ~/Downloads</code><br><code>python3 algo_client.py</code></p><p>Edit <code>on_tick</code>, re-run, iterate. Reconnecting mid-round is fine.</p>" },
+
+      { heading: "You are marked at a hidden fair value",
+        body: "<p>Every item walks a fair value nobody can see until the bell, and your P&amp;L is marked against it. Quoting silly prices to yourself does not manufacture profit.</p><p>Position limits are enforced per item, and rejected orders show up in your stats.</p>",
+        facts: [["Position limit", "1,000 / item"], ["Order rate", "~10/sec"]] },
+
+      { heading: "Your P&L is your build budget",
+        body: "<p>Switch to the <strong>Empire</strong> tab. You have a base on the map, and one line decides what you can do with it:</p><p><code>credits = 2,000 + your P&amp;L + what you earn - what you spend</code></p><p>Credits floor at zero. A bad run stalls you, but it never takes back what you have already built.</p>",
+        facts: [["Starting grant", "2,000 cr"], ["World tick", "5 sec"]] },
+
+      { heading: "Feed people before you industrialise",
+        body: "<p>Every worker eats one food a tick, and buildings need workers to run. A <strong>farm</strong> feeds them, <strong>housing</strong> raises the cap, and a <strong>factory</strong> needs three of them before it pays a penny.</p><p>Build in that order. A factory with nobody to crew it earns nothing.</p>",
+        facts: [["Farm", "+5 food"], ["Factory", "+10 credits"]] },
+
+      { heading: "Moving is how you take land",
+        body: "<p>An <strong>explorer</strong> claims every unclaimed tile it walks over, so send them out early and keep them walking. A <strong>settler</strong> spends itself to claim a whole radius somewhere further out.</p><p>Neither can take ground that someone already owns.</p>" },
+
+      { heading: "Click a tile to act on it",
+        body: "<p>Hover any tile to read it. Click ground you own to build on it. Click one of your units to pick it up, then click where it should go — the tiles it can reach light up.</p><p>To attack, move next to the target first. Attacking costs the whole turn and the defender always hits back.</p>" },
+
+      { heading: "Ranked on development, not cash",
+        body: "<p>The world goes to the most developed empire at the bell: land held, buildings standing, workers fed, army raised. Sitting on credits scores nothing.</p><p>Everything you just did by clicking, your bot can do from <code>on_world_tick</code>.</p>",
+        facts: [["Per tile", "3 pts"], ["Per worker", "4 pts"]] },
       ],
     });
   </script>

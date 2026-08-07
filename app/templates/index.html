@@ -43,12 +43,15 @@
   <div class="container">
     <section class="hero">
       <div class="hero-copy">
-        <h2>Trade a live market against everyone else in the room.</h2>
+        <span class="hero-kicker">Trading, as a game you can win</span>
+        <h2>Trade a live market. Spend what you make building an empire.</h2>
         <p>A real price-time-priority order book, live market data, and the exercises trading firms
-          actually use to hire. Virtual balances, no real-money risk, free for any student.</p>
+          actually use to hire. Then the part nobody else does: in the coding mode, every pound your
+          bot earns becomes territory, factories and armies on a shared map. Virtual balances, no
+          real-money risk, free for any student.</p>
         <div class="hero-cta">
           <a href="/signup" class="btn primary" id="heroPrimary">Start trading</a>
-          <a href="/about" class="btn">How it works</a>
+          <a href="/market-sim-py" class="btn">See the coding mode</a>
         </div>
         <div class="hero-facts">
           <div><strong id="factStocks">7</strong><span>live stocks</span></div>
@@ -67,6 +70,44 @@
     </section>
 
     <div id="nextStep" class="hidden"></div>
+
+    <!-- The flagship mode gets its own band. It is the thing that makes
+         AlphaBook different from a plain trading simulator, and a card in a
+         grid of eight does not say that. -->
+    <section class="flagship">
+      <div class="flagship-copy">
+        <span class="flagship-tag">Flagship mode</span>
+        <h2>Your P&amp;L is your budget.</h2>
+        <p>
+          Write a trading bot and run it on your own machine. It trades a live ten-minute order book
+          against everyone else's. Then everything it earns becomes credits on a shared map, where
+          you claim ground, raise farms and factories, train armies and take territory off your rivals.
+        </p>
+        <ol class="flagship-steps">
+          <li>
+            <strong>Trade</strong>
+            <span>Your bot works the book over a rate-limited API. Nothing you write leaves your machine.</span>
+          </li>
+          <li>
+            <strong>Bank it</strong>
+            <span>Profit becomes credits. Lose money and you simply cannot fund anything new.</span>
+          </li>
+          <li>
+            <strong>Build</strong>
+            <span>Spend it on land, industry and soldiers. Most developed empire at the bell wins.</span>
+          </li>
+        </ol>
+        <div class="flagship-cta">
+          <a href="/market-sim-py" class="btn primary">Play the coding mode</a>
+          <span class="msp-muted">Python · multiplayer · 10 minutes a round</span>
+        </div>
+      </div>
+      <div class="flagship-art">
+        <img src="/static/map-preview.svg" alt="A shared map with two players' territories,
+          farms, factories and units" loading="lazy">
+        <span class="flagship-art-cap">Two empires, funded entirely by what their bots made.</span>
+      </div>
+    </section>
 
     <section class="modes" id="modes">
       <div class="board-head">

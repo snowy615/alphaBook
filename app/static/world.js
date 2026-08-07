@@ -17,16 +17,28 @@
   }[c]));
 
   const POLL_MS = 2000;
+  const DEFAULT_HINT = "Hover a tile to read it, click to act on it.";
 
   // Terrain fills, keyed to the site's navy palette so the map sits inside the
   // page rather than on top of it. They are spread further apart in lightness
   // than the palette would suggest, because an ownership wash goes over the top
   // and squashes the difference between them.
+  // Deliberately desaturated. Terrain has to be distinguishable from terrain,
+  // but a vivid ground competes with the player colours washed over it, and it
+  // is the ownership that has to win that fight.
   const TERRAIN_FILL = {
     water:  "#0a1424",   // darkest, so open water reads as a hole in the board
     plain:  "#1b2436",
-    forest: "#17381f",
-    hills:  "#332e47",
+    forest: "#1a2f24",
+    hills:  "#302c40",
+  };
+
+  // Per-tile detail colours, a touch lighter than the ground they sit on.
+  const TERRAIN_DETAIL = {
+    water:  "#16233a",
+    plain:  "#243049",
+    forest: "#2c4a36",
+    hills:  "#443e5c",
   };
 
   let state = null;        // last /world payload
@@ -72,7 +84,7 @@
     hint.classList.toggle("is-bad", !!bad);
     clearTimeout(flash.t);
     flash.t = setTimeout(() => {
-      hint.textContent = "Click any tile to inspect it.";
+      hint.textContent = DEFAULT_HINT;
       hint.classList.remove("is-bad");
     }, 4000);
   }
@@ -173,10 +185,145 @@
     ctx.fill();
   }
 
+  // Unit silhouettes. A shape per role reads at a glance; a coloured dot for
+  // everything would tell you who owns it and nothing about what it is.
+  function unitShape(ctx, kind, cx, cy, r) {
+    ctx.beginPath();
+    switch (kind) {
+      case "explorer":                       // a scout's pennant
+        ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy + r * 0.7);
+        ctx.lineTo(cx - r, cy + r * 0.7);
+        break;
+      case "settler":                        // a cart
+        ctx.rect(cx - r * 0.85, cy - r * 0.7, r * 1.7, r * 1.4);
+        break;
+      case "soldier":                        // a shield
+        ctx.arc(cx, cy, r * 0.9, 0, Math.PI * 2);
+        break;
+      case "cavalry":                        // a lance point
+        ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy);
+        ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+        break;
+      case "cannon": {                       // a hexagon
+        for (let i = 0; i < 6; i++) {
+          const a = (Math.PI / 3) * i - Math.PI / 2;
+          const fn = i ? "lineTo" : "moveTo";
+          ctx[fn](cx + r * Math.cos(a), cy + r * Math.sin(a));
+        }
+        break;
+      }
+      default:
+        ctx.arc(cx, cy, r * 0.8, 0, Math.PI * 2);
+    }
+    ctx.closePath();
+  }
+
   // ── Drawing ────────────────────────────────────────────────────────────
   let cell = 0;
   let originX = 0;
   let originY = 0;
+  let hover = null;
+
+  // The terrain never changes during a run, so it is painted once into an
+  // offscreen canvas and blitted each frame. That keeps the per-frame work to
+  // ownership, buildings and units, and lets the ground carry texture that
+  // would be far too expensive to redraw on every poll.
+  let terrainLayer = null;
+  let terrainKey = "";
+
+  /* A stable pseudo-random value per tile, so the texture is identical on every
+   * redraw. Math.random() here would make the ground shimmer on each poll. */
+  function tileNoise(x, y) {
+    const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return n - Math.floor(n);
+  }
+
+  function buildTerrainLayer(b, size) {
+    const key = `${b.side}:${cell}:${size}`;
+    if (terrainLayer && terrainKey === key) return;
+    terrainKey = key;
+
+    const layer = document.createElement("canvas");
+    layer.width = size;
+    layer.height = size;
+    const g = layer.getContext("2d");
+
+    for (let y = 0; y < b.side; y++) {
+      for (let x = 0; x < b.side; x++) {
+        const px = x * cell;
+        const py = y * cell;
+        const kind = terrainAt(x, y);
+        const n = tileNoise(x, y);
+
+        g.fillStyle = TERRAIN_FILL[kind] || TERRAIN_FILL.plain;
+        g.fillRect(px, py, cell, cell);
+
+        // A faint lightness wobble stops large stretches reading as one flat
+        // slab of colour.
+        g.globalAlpha = 0.05 + n * 0.06;
+        g.fillStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
+        g.fillRect(px, py, cell, cell);
+        g.globalAlpha = 1;
+
+        if (cell < 8) continue;              // too small for detail to help
+        g.fillStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
+        g.strokeStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
+        g.lineWidth = 1;
+
+        if (kind === "forest") {
+          // Two or three little conifers, placed from the tile's own noise.
+          // Held under full opacity so a forest belt reads as texture rather
+          // than as a second, competing block of colour.
+          g.globalAlpha = 0.8;
+          const trees = 2 + Math.floor(n * 2);
+          for (let i = 0; i < trees; i++) {
+            const tx = px + cell * (0.22 + tileNoise(x + i * 7, y) * 0.56);
+            const ty = py + cell * (0.26 + tileNoise(x, y + i * 13) * 0.5);
+            const s = cell * 0.17;
+            g.beginPath();
+            g.moveTo(tx, ty - s);
+            g.lineTo(tx + s * 0.8, ty + s * 0.7);
+            g.lineTo(tx - s * 0.8, ty + s * 0.7);
+            g.closePath();
+            g.fill();
+          }
+          g.globalAlpha = 1;
+        } else if (kind === "hills") {
+          // A ridge line: two humps, offset by the tile's noise.
+          g.beginPath();
+          const base = py + cell * 0.68;
+          g.moveTo(px + cell * 0.14, base);
+          g.quadraticCurveTo(px + cell * (0.3 + n * 0.08), py + cell * 0.32,
+                             px + cell * 0.5, base);
+          g.quadraticCurveTo(px + cell * (0.66 + n * 0.08), py + cell * 0.4,
+                             px + cell * 0.86, base);
+          g.stroke();
+        } else if (kind === "water") {
+          // Two short swells.
+          g.globalAlpha = 0.65;
+          for (let i = 0; i < 2; i++) {
+            const wy = py + cell * (0.34 + i * 0.28 + n * 0.1);
+            g.beginPath();
+            g.moveTo(px + cell * 0.18, wy);
+            g.quadraticCurveTo(px + cell * 0.34, wy - cell * 0.1,
+                               px + cell * 0.5, wy);
+            g.quadraticCurveTo(px + cell * 0.66, wy + cell * 0.1,
+                               px + cell * 0.82, wy);
+            g.stroke();
+          }
+          g.globalAlpha = 1;
+        } else if (n > 0.72) {
+          // Sparse grass tufts, so plains are not featureless.
+          g.globalAlpha = 0.5;
+          const gx = px + cell * (0.3 + n * 0.4);
+          const gy = py + cell * (0.4 + tileNoise(y, x) * 0.3);
+          g.fillRect(gx, gy, Math.max(1, cell * 0.07), Math.max(1, cell * 0.07));
+          g.globalAlpha = 1;
+        }
+      }
+    }
+    terrainLayer = layer;
+  }
 
   function draw() {
     const canvas = $("#wldMap");
@@ -199,34 +346,38 @@
 
     cell = Math.floor(Math.min(w, h) / b.side);
     if (cell < 1) return;
-    originX = Math.floor((w - cell * b.side) / 2);
-    originY = Math.floor((h - cell * b.side) / 2);
+    const size = cell * b.side;
+    originX = Math.floor((w - size) / 2);
+    originY = Math.floor((h - size) / 2);
 
-    // Terrain, then an ownership wash on top. Two passes rather than one so
-    // the tint is a consistent overlay and territory reads as territory.
+    buildTerrainLayer(b, size);
+    ctx.drawImage(terrainLayer, originX, originY);
+
+    // A frame, so the board reads as an object rather than a bleed.
+    ctx.strokeStyle = "rgba(255,255,255,.07)";
+    ctx.lineWidth = 1;
+    ctx.strokeRect(originX + .5, originY + .5, size - 1, size - 1);
+
+    const mine = me().index;
+
+    // Ownership wash. Your own ground is a touch stronger than everyone
+    // else's, so you can find yourself on a crowded board immediately.
     for (let y = 0; y < b.side; y++) {
       for (let x = 0; x < b.side; x++) {
-        const px = originX + x * cell;
-        const py = originY + y * cell;
-        ctx.fillStyle = TERRAIN_FILL[terrainAt(x, y)] || TERRAIN_FILL.plain;
-        ctx.fillRect(px, py, cell, cell);
-
         const owner = ownerAt(x, y);
-        if (owner) {
-          const p = playerByIndex(owner);
-          if (p) {
-            ctx.globalAlpha = p.i === me().index ? 0.34 : 0.24;
-            ctx.fillStyle = p.colour;
-            ctx.fillRect(px, py, cell, cell);
-            ctx.globalAlpha = 1;
-          }
-        }
+        if (!owner) continue;
+        const p = playerByIndex(owner);
+        if (!p) continue;
+        ctx.globalAlpha = owner === mine ? 0.32 : 0.2;
+        ctx.fillStyle = p.colour;
+        ctx.fillRect(originX + x * cell, originY + y * cell, cell, cell);
       }
     }
+    ctx.globalAlpha = 1;
 
-    // Territory outlines: only the edges between different owners, so the
-    // board shows borders rather than graph paper.
-    ctx.lineWidth = 1;
+    // Territory outlines: only the edges where the owner changes, so the board
+    // shows borders rather than graph paper.
+    ctx.lineJoin = "miter";
     for (let y = 0; y < b.side; y++) {
       for (let x = 0; x < b.side; x++) {
         const owner = ownerAt(x, y);
@@ -234,73 +385,178 @@
         const p = playerByIndex(owner);
         if (!p) continue;
         ctx.strokeStyle = p.colour;
-        ctx.globalAlpha = 0.85;
+        ctx.globalAlpha = owner === mine ? 1 : 0.8;
+        ctx.lineWidth = owner === mine ? 2 : 1.25;
         const px = originX + x * cell;
         const py = originY + y * cell;
         if (ownerAt(x, y - 1) !== owner) line(ctx, px, py, px + cell, py);
         if (ownerAt(x, y + 1) !== owner) line(ctx, px, py + cell, px + cell, py + cell);
         if (ownerAt(x - 1, y) !== owner) line(ctx, px, py, px, py + cell);
         if (ownerAt(x + 1, y) !== owner) line(ctx, px + cell, py, px + cell, py + cell);
-        ctx.globalAlpha = 1;
       }
     }
+    ctx.globalAlpha = 1;
 
-    // Buildings.
+    // Buildings, each on a dark plate so the glyph stays legible over forest,
+    // hills and an ownership wash alike.
     (b.buildings || []).forEach((bl) => {
       const p = playerByIndex(bl.o);
-      const cx = originX + bl.x * cell + cell / 2;
-      const cy = originY + bl.y * cell + cell / 2;
-      ctx.fillStyle = p ? p.colour : "#8f9bb3";
-      ctx.strokeStyle = p ? p.colour : "#8f9bb3";
-      ctx.lineWidth = Math.max(1, cell * 0.08);
-      glyph(ctx, bl.b, cx, cy, Math.max(2, cell * 0.3));
+      const px = originX + bl.x * cell;
+      const py = originY + bl.y * cell;
+      const cx = px + cell / 2;
+      const cy = py + cell / 2;
+      const colour = p ? p.colour : "#8f9bb3";
 
-      // A damage bar, but only once something has actually taken a hit.
+      ctx.fillStyle = "rgba(6,10,18,.62)";
+      ctx.fillRect(px + cell * 0.1, py + cell * 0.1, cell * 0.8, cell * 0.8);
+
+      // A base is the thing worth defending, so it gets a ring of its own.
+      if (bl.b === "base") {
+        ctx.strokeStyle = colour;
+        ctx.lineWidth = Math.max(1.2, cell * 0.09);
+        ctx.beginPath();
+        ctx.arc(cx, cy, cell * 0.44, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = colour;
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = Math.max(1, cell * 0.08);
+      glyph(ctx, bl.b, cx, cy, Math.max(2, cell * 0.26));
+
       if (bl.hp < bl.max) {
         const frac = Math.max(0, bl.hp / bl.max);
-        ctx.fillStyle = "#0b0f18";
-        ctx.fillRect(originX + bl.x * cell + 1, originY + bl.y * cell + cell - 3,
-                     cell - 2, 2);
+        const barY = py + cell - Math.max(2, cell * 0.12);
+        const barH = Math.max(2, cell * 0.09);
+        ctx.fillStyle = "rgba(6,10,18,.85)";
+        ctx.fillRect(px + 1, barY, cell - 2, barH);
         ctx.fillStyle = frac > 0.5 ? "#35c98b" : "#f2555a";
-        ctx.fillRect(originX + bl.x * cell + 1, originY + bl.y * cell + cell - 3,
-                     (cell - 2) * frac, 2);
+        ctx.fillRect(px + 1, barY, (cell - 2) * frac, barH);
       }
     });
 
-    // Units, stacked count shown when more than one shares a tile.
+    // Units sit in the tile's top-right so they never hide the building under
+    // them. Where several share a tile, one marker carries the count.
     const stacks = {};
     (b.units || []).forEach((u) => {
       const key = `${u.x},${u.y}`;
-      stacks[key] = (stacks[key] || 0) + 1;
+      (stacks[key] = stacks[key] || []).push(u);
     });
-    (b.units || []).forEach((u) => {
+
+    Object.values(stacks).forEach((group) => {
+      const u = group[0];
       const p = playerByIndex(u.o);
-      const cx = originX + u.x * cell + cell * 0.76;
-      const cy = originY + u.y * cell + cell * 0.24;
-      const r = Math.max(1.5, cell * 0.16);
+      const cx = originX + u.x * cell + cell * 0.72;
+      const cy = originY + u.y * cell + cell * 0.28;
+      const r = Math.max(2, cell * 0.2);
+
       ctx.beginPath();
-      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r + 1.5, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(6,10,18,.75)";
+      ctx.fill();
+
+      unitShape(ctx, u.k, cx, cy, r);
       ctx.fillStyle = p ? p.colour : "#8f9bb3";
       ctx.fill();
-      ctx.strokeStyle = "#090d15";
+      ctx.strokeStyle = "rgba(6,10,18,.9)";
       ctx.lineWidth = 1;
       ctx.stroke();
-      if (u.id === selectedUnit) {
+
+      if (group.length > 1 && cell >= 14) {
+        ctx.fillStyle = "#fff";
+        ctx.font = `600 ${Math.max(8, cell * 0.32)}px ui-monospace, Menlo, monospace`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(String(group.length),
+                     originX + u.x * cell + cell * 0.3,
+                     originY + u.y * cell + cell * 0.72);
+      }
+
+      if (group.some((g) => g.id === selectedUnit)) {
         ctx.beginPath();
-        ctx.arc(cx, cy, r + 2.5, 0, Math.PI * 2);
+        ctx.arc(cx, cy, r + 4, 0, Math.PI * 2);
         ctx.strokeStyle = "#ffffff";
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
     });
 
-    // Selection.
+    // Where the unit in hand could actually reach this tick.
+    const holding = (b.units || []).find((u) => u.id === selectedUnit);
+    if (holding && holding.o === mine && holding.moves_left > 0) {
+      ctx.fillStyle = "rgba(255,255,255,.10)";
+      reachable(holding).forEach((key) => {
+        const [x, y] = key.split(",").map(Number);
+        ctx.fillRect(originX + x * cell + 1, originY + y * cell + 1, cell - 2, cell - 2);
+      });
+    }
+
+    if (hover && !(selected && hover.x === selected.x && hover.y === selected.y)) {
+      ctx.strokeStyle = "rgba(255,255,255,.45)";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(originX + hover.x * cell + 1, originY + hover.y * cell + 1,
+                     cell - 2, cell - 2);
+    }
+
     if (selected) {
       ctx.strokeStyle = "#ffffff";
       ctx.lineWidth = 2;
       ctx.strokeRect(originX + selected.x * cell + 1, originY + selected.y * cell + 1,
                      cell - 2, cell - 2);
+      // Corner ticks, so the selection stays findable over a bright tint.
+      ctx.lineWidth = 3;
+      const px = originX + selected.x * cell;
+      const py = originY + selected.y * cell;
+      const t = Math.max(3, cell * 0.3);
+      [[0, 0, 1, 1], [cell, 0, -1, 1], [0, cell, 1, -1], [cell, cell, -1, -1]]
+        .forEach(([ox, oy, sx, sy]) => {
+          line(ctx, px + ox, py + oy, px + ox + t * sx, py + oy);
+          line(ctx, px + ox, py + oy, px + ox, py + oy + t * sy);
+        });
     }
+  }
+
+  /* Every tile a unit can still step onto this tick.
+   *
+   * Rough ground costs more to enter, so a plain radius would promise moves the
+   * server then refuses. This walks the same cost-weighted flood the engine
+   * does, reading the costs out of the server's own catalogue rather than
+   * hardcoding them, so the highlight cannot quietly disagree with the rules.
+   */
+  function reachable(unit) {
+    const b = board();
+    const budget = unit.moves_left;
+    const start = `${unit.x},${unit.y}`;
+    const best = { [start]: 0 };
+    let frontier = [[unit.x, unit.y]];
+
+    while (frontier.length) {
+      const next = [];
+      frontier.forEach(([x, y]) => {
+        const spent = best[`${x},${y}`];
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (!dx && !dy) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || ny < 0 || nx >= b.side || ny >= b.side) continue;
+            const t = terrainAt(nx, ny);
+            if (!catalogue.terrain[t].passable) continue;
+            const cost = spent + catalogue.terrain[t].move_cost;
+            if (cost > budget) continue;
+            const key = `${nx},${ny}`;
+            if (best[key] === undefined || cost < best[key]) {
+              best[key] = cost;
+              next.push([nx, ny]);
+            }
+          }
+        }
+      });
+      frontier = next;
+    }
+
+    delete best[start];
+    return Object.keys(best);
   }
 
   function line(ctx, x1, y1, x2, y2) {
@@ -308,6 +564,62 @@
     ctx.moveTo(x1, y1);
     ctx.lineTo(x2, y2);
     ctx.stroke();
+  }
+
+  // ── Hover tooltip ──────────────────────────────────────────────────────
+  /* Reading a tile should not cost a click. The tooltip answers the three
+   * questions you have while scanning the board — what is this ground, whose
+   * is it, what is on it — and the panel stays for the things you act on. */
+  function showTip(at) {
+    const tip = $("#wldTip");
+    if (!tip) return;
+    if (!at || !board()) {
+      tip.classList.add("hidden");
+      return;
+    }
+
+    const { x, y } = at;
+    const terrain = terrainAt(x, y);
+    const owner = ownerAt(x, y);
+    const p = owner ? playerByIndex(owner) : null;
+    const bl = buildingAt(x, y);
+    const here = unitsAt(x, y);
+
+    const rows = [
+      `<div class="wld-tip-h">(${x}, ${y}) · ${esc(catalogue.terrain[terrain].label)}</div>`,
+      p ? `<div><i class="wld-dot" style="background:${esc(p.colour)}"></i>${
+            esc(p.name)}${owner === me().index ? " (you)" : ""}</div>`
+        : `<div class="msp-muted">unclaimed</div>`,
+    ];
+    if (bl) {
+      rows.push(`<div>${esc(catalogue.buildings[bl.b].label)}
+        <span class="msp-muted">${Math.round(bl.hp)}/${bl.max} hp</span></div>`);
+    }
+    if (here.length) {
+      const counts = {};
+      here.forEach((u) => { counts[u.k] = (counts[u.k] || 0) + 1; });
+      rows.push(`<div class="msp-muted">${Object.entries(counts)
+        .map(([k, n]) => `${n}x ${esc(catalogue.units[k].label)}`).join(", ")}</div>`);
+    }
+    const def = catalogue.terrain[terrain].defense;
+    if (def > 0) {
+      rows.push(`<div class="msp-muted">+${Math.round(def * 100)}% defence</div>`);
+    }
+
+    tip.innerHTML = rows.join("");
+    tip.classList.remove("hidden");
+
+    // Keep the tooltip inside the map panel rather than letting it push the
+    // page sideways at the right-hand edge.
+    const wrap = tip.offsetParent.getBoundingClientRect();
+    const w = tip.offsetWidth;
+    const h = tip.offsetHeight;
+    let left = at.clientX - wrap.left + 14;
+    let top = at.clientY - wrap.top + 14;
+    if (left + w > wrap.width - 6) left = at.clientX - wrap.left - w - 14;
+    if (top + h > wrap.height - 6) top = at.clientY - wrap.top - h - 14;
+    tip.style.left = `${Math.max(6, left)}px`;
+    tip.style.top = `${Math.max(6, top)}px`;
   }
 
   // ── Panels ─────────────────────────────────────────────────────────────
@@ -574,8 +886,21 @@
       const box = canvas.getBoundingClientRect();
       const x = Math.floor((e.clientX - box.left - originX) / cell);
       const y = Math.floor((e.clientY - box.top - originY) / cell);
-      canvas.style.cursor =
-        (x >= 0 && y >= 0 && x < side() && y < side()) ? "pointer" : "default";
+      const inside = x >= 0 && y >= 0 && x < side() && y < side();
+      canvas.style.cursor = inside ? "pointer" : "default";
+
+      const changed = inside
+        ? (!hover || hover.x !== x || hover.y !== y)
+        : hover !== null;
+      hover = inside ? { x, y } : null;
+      showTip(inside ? { x, y, clientX: e.clientX, clientY: e.clientY } : null);
+      if (changed) draw();
+    });
+
+    canvas.addEventListener("mouseleave", () => {
+      hover = null;
+      showTip(null);
+      draw();
     });
 
     window.addEventListener("resize", draw);

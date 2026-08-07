@@ -595,6 +595,9 @@
       $("#startBtn").classList.toggle("hidden", !(inLobby && state.can_control));
       $("#stopBtn").classList.toggle("hidden", !(state.status === "running" && state.can_control));
       $("#setupToggle").classList.toggle("hidden", inLobby);
+      // Both boards live inside #liveView, so the Market/Empire switch would be
+      // a dead control in the lobby. It appears with the boards it controls.
+      $("#boardSwitch")?.classList.toggle("hidden", inLobby);
       document.body.classList.toggle("msp-live", !inLobby);
 
       if (state.can_control) await ensureCatalog();

@@ -412,6 +412,43 @@ class TestUnits:
         with pytest.raises(WorldRejected, match="No unit"):
             w.act("p1", {"type": "move", "unit_id": "nope", "x": 1, "y": 1})
 
+    def test_rough_ground_costs_more_movement(self, w):
+        """Reach is cost-weighted, not a plain radius.
+
+        The dashboard highlights where a unit can go by running this same flood
+        client-side, so a radius here would promise moves the engine refuses.
+        """
+        u = next(u for u in w.units.values() if u.owner == "p1")
+        u.x, u.y = w.side // 2, w.side // 2
+        u.moves_left = 2.0
+
+        def reach(terrain):
+            for ty in range(u.y - 3, u.y + 4):
+                for tx in range(u.x - 3, u.x + 4):
+                    if w.in_bounds(tx, ty):
+                        w.grid[ty][tx].terrain = terrain
+            found = 0
+            for ty in range(u.y - 3, u.y + 4):
+                for tx in range(u.x - 3, u.x + 4):
+                    if not w.in_bounds(tx, ty) or (tx, ty) == (u.x, u.y):
+                        continue
+                    u.moves_left = 2.0
+                    if w._path(u, (tx, ty)) is not None:
+                        found += 1
+            return found
+
+        assert reach("forest") < reach("plain"), "rough ground must shorten reach"
+
+    def test_water_is_never_reachable(self, w):
+        u = next(u for u in w.units.values() if u.owner == "p1")
+        for nx, ny in W.neighbours(u.x, u.y):
+            if w.in_bounds(nx, ny):
+                w.grid[ny][nx].terrain = "water"
+        u.moves_left = 3.0
+        for nx, ny in W.neighbours(u.x, u.y):
+            if w.in_bounds(nx, ny):
+                assert w._path(u, (nx, ny)) is None
+
     @staticmethod
     def _reachable(world, unit):
         """An adjacent passable tile the unit can definitely step onto."""

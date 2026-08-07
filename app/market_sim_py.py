@@ -186,6 +186,17 @@ async def rules_page(request: Request):
         "run_minutes": engine.RUN_SECONDS // 60,
         "order_rate": engine.ORDER_RATE_PER_SEC,
         "items": [{"symbol": s["symbol"], "name": s["name"]} for s in engine.ITEM_SPECS],
+        # The world reference tables are built from the engine's own catalogue
+        # rather than typed into the template, so a cost or a stat can never
+        # drift out of step with the rules actually being enforced.
+        "world": world_mod.catalogue(),
+        "world_terrain": world_mod.TERRAIN,
+        "world_buildable": world_mod.BUILDABLE,
+        "world_tick_seconds": int(world_mod.WORLD_TICK_SECONDS),
+        "start_grant": int(world_mod.START_GRANT),
+        "tile_points": world_mod.TILE_POINTS,
+        "worker_points": world_mod.WORKER_POINTS,
+        "base_pop_cap": world_mod.BASE_POP_CAP,
     })
 
 

@@ -7721,3 +7721,211 @@ body.tut-locked {
     grid-template-rows: auto minmax(240px, 50vh) auto;
   }
 }
+
+/* -- map tooltip -- */
+.wld-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  min-width: 120px;
+  max-width: 230px;
+  padding: 7px 10px;
+  background: rgba(9, 13, 21, .96);
+  border: 1px solid var(--border-strong);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .45);
+}
+
+.wld-tip-h {
+  font-weight: 600;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  margin-bottom: 3px;
+}
+
+/* ── Landing: the flagship band ─────────────────────────────────────────────
+   The coding mode is the differentiator, so it gets a band of its own between
+   the hero and the mode grid rather than competing as one card among eight. */
+
+.hero-kicker {
+  display: inline-block;
+  font-size: 12px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--brand);
+  margin-bottom: 10px;
+}
+
+.flagship {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+  gap: 34px;
+  align-items: center;
+  margin: 8px 0 34px;
+  padding: 30px;
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(135deg, var(--brand-wash), transparent 62%),
+    var(--panel);
+}
+
+.flagship-tag {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--brand);
+  border: 1px solid var(--brand-deep);
+  padding: 3px 9px;
+  margin-bottom: 14px;
+}
+
+.flagship-copy h2 {
+  margin: 0 0 10px;
+  font-size: 30px;
+  line-height: 1.18;
+}
+
+.flagship-copy > p {
+  margin: 0 0 20px;
+  line-height: 1.65;
+  color: var(--muted);
+  max-width: 54ch;
+}
+
+.flagship-steps {
+  list-style: none;
+  counter-reset: fs;
+  margin: 0 0 22px;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.flagship-steps li {
+  counter-increment: fs;
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: baseline;
+}
+
+/* The number is generated rather than typed, so the steps cannot drift out of
+   order when the copy is edited. */
+.flagship-steps li::before {
+  content: counter(fs);
+  grid-row: 1 / span 2;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  color: var(--brand);
+  border: 1px solid var(--border-strong);
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  align-self: start;
+}
+
+.flagship-steps strong {
+  font-size: 14px;
+}
+
+.flagship-steps span {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+
+.flagship-cta {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.flagship-art {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+
+.flagship-art img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border-strong);
+}
+
+.flagship-art-cap {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+@media (max-width: 900px) {
+  .flagship {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: 22px;
+  }
+
+  .flagship-copy h2 {
+    font-size: 24px;
+  }
+}
+
+/* ── Reference tables on the rules page ────────────────────────────────────
+   Generated from the engine's own catalogue, so they are wide. They scroll
+   inside their own box rather than letting the page scroll sideways. */
+
+.msp-scroll-x {
+  overflow-x: auto;
+  margin: 0 0 14px;
+  border: 1px solid var(--border);
+}
+
+.msp-ref {
+  width: 100%;
+  min-width: 640px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.msp-ref th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  font-size: 11px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: var(--panel-2);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-strong);
+  white-space: nowrap;
+}
+
+.msp-ref td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.msp-ref tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.msp-ref tbody tr:hover {
+  background: var(--brand-wash);
+}
+
+.msp-ref .msp-muted {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.msp-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
