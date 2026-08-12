@@ -22,6 +22,20 @@
     try { return JSON.parse(txt); } catch { return {}; }
   };
 
+  // The "yes, that order just went out" flash on a submit button — fired
+  // right as the request goes out (not after the response lands), so the
+  // click reads as instant regardless of network latency. Colored by side.
+  const tradeFlashTimers = new WeakMap();
+  function flashTradeConfirm(btn, side) {
+    if (!btn) return;
+    const cls = side === "SELL" ? "trade-confirm-sell" : "trade-confirm-buy";
+    clearTimeout(tradeFlashTimers.get(btn));
+    btn.classList.remove("trade-confirm-buy", "trade-confirm-sell");
+    void btn.offsetWidth; // restart the animation even on repeat clicks of the same side
+    btn.classList.add(cls);
+    tradeFlashTimers.set(btn, setTimeout(() => btn.classList.remove(cls), 450));
+  }
+
   const SYMBOL = window.SYMBOL;
   const DEPTH = window.TOP_DEPTH || 10;
   const IS_CUSTOM_GAME = window.SYMBOL.startsWith('GAME');
@@ -371,6 +385,7 @@
 
     qtHint.textContent = "Submitting...";
     const submitBtn = $("#qt-submit");
+    flashTradeConfirm(submitBtn, qtState.side);
     if (submitBtn) submitBtn.disabled = true;
 
     try {
@@ -620,6 +635,7 @@
     console.log("[OrderModal] Submitting order:", payload);
 
     hint.textContent = "Submitting…";
+    flashTradeConfirm(form.querySelector('button[type="submit"]'), side);
     try {
       const res = await fetch("/orders", {
         method: "POST",

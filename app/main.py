@@ -527,8 +527,13 @@ async def market_page(request: Request):
 
 
 @app.get("/trade/{symbol}", include_in_schema=False)
-async def trade_page(symbol: str, request: Request):
-    """Individual trading page for a specific custom game symbol"""
+async def trade_page(symbol: str, request: Request, tutorial: bool = False):
+    """Individual trading page for a specific custom game symbol.
+
+    ?tutorial=1 renders the exact same order-book interface — no markup or
+    matching-engine change — and additionally loads tutorial_level.js, a
+    paced, spotlighted walkthrough for first-time players (see that file).
+    """
     from app.models import CustomGame
 
     symbol = symbol.upper()
@@ -565,6 +570,7 @@ async def trade_page(symbol: str, request: Request):
             "depth": TOP_DEPTH,
             "is_custom_game": is_custom_game,
             "game_info": game_info,
+            "tutorial_mode": tutorial,
         },
     )
 

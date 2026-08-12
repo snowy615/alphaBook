@@ -145,16 +145,29 @@ body {
   text-decoration: none;
   border: 1px solid var(--border);
   color: var(--text);
-  transition: background .12s ease, border-color .12s ease, color .12s ease;
+  transition: background .12s ease, border-color .12s ease, color .12s ease, transform .08s ease, filter .08s ease;
   cursor: pointer;
   background: transparent;
   font-size: 13.5px;
   line-height: 1.2;
+  -webkit-tap-highlight-color: transparent; /* replaced by the :active state below */
 }
 
 .btn:hover {
   background: rgba(255, 255, 255, .05);
   border-color: var(--border-strong);
+}
+
+/* Every button on the site was giving zero feedback on the press itself —
+   only ever on hover, which skips touch and keyboard entirely. */
+.btn:active {
+  transform: scale(.96);
+  filter: brightness(1.15);
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
 }
 
 .btn.primary {
@@ -992,6 +1005,38 @@ body {
   color: white;
 }
 
+/* These open the ticket/quick-trade modal, not a trade — a lighter press
+   acknowledgment than the confirm flash on the buttons that actually submit. */
+.trade-btn:active, .mid-add-btn:active {
+  transform: scale(.93);
+}
+
+/* The actual "yes, that order just went out" moment — added on click to
+   #qt-submit / the ticket's Submit button, colored by which side was sent,
+   right as the request fires so the click reads as instant even while the
+   fetch is still in flight. */
+@keyframes tradeConfirmBuy {
+  0%   { box-shadow: 0 0 0 0 rgba(53, 201, 139, .55); filter: brightness(1.5); }
+  100% { box-shadow: 0 0 0 9px rgba(53, 201, 139, 0); filter: brightness(1); }
+}
+
+@keyframes tradeConfirmSell {
+  0%   { box-shadow: 0 0 0 0 rgba(242, 85, 90, .55); filter: brightness(1.5); }
+  100% { box-shadow: 0 0 0 9px rgba(242, 85, 90, 0); filter: brightness(1); }
+}
+
+.btn.trade-confirm-buy {
+  animation: tradeConfirmBuy .45s ease-out;
+}
+
+.btn.trade-confirm-sell {
+  animation: tradeConfirmSell .45s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .btn.trade-confirm-buy, .btn.trade-confirm-sell { animation: none; }
+}
+
 /* Trade buttons */
 .action-cell {
   padding: 4px !important;
@@ -1261,6 +1306,50 @@ body {
   100% {
     filter: brightness(1);
   }
+}
+
+/* Skeleton loading rows — shared primitive, used wherever a list/table
+   currently shows static "Loading…" text or renders empty until the first
+   real data arrives. Placed as the initial markup in the template itself;
+   whatever render function fills that container in for real (they all do
+   a full innerHTML replace) clears it automatically on the first response,
+   so no JS timing logic is needed to remove it. */
+.skel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+}
+
+.skel-bar {
+  display: inline-block;
+  height: 11px;
+  background: rgba(255, 255, 255, .07);
+  position: relative;
+  overflow: hidden;
+}
+
+.skel-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, .12), transparent);
+  animation: skelShimmer 1.3s ease-in-out infinite;
+  /* Rows all shimmering in perfect lockstep read as one flat blink; a
+     small per-row offset (set via --skel-i on the row/tr) turns it into a
+     cascade instead, which is what makes a shimmer read as "loading"
+     rather than just "grey and pulsing". Custom props inherit, so this is
+     the only place the delay needs to live. */
+  animation-delay: calc(var(--skel-i, 0) * .12s);
+}
+
+@keyframes skelShimmer {
+  0%   { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skel-bar::after { animation: none; }
 }
 
 /* Modal */
@@ -3957,6 +4046,31 @@ body {
   background: rgba(255, 107, 107, .18);
   border-color: rgba(255, 107, 107, .5);
   color: var(--red);
+  animation: mspClockPulse 1s ease-in-out infinite;
+}
+
+/* Last 10 seconds: a faster, harder pulse with an expanding ring — the
+   the .msp-clock-low rule above still applies underneath (same color), this
+   just overrides its animation since it's the later, equally-specific rule. */
+.msp-clock-critical {
+  /* Deeper than .msp-clock-low's wash on top of the faster pulse, so the
+     last 10 seconds reads as a distinct step up, not just quicker motion. */
+  background: rgba(255, 107, 107, .3);
+  animation: mspClockPulseCritical .5s ease-in-out infinite;
+}
+
+@keyframes mspClockPulse {
+  0%, 100% { transform: scale(1); }
+  50%      { transform: scale(1.04); }
+}
+
+@keyframes mspClockPulseCritical {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(242, 85, 90, .55); }
+  50%      { transform: scale(1.09); box-shadow: 0 0 0 7px rgba(242, 85, 90, 0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-clock-low, .msp-clock-critical { animation: none; }
 }
 
 /* -- lobby editor -- */
@@ -4169,6 +4283,12 @@ body {
 .msp-chart-card {
   flex: 0 0 34%;
   min-height: 150px;
+  /* .card sets overflow:hidden; the #pnlNow particle burst drifts a little
+     above the head row's own padding, so this card specifically needs to
+     let that show instead of clipping it. Nothing else in here depends on
+     the clip (border-radius is 0 site-wide, and the canvas is sized to its
+     own box in JS), so this is safe to open up just for this card. */
+  overflow: visible;
 }
 
 .msp-chart-card .msp-panel-body {
@@ -4307,6 +4427,8 @@ body {
 }
 
 .msp-num {
+  display: inline-block; /* transforms on an inline box are unreliable across browsers */
+  position: relative; /* containing block for the particle burst */
   text-align: right;
   font-variant-numeric: tabular-nums;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -4324,8 +4446,342 @@ body {
   color: var(--red);
 }
 
+/* A gain jumps up and flashes green; a loss squeezes and flashes red.
+   Fires once per actual change in #pnlNow, not on every poll. --pop (set
+   from JS, ~0.4-1.8) scales the jump to how big this move is relative to
+   this game's own recent moves, so a routine tick barely nudges and a real
+   swing really jumps. */
+.msp-num.flash-gain {
+  animation: mspJump .6s cubic-bezier(.22, .9, .28, 1.1), mspFlashGreen .75s ease-out;
+}
+
+.msp-num.flash-loss {
+  animation: mspSqueeze .5s ease-in-out, mspFlashRed .7s ease-out;
+}
+
+@keyframes mspJump {
+  0%   { transform: translateY(0) scale(1, 1); }
+  12%  { transform: translateY(2px) scale(1.06, 0.9); } /* a little anticipation dip before the jump */
+  42%  { transform: translateY(calc(-9px - 9px * var(--pop, 0.6))) scale(calc(0.93 - 0.04 * var(--pop, 0.6)), calc(1.12 + 0.1 * var(--pop, 0.6))); }
+  64%  { transform: translateY(3px) scale(1.07, 0.95); } /* overshoot past rest on the way down */
+  82%  { transform: translateY(-2px) scale(0.98, 1.02); }
+  100% { transform: translateY(0) scale(1, 1); }
+}
+
+@keyframes mspSqueeze {
+  0%   { transform: scale(1, 1); }
+  20%  { transform: scale(0.8, 1.2); }
+  45%  { transform: scale(1.08, 0.88); }
+  70%  { transform: scale(0.96, 1.05); }
+  100% { transform: scale(1, 1); }
+}
+
+@keyframes mspFlashGreen {
+  0%   { color: var(--green); filter: brightness(1.7); }
+  100% { filter: brightness(1); }
+}
+
+@keyframes mspFlashRed {
+  0%   { color: var(--red); filter: brightness(1.7); }
+  100% { filter: brightness(1); }
+}
+
+/* Sparks spawned by spawnPnlParticles(), gains only. Positioned/animated
+   from JS (randomized per-particle drift); this just sets their look. */
+.msp-particle {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  font-size: 9px;
+  line-height: 1;
+  color: var(--green);
+  pointer-events: none;
+}
+
+/* The streak chip: appears from 2 consecutive gains, re-plays its pop on
+   every new one, clears on any loss. --streak-tier (1-6) drives how bright
+   and how big the glow reads, so a longer streak visibly escalates. */
+.msp-streak {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 7px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  vertical-align: middle;
+  background: var(--brand-wash);
+  color: var(--green);
+  opacity: 0;
+  transform: scale(.6);
+}
+
+.msp-streak.is-on {
+  opacity: 1;
+  transform: scale(calc(1 + 0.05 * min(var(--streak-tier, 1), 6)));
+  box-shadow: 0 0 calc(4px + 2px * min(var(--streak-tier, 1), 6)) var(--brand-wash);
+  animation: mspStreakPop .32s cubic-bezier(.3, 1.4, .4, 1);
+}
+
+@keyframes mspStreakPop {
+  0%   { transform: scale(.4) rotate(-6deg); }
+  60%  { transform: scale(1.15) rotate(3deg); }
+  100% { transform: scale(1) rotate(0deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-num.flash-gain, .msp-num.flash-loss, .msp-streak.is-on { animation: none; }
+}
+
 .msp-bot-row {
   background: rgba(255, 255, 255, .02);
+}
+
+/* A row whose rank just changed gets a brief tint on top of whatever
+   FLIP slide is also playing on it — up is a win, down isn't punished
+   hard, just noted. */
+.msp-rank-up {
+  animation: mspRankFlashUp .9s ease-out;
+}
+
+.msp-rank-down {
+  animation: mspRankFlashDown .9s ease-out;
+}
+
+@keyframes mspRankFlashUp {
+  0%   { background: rgba(53, 201, 139, .24); }
+  100% { background: transparent; }
+}
+
+@keyframes mspRankFlashDown {
+  0%   { background: rgba(242, 85, 90, .16); }
+  100% { background: transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-rank-up, .msp-rank-down { animation: none; }
+}
+
+/* Milestone toasts — rare, self-dismissing call-outs for things the run
+   already knows happened (first fill, a new best, cracking the top 3) but
+   otherwise says nothing about. Stack lives in a fixed corner; showMilestoneToast()
+   creates it on first use, so no template markup is required. */
+.msp-toast-stack {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  z-index: 70;
+  display: flex;
+  flex-direction: column-reverse;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.msp-toast {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .4);
+  animation: mspToastIn .3s cubic-bezier(.2, .8, .3, 1) both;
+}
+
+.msp-toast.out {
+  animation: mspToastOut .25s ease both;
+}
+
+.msp-toast-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--brand);
+  flex: 0 0 auto;
+}
+
+.msp-toast.milestone-pnl .msp-toast-dot,
+.msp-toast.milestone-first .msp-toast-dot {
+  background: var(--green);
+}
+
+@keyframes mspToastIn {
+  from { opacity: 0; transform: translateY(10px) scale(.96); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes mspToastOut {
+  from { opacity: 1; transform: none; }
+  to   { opacity: 0; transform: translateY(6px) scale(.97); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-toast, .msp-toast.out { animation: none; }
+}
+
+/* A podium finish — the one thing in a run that only happens once, so it
+   gets its own center-screen moment instead of stacking into the same
+   toast queue as "cracked the top 3" mid-run. No backdrop dim: the final
+   board underneath is still worth seeing, this just celebrates on top of
+   it. One rank, three tiers — same shape throughout (this is a scale-down,
+   not three different designs), stepping down in size, border emphasis and
+   confetti count/hold time from tier-1 to tier-3 so #1 unmistakably reads
+   as the biggest deal without #2/#3 feeling like leftover unstyled cases. */
+.msp-win-banner {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 80;
+  text-align: center;
+  background: var(--panel);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .55);
+  cursor: pointer;
+  animation: mspWinIn .5s cubic-bezier(.2, .9, .25, 1.3) both;
+}
+
+.msp-win-banner.out {
+  animation: mspWinOut .3s ease both;
+}
+
+.msp-win-banner.tier-1 {
+  padding: 26px 40px;
+  border: 1px solid var(--brand);
+}
+
+.msp-win-banner.tier-2 {
+  padding: 20px 32px;
+  border: 1px solid var(--border-strong);
+}
+
+.msp-win-banner.tier-3 {
+  padding: 15px 26px;
+  border: 1px solid var(--border);
+}
+
+.msp-win-eyebrow {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: var(--brand);
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.msp-win-banner.tier-2 .msp-win-eyebrow,
+.msp-win-banner.tier-3 .msp-win-eyebrow {
+  color: var(--muted);
+}
+
+.msp-win-title {
+  font-weight: 800;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.msp-win-banner.tier-1 .msp-win-title { font-size: 28px; }
+.msp-win-banner.tier-2 .msp-win-title { font-size: 21px; }
+.msp-win-banner.tier-3 .msp-win-title { font-size: 17px; }
+
+/* The sparkline: how the run actually went, not just where it landed.
+   drawMiniPnlChart() sizes the backing pixel buffer itself (tier.chartW/H
+   in market_sim_py.js); the wrap just centers it and anchors the tooltip
+   that follows the cursor while tracing it. */
+.msp-win-chart-wrap {
+  position: relative;
+  display: inline-block;
+  margin: 10px auto 2px;
+}
+
+.msp-win-chart {
+  display: block;
+  cursor: crosshair;
+}
+
+.msp-win-chart-tip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 8px));
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  padding: 3px 7px;
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.msp-win-chart-tip.hidden {
+  display: none;
+}
+
+.msp-win-stats {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin: 10px 0 4px;
+}
+
+.msp-win-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.msp-win-stat-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--muted);
+}
+
+.msp-win-stat-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+}
+
+.msp-win-banner.tier-1 .msp-win-stat-value { font-size: 15px; }
+.msp-win-banner.tier-2 .msp-win-stat-value { font-size: 13.5px; }
+.msp-win-banner.tier-3 .msp-win-stat-value { font-size: 12.5px; }
+
+.msp-win-sub {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+@keyframes mspWinIn {
+  0%   { opacity: 0; transform: translate(-50%, -50%) scale(.75) rotate(-2deg); }
+  60%  { opacity: 1; transform: translate(-50%, -50%) scale(1.05) rotate(1deg); }
+  100% { opacity: 1; transform: translate(-50%, -50%) scale(1) rotate(0); }
+}
+
+@keyframes mspWinOut {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to   { opacity: 0; transform: translate(-50%, -50%) scale(.92); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-win-banner, .msp-win-banner.out { animation: none; }
+}
+
+/* Confetti pieces spawned by spawnConfetti(), positioned/animated from JS
+   (randomized per-piece fall); this just sets their look. Not covered by
+   the CSS prefers-reduced-motion rule since they're WAAPI, not @keyframes —
+   spawnConfetti() checks matchMedia directly before creating any. */
+.msp-confetti-piece {
+  position: fixed;
+  top: -16px;
+  width: 7px;
+  height: 12px;
+  z-index: 79;
+  pointer-events: none;
 }
 
 .msp-tag {
@@ -4395,6 +4851,33 @@ body {
 .msp-lb-you {
   font-weight: 600;
   color: var(--brand);
+}
+
+/* The pinned strip is the one number every player actually watches, but it
+   was updating silently while the table row further down got the full
+   flash+slide treatment — the least important row had more feedback than
+   the most important one. Flashes back to the strip's own resting wash
+   (not transparent, since unlike a plain row it's always tinted). */
+.msp-lb-me.msp-rank-up {
+  animation: mspLbMeFlashUp .9s ease-out;
+}
+
+.msp-lb-me.msp-rank-down {
+  animation: mspLbMeFlashDown .9s ease-out;
+}
+
+@keyframes mspLbMeFlashUp {
+  0%   { background: rgba(53, 201, 139, .32); }
+  100% { background: rgba(77, 159, 214, .12); }
+}
+
+@keyframes mspLbMeFlashDown {
+  0%   { background: rgba(242, 85, 90, .24); }
+  100% { background: rgba(77, 159, 214, .12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .msp-lb-me.msp-rank-up, .msp-lb-me.msp-rank-down { animation: none; }
 }
 
 .msp-me-row {

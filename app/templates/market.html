@@ -51,6 +51,17 @@
                 <span id="marketStatus">connecting</span>
             </div>
         </div>
+        <div class="market-note" style="margin-bottom: 18px;">
+            <div>
+                <h3>New to the order book?</h3>
+                <p>Level 1 · Easy is a paced, guided first trade on this exact interface — every button and
+                    metric explained in place, one step at a time, before you jump into a live room.</p>
+            </div>
+            <div class="market-note-links">
+                <a href="/trade/{{ symbols[0] if symbols else 'AAPL' }}?tutorial=1" class="btn primary">🎓 Start Tutorial · Level 1 (Easy)</a>
+            </div>
+        </div>
+
         <div class="stock-grid" id="stockGrid">
             <!-- Stock cards will be inserted here by JavaScript -->
         </div>

@@ -171,7 +171,12 @@
           <div class="msp-panel-body msp-flush">
             <div id="lbMe" class="msp-lb-me hidden"></div>
             <div class="msp-scroll">
-              <table class="msp-table" id="leaderboard"></table>
+              <table class="msp-table" id="leaderboard">
+                <!-- Skeleton rows: this table was blank until the first poll landed. -->
+                <tr style="--skel-i:0;"><td><span class="skel-bar" style="width:100%;"></span></td></tr>
+                <tr style="--skel-i:1;"><td><span class="skel-bar" style="width:92%;"></span></td></tr>
+                <tr style="--skel-i:2;"><td><span class="skel-bar" style="width:96%;"></span></td></tr>
+              </table>
             </div>
           </div>
         </div>
@@ -183,7 +188,12 @@
               <span class="msp-muted" id="fairNote">fair values revealed at the bell</span>
             </div>
             <div class="msp-panel-body msp-flush msp-scroll">
-              <table class="msp-table" id="marketTable"></table>
+              <table class="msp-table" id="marketTable">
+                <tr style="--skel-i:0;"><td><span class="skel-bar" style="width:100%;"></span></td></tr>
+                <tr style="--skel-i:1;"><td><span class="skel-bar" style="width:88%;"></span></td></tr>
+                <tr style="--skel-i:2;"><td><span class="skel-bar" style="width:94%;"></span></td></tr>
+                <tr style="--skel-i:3;"><td><span class="skel-bar" style="width:90%;"></span></td></tr>
+              </table>
             </div>
           </div>
 
@@ -193,7 +203,10 @@
               <span class="msp-pill" id="myStatus">—</span>
             </div>
             <div class="msp-panel-body msp-flush msp-scroll">
-              <table class="msp-table msp-positions" id="myPositions"></table>
+              <table class="msp-table msp-positions" id="myPositions">
+                <tr style="--skel-i:0;"><td><span class="skel-bar" style="width:80%;"></span></td></tr>
+                <tr style="--skel-i:1;"><td><span class="skel-bar" style="width:70%;"></span></td></tr>
+              </table>
             </div>
           </div>
         </div>
@@ -202,7 +215,7 @@
           <div class="card msp-panel msp-chart-card">
             <div class="head">
               <h3>Your P&amp;L</h3>
-              <span class="msp-num" id="pnlNow">—</span>
+              <span class="msp-num" id="pnlNow"><span class="msp-num-text" id="pnlNowText">—</span><span class="msp-streak" id="pnlStreak"></span></span>
             </div>
             <div class="msp-panel-body">
               <canvas id="pnlChart" class="msp-chart"></canvas>
