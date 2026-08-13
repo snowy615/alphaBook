@@ -407,6 +407,29 @@ async def api_leaderboard(request: Request, limit: int = 100):
     }
 
 
+@app.get("/api/me/rewards")
+async def api_my_rewards(user: User = Depends(current_user)):
+    """Streak, XP, level and badges. Also registers today's visit."""
+    from app import competitions as comp_mod
+    from app import rewards
+    from app import scores
+
+    daily = await rewards.touch_daily(str(user.id))
+
+    card = await scores.scorecard(str(user.id))
+    played = 0
+    try:
+        docs = await db_module.db.collection(comp_mod.COLLECTION).get()
+        played = sum(1 for d in docs
+                     if str(user.id) in ((d.to_dict() or {}).get("entrants") or []))
+    except Exception:
+        pass
+
+    data = await rewards.summary(str(user.id), scorecard=card, competitions=played)
+    data["daily"] = daily
+    return data
+
+
 @app.get("/api/me/scorecard")
 async def api_my_scorecard(user: User = Depends(current_user)):
     """This player's ratings across every mode, with written feedback."""

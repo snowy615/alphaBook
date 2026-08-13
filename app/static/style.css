@@ -8412,3 +8412,120 @@ body.tut-locked {
   font-size: 12.5px;
   white-space: nowrap;
 }
+
+/* ── Streak, level and badges ────────────────────────────────────────────────
+   Sits at the top of the profile: the streak is the thing worth protecting,
+   so it gets the flame and the largest number on the row. */
+
+.rwd {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 16px 18px;
+  margin-bottom: 22px;
+}
+
+.rwd-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 22px;
+  align-items: center;
+}
+
+.rwd-streak {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rwd-flame { font-size: 26px; line-height: 1; }
+.rwd-flame-cold { filter: grayscale(1); opacity: .45; }
+
+.rwd-streak-n {
+  font-size: 30px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.rwd-streak-lbl { font-size: 13px; color: var(--muted); }
+
+.rwd-streak-sub {
+  flex-basis: 100%;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.rwd-level-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 13px;
+}
+
+.rwd-badges {
+  margin-top: 16px;
+  border-top: 1px solid var(--border);
+  padding-top: 13px;
+}
+
+.rwd-badges-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+
+.rwd-badge-row { display: flex; flex-wrap: wrap; gap: 7px; }
+
+.rwd-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  padding: 4px 9px;
+  border: 1px solid var(--brand);
+  color: var(--text);
+  background: var(--brand-wash);
+}
+
+.rwd-badge-icon { font-size: 13px; }
+
+.rwd-badge-locked {
+  border-color: var(--border);
+  background: transparent;
+  color: var(--muted);
+}
+
+.rwd-badge-locked .rwd-badge-icon { filter: grayscale(1); opacity: .55; }
+
+.rwd-locked { margin-top: 11px; }
+
+.rwd-locked summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 9px;
+}
+
+@media (max-width: 640px) {
+  .rwd-top { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+}
+
+/* The board is square, so the map's size is governed by whichever of the
+   panel's dimensions is smaller — in practice the height. Giving the map body
+   a floor stops the whole world rendering postage-stamp sized on short
+   viewports, which was what made the tiles too small to show their detail. */
+.wld-map-body {
+  min-height: 420px;
+}
+
+@media (min-height: 900px) {
+  .wld-map-body { min-height: 560px; }
+}

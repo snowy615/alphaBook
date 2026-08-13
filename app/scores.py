@@ -221,6 +221,12 @@ async def record_result(
             "modes": modes,
             "updated_at": now,
         }, merge=True)
+
+        # Every finished game pays XP, whatever the result — the platform
+        # level rewards showing up and playing, not only winning.
+        from app import rewards
+
+        await rewards.award_xp(str(user_id))
     except Exception:
         log.warning("record_result failed (mode=%s user=%s)", mode, user_id, exc_info=True)
 

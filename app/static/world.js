@@ -26,19 +26,28 @@
   // Deliberately desaturated. Terrain has to be distinguishable from terrain,
   // but a vivid ground competes with the player colours washed over it, and it
   // is the ownership that has to win that fight.
-  const TERRAIN_FILL = {
-    water:  "#0a1424",   // darkest, so open water reads as a hole in the board
-    plain:  "#1b2436",
-    forest: "#1a2f24",
-    hills:  "#302c40",
+  /* Terrain palette.
+   *
+   * The first version sat in a narrow band of dark navy, which made the board
+   * read as flat coloured squares. These are separated by hue *and* by value,
+   * so land, wood, high ground and water are told apart at a glance even at
+   * small cell sizes — and each kind carries a light and a dark tone so tiles
+   * can be shaded rather than filled. */
+  const TERRAIN = {
+    water:  { base: "#123a63", lo: "#0c2745", hi: "#2f6ea6", detail: "#63b3e8" },
+    plain:  { base: "#3f6b41", lo: "#2c4c30", hi: "#588c53", detail: "#7fb26b" },
+    forest: { base: "#24512f", lo: "#173720", hi: "#356b3c", detail: "#4f9450" },
+    hills:  { base: "#6b5a44", lo: "#4a3d2e", hi: "#8d7757", detail: "#b39a72" },
   };
 
-  // Per-tile detail colours, a touch lighter than the ground they sit on.
+  // Kept for anything still reading the old names.
+  const TERRAIN_FILL = {
+    water: TERRAIN.water.base, plain: TERRAIN.plain.base,
+    forest: TERRAIN.forest.base, hills: TERRAIN.hills.base,
+  };
   const TERRAIN_DETAIL = {
-    water:  "#16233a",
-    plain:  "#243049",
-    forest: "#2c4a36",
-    hills:  "#443e5c",
+    water: TERRAIN.water.detail, plain: TERRAIN.plain.detail,
+    forest: TERRAIN.forest.detail, hills: TERRAIN.hills.detail,
   };
 
   let state = null;        // last /world payload
@@ -248,80 +257,165 @@
     layer.height = size;
     const g = layer.getContext("2d");
 
+    // Pass 1 — ground. Each tile gets a vertical gradient from its own light
+    // tone to its dark one, which alone lifts the board out of "flat squares",
+    // plus a per-tile noise wobble so a large field is never one slab.
     for (let y = 0; y < b.side; y++) {
       for (let x = 0; x < b.side; x++) {
-        const px = x * cell;
-        const py = y * cell;
+        const px = x * cell, py = y * cell;
         const kind = terrainAt(x, y);
+        const t = TERRAIN[kind] || TERRAIN.plain;
         const n = tileNoise(x, y);
 
-        g.fillStyle = TERRAIN_FILL[kind] || TERRAIN_FILL.plain;
+        const grad = g.createLinearGradient(px, py, px, py + cell);
+        grad.addColorStop(0, t.hi);
+        grad.addColorStop(1, t.lo);
+        g.fillStyle = grad;
         g.fillRect(px, py, cell, cell);
 
-        // A faint lightness wobble stops large stretches reading as one flat
-        // slab of colour.
-        g.globalAlpha = 0.05 + n * 0.06;
-        g.fillStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
+        g.globalAlpha = 0.16 + n * 0.2;
+        g.fillStyle = t.base;
         g.fillRect(px, py, cell, cell);
         g.globalAlpha = 1;
+      }
+    }
 
-        if (cell < 8) continue;              // too small for detail to help
-        g.fillStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
-        g.strokeStyle = TERRAIN_DETAIL[kind] || TERRAIN_DETAIL.plain;
-        g.lineWidth = 1;
+    // Pass 2 — edges. A light rim on the top/left of a tile that sits higher
+    // than its neighbour and a dark one below reads as relief, and the sand
+    // line where land meets water gives the map a coastline.
+    const HEIGHT = { water: 0, plain: 1, forest: 1, hills: 2 };
+    for (let y = 0; y < b.side; y++) {
+      for (let x = 0; x < b.side; x++) {
+        const px = x * cell, py = y * cell;
+        const kind = terrainAt(x, y);
+        const h = HEIGHT[kind] ?? 1;
+        const up = HEIGHT[terrainAt(x, y - 1)] ?? h;
+        const left = HEIGHT[terrainAt(x - 1, y)] ?? h;
+        const down = HEIGHT[terrainAt(x, y + 1)] ?? h;
 
-        if (kind === "forest") {
-          // Two or three little conifers, placed from the tile's own noise.
-          // Held under full opacity so a forest belt reads as texture rather
-          // than as a second, competing block of colour.
-          g.globalAlpha = 0.8;
-          const trees = 2 + Math.floor(n * 2);
-          for (let i = 0; i < trees; i++) {
-            const tx = px + cell * (0.22 + tileNoise(x + i * 7, y) * 0.56);
-            const ty = py + cell * (0.26 + tileNoise(x, y + i * 13) * 0.5);
-            const s = cell * 0.17;
-            g.beginPath();
-            g.moveTo(tx, ty - s);
-            g.lineTo(tx + s * 0.8, ty + s * 0.7);
-            g.lineTo(tx - s * 0.8, ty + s * 0.7);
-            g.closePath();
-            g.fill();
-          }
-          g.globalAlpha = 1;
-        } else if (kind === "hills") {
-          // A ridge line: two humps, offset by the tile's noise.
+        if (kind !== "water") {
+          // Shoreline: a warm sand edge on any side facing open water.
+          g.strokeStyle = "rgba(226, 202, 148, .55)";
+          g.lineWidth = Math.max(1, cell * 0.09);
           g.beginPath();
-          const base = py + cell * 0.68;
-          g.moveTo(px + cell * 0.14, base);
-          g.quadraticCurveTo(px + cell * (0.3 + n * 0.08), py + cell * 0.32,
-                             px + cell * 0.5, base);
-          g.quadraticCurveTo(px + cell * (0.66 + n * 0.08), py + cell * 0.4,
-                             px + cell * 0.86, base);
+          if (terrainAt(x, y - 1) === "water") { g.moveTo(px, py); g.lineTo(px + cell, py); }
+          if (terrainAt(x, y + 1) === "water") { g.moveTo(px, py + cell); g.lineTo(px + cell, py + cell); }
+          if (terrainAt(x - 1, y) === "water") { g.moveTo(px, py); g.lineTo(px, py + cell); }
+          if (terrainAt(x + 1, y) === "water") { g.moveTo(px + cell, py); g.lineTo(px + cell, py + cell); }
           g.stroke();
-        } else if (kind === "water") {
-          // Two short swells.
-          g.globalAlpha = 0.65;
-          for (let i = 0; i < 2; i++) {
-            const wy = py + cell * (0.34 + i * 0.28 + n * 0.1);
-            g.beginPath();
-            g.moveTo(px + cell * 0.18, wy);
-            g.quadraticCurveTo(px + cell * 0.34, wy - cell * 0.1,
-                               px + cell * 0.5, wy);
-            g.quadraticCurveTo(px + cell * 0.66, wy + cell * 0.1,
-                               px + cell * 0.82, wy);
-            g.stroke();
-          }
-          g.globalAlpha = 1;
-        } else if (n > 0.72) {
-          // Sparse grass tufts, so plains are not featureless.
-          g.globalAlpha = 0.5;
-          const gx = px + cell * (0.3 + n * 0.4);
-          const gy = py + cell * (0.4 + tileNoise(y, x) * 0.3);
-          g.fillRect(gx, gy, Math.max(1, cell * 0.07), Math.max(1, cell * 0.07));
-          g.globalAlpha = 1;
+        }
+
+        if (h > up) {
+          g.strokeStyle = "rgba(255,255,255,.16)";
+          g.lineWidth = 1;
+          g.beginPath(); g.moveTo(px, py + .5); g.lineTo(px + cell, py + .5); g.stroke();
+        }
+        if (h > left) {
+          g.strokeStyle = "rgba(255,255,255,.10)";
+          g.lineWidth = 1;
+          g.beginPath(); g.moveTo(px + .5, py); g.lineTo(px + .5, py + cell); g.stroke();
+        }
+        if (h > down) {
+          g.strokeStyle = "rgba(0,0,0,.28)";
+          g.lineWidth = Math.max(1, cell * 0.08);
+          g.beginPath(); g.moveTo(px, py + cell - .5); g.lineTo(px + cell, py + cell - .5); g.stroke();
         }
       }
     }
+
+    // Pass 3 — the things that make terrain readable as terrain. Skipped when
+    // a tile is too small to hold a legible mark.
+    if (cell >= 7) {
+      for (let y = 0; y < b.side; y++) {
+        for (let x = 0; x < b.side; x++) {
+          const px = x * cell, py = y * cell;
+          const kind = terrainAt(x, y);
+          const t = TERRAIN[kind] || TERRAIN.plain;
+          const n = tileNoise(x, y);
+
+          if (kind === "forest") {
+            // Conifers with a trunk and a two-tone canopy, so a wood reads as
+            // trees rather than a darker green square.
+            const trees = 2 + Math.floor(n * 2);
+            for (let i = 0; i < trees; i++) {
+              const tx = px + cell * (0.24 + tileNoise(x + i * 7, y) * 0.52);
+              const ty = py + cell * (0.3 + tileNoise(x, y + i * 13) * 0.44);
+              const s = cell * 0.19;
+              g.fillStyle = "rgba(0,0,0,.32)";
+              g.beginPath();
+              g.ellipse(tx, ty + s * 0.8, s * 0.75, s * 0.28, 0, 0, Math.PI * 2);
+              g.fill();
+              if (cell >= 12) {
+                g.fillStyle = "#3b2a1c";
+                g.fillRect(tx - Math.max(1, s * 0.12), ty, Math.max(1, s * 0.24), s * 0.8);
+              }
+              g.fillStyle = t.detail;
+              g.beginPath();
+              g.moveTo(tx, ty - s);
+              g.lineTo(tx + s * 0.72, ty + s * 0.36);
+              g.lineTo(tx - s * 0.72, ty + s * 0.36);
+              g.closePath();
+              g.fill();
+              g.fillStyle = "rgba(255,255,255,.16)";
+              g.beginPath();
+              g.moveTo(tx, ty - s);
+              g.lineTo(tx + s * 0.3, ty + s * 0.1);
+              g.lineTo(tx - s * 0.1, ty + s * 0.1);
+              g.closePath();
+              g.fill();
+            }
+          } else if (kind === "hills") {
+            // A lit ridge with its own shadow beneath.
+            const base = py + cell * 0.72;
+            g.fillStyle = t.hi;
+            g.beginPath();
+            g.moveTo(px + cell * 0.12, base);
+            g.quadraticCurveTo(px + cell * (0.34 + n * 0.06), py + cell * 0.26,
+                               px + cell * 0.56, base);
+            g.closePath();
+            g.fill();
+            g.fillStyle = "rgba(0,0,0,.3)";
+            g.beginPath();
+            g.moveTo(px + cell * 0.44, base);
+            g.quadraticCurveTo(px + cell * (0.68 + n * 0.06), py + cell * 0.36,
+                               px + cell * 0.9, base);
+            g.closePath();
+            g.fill();
+          } else if (kind === "water") {
+            // Two swells, brightest where the light would catch them.
+            g.strokeStyle = t.detail;
+            g.lineWidth = Math.max(1, cell * 0.07);
+            for (let i = 0; i < 2; i++) {
+              g.globalAlpha = 0.3 + i * 0.16;
+              const wy = py + cell * (0.34 + i * 0.3 + n * 0.08);
+              g.beginPath();
+              g.moveTo(px + cell * 0.18, wy);
+              g.quadraticCurveTo(px + cell * 0.34, wy - cell * 0.1,
+                                 px + cell * 0.5, wy);
+              g.quadraticCurveTo(px + cell * 0.68, wy + cell * 0.1,
+                                 px + cell * 0.84, wy);
+              g.stroke();
+            }
+            g.globalAlpha = 1;
+          } else if (n > 0.55) {
+            // Grass tufts, so plains carry texture too.
+            g.strokeStyle = t.detail;
+            g.lineWidth = Math.max(1, cell * 0.055);
+            g.globalAlpha = 0.5;
+            const gx = px + cell * (0.28 + n * 0.42);
+            const gy = py + cell * (0.52 + tileNoise(y, x) * 0.26);
+            const s = cell * 0.16;
+            g.beginPath();
+            g.moveTo(gx, gy); g.lineTo(gx, gy - s);
+            g.moveTo(gx - s * 0.5, gy); g.lineTo(gx - s * 0.72, gy - s * 0.7);
+            g.moveTo(gx + s * 0.5, gy); g.lineTo(gx + s * 0.72, gy - s * 0.7);
+            g.stroke();
+            g.globalAlpha = 1;
+          }
+        }
+      }
+    }
+
     terrainLayer = layer;
   }
 
@@ -407,8 +501,32 @@
       const cy = py + cell / 2;
       const colour = p ? p.colour : "#8f9bb3";
 
-      ctx.fillStyle = "rgba(6,10,18,.62)";
-      ctx.fillRect(px + cell * 0.1, py + cell * 0.1, cell * 0.8, cell * 0.8);
+      // A building sits on a plate with a cast shadow and a lit top edge, so
+      // it reads as something standing on the ground rather than a symbol
+      // painted onto it.
+      const pad = cell * 0.12;
+      const plate = cell - pad * 2;
+      ctx.fillStyle = "rgba(0,0,0,.45)";
+      ctx.fillRect(px + pad + cell * 0.06, py + pad + cell * 0.08, plate, plate);
+
+      const pg = ctx.createLinearGradient(px, py + pad, px, py + pad + plate);
+      pg.addColorStop(0, "rgba(30,40,58,.96)");
+      pg.addColorStop(1, "rgba(10,15,26,.96)");
+      ctx.fillStyle = pg;
+      ctx.fillRect(px + pad, py + pad, plate, plate);
+
+      ctx.strokeStyle = "rgba(255,255,255,.18)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(px + pad, py + pad + .5);
+      ctx.lineTo(px + pad + plate, py + pad + .5);
+      ctx.stroke();
+
+      // A hairline in the owner's colour ties the structure to its empire.
+      ctx.strokeStyle = colour;
+      ctx.globalAlpha = 0.5;
+      ctx.strokeRect(px + pad + .5, py + pad + .5, plate - 1, plate - 1);
+      ctx.globalAlpha = 1;
 
       // A base is the thing worth defending, so it gets a ring of its own.
       if (bl.b === "base") {

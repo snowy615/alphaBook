@@ -235,6 +235,9 @@
       <a class="btn" href="/leaderboard">Leaderboard →</a>
     </div>
 
+    <!-- Streak, level and badges -->
+    <div class="rwd" id="rewards"></div>
+
     <!-- Headline numbers -->
     <div class="dash-tiles" id="scTiles"></div>
 
@@ -382,7 +385,75 @@
       }
 
       loadScorecard();
+      loadRewards();
     })();
+
+    // ── Streak, level and badges ─────────────────────────────────────────────
+    async function loadRewards() {
+      const box = document.getElementById('rewards');
+      if (!box) return;
+      let d;
+      try {
+        const res = await fetch('/api/me/rewards', { credentials: 'include' });
+        if (!res.ok) return;
+        d = await res.json();
+      } catch { return; }
+
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+      const earned = d.badges.filter(b => b.earned);
+      const locked = d.badges.filter(b => !b.earned);
+      const badgeChip = (b) => `
+        <span class="rwd-badge${b.earned ? '' : ' rwd-badge-locked'}"
+              title="${esc(b.label)} — ${esc(b.blurb)}">
+          <span class="rwd-badge-icon">${b.icon}</span>${esc(b.label)}</span>`;
+
+      const flame = d.streak > 0
+        ? `<span class="rwd-flame">🔥</span><span class="rwd-streak-n">${d.streak}</span>
+           <span class="rwd-streak-lbl">day${d.streak === 1 ? '' : 's'} in a row</span>`
+        : `<span class="rwd-flame rwd-flame-cold">🔥</span>
+           <span class="rwd-streak-lbl">Play today to start a streak</span>`;
+
+      box.innerHTML = `
+        <div class="rwd-top">
+          <div class="rwd-streak">
+            ${flame}
+            <div class="rwd-streak-sub">
+              ${d.streak_today ? 'Counted for today' : 'Not counted yet today'}
+              ${d.streak_best ? ` · best ${d.streak_best}` : ''}
+              · next visit +${d.next_bonus} XP
+            </div>
+          </div>
+          <div class="rwd-level">
+            <div class="rwd-level-row">
+              <strong>Level ${d.level}</strong>
+              <span class="msp-muted">${d.into} / ${d.span} XP</span>
+            </div>
+            <div class="lbx-bar"><span class="lbx-bar-fill"
+              style="width:${Math.round(d.pct * 100)}%"></span></div>
+            <div class="rwd-streak-sub">${d.xp.toLocaleString()} XP total</div>
+          </div>
+        </div>
+        <div class="rwd-badges">
+          <div class="rwd-badges-head">
+            <span>Badges</span>
+            <span class="msp-muted">${d.earned_count} of ${d.badge_count}</span>
+          </div>
+          <div class="rwd-badge-row">
+            ${earned.map(badgeChip).join('') || '<span class="msp-muted">None yet — play a game.</span>'}
+          </div>
+          ${locked.length ? `<details class="rwd-locked">
+            <summary>${locked.length} still to earn</summary>
+            <div class="rwd-badge-row">${locked.map(badgeChip).join('')}</div>
+          </details>` : ''}
+        </div>`;
+
+      // Only celebrate on the visit that actually earned the bonus.
+      if (d.daily && d.daily.awarded) {
+        showToast(`Day ${d.daily.streak} · +${d.daily.awarded} XP`, 'success');
+      }
+    }
 
     // Memberships needing a password, filled from the server's vocabulary so
     // the rules live in one place.
