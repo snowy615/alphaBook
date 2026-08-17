@@ -994,6 +994,9 @@ app.include_router(risks.router)
 from app import crash_ledger
 app.include_router(crash_ledger.router)
 
+from app import toxic_flow
+app.include_router(toxic_flow.router)
+
 from app import competitions
 app.include_router(competitions.router)
 

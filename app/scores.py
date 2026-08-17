@@ -113,6 +113,14 @@ MODES: Dict[str, Dict[str, Any]] = {
         "kind": "per_game",
         "blurb": "Sealed-bid second-price auctions for cards.",
     },
+    "toxic_flow": {
+        "label": "Toxic Flow",
+        "metric": "Final capital",
+        "unit": "$",
+        "href": "/toxic-flow",
+        "kind": "per_game",
+        "blurb": "Bluffing where every claim is collateralised.",
+    },
     "mental_math": {
         "label": "Mental Math",
         "metric": "Accuracy",

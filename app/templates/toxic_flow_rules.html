@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toxic Flow - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Toxic Flow</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/leaderboard" class="btn ghost">Leaderboard</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="msp-hero">
+      <h2>Toxic Flow</h2>
+      <p>Bluffing where every claim is collateralised. You play cards face down and say what
+        they are — but you post margin against the claim, and for {{ audit_seconds }} seconds
+        anyone at the table can put money up to look. Lying is cheap right up until somebody
+        pays to find out.</p>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <div class="msp-lobby-grid">
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Open a table</h3>
+          <span class="msp-muted">you host it</span>
+        </div>
+        <div class="msp-panel-body">
+          <p class="msp-muted" style="margin-top:0;">
+            {{ min_players }}–{{ max_players }} players, ${{ starting_capital }} each.
+            Share the code, then deal when everyone's seated.
+          </p>
+          <button class="btn primary" id="createBtn">Create table</button>
+        </div>
+      </div>
+
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Join a table</h3>
+          <span class="msp-muted">six characters</span>
+        </div>
+        <div class="msp-panel-body">
+          <label class="msp-label" for="joinCode">Join code</label>
+          <input id="joinCode" class="msp-input msp-code-input" type="text" maxlength="6"
+            placeholder="ABC123" autocomplete="off" spellcheck="false">
+          <button class="btn" id="joinBtn">Join</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card msp-panel">
+      <div class="head"><h3>How a turn works</h3></div>
+      <div class="msp-panel-body msp-rules">
+        <h4>1 · Post the claim</h4>
+        <p>Play 1–{{ max_cards }} cards face down and declare a rank. You post
+          <strong>margin</strong> equal to <code>cards × rank value</code>, where 2–10 are face
+          value, J/Q/K are 10 and an Ace is 11. Two Kings costs $20. Four 3s costs $12.</p>
+        <p>The first claim on an empty pile can be any rank. After that the table follows a
+          <strong>sequence</strong> — each claim must be the next rank up, King wrapping round
+          to Ace. Clearing the pile starts the sequence again.</p>
+
+        <h4>2 · The {{ audit_seconds }}-second audit</h4>
+        <p>Everyone else can stake money to look at your cards. One player can cover the margin
+          alone, or several can pool until the stake reaches it. The moment the pool covers your
+          margin, the cards are flipped.</p>
+
+        <h4>3 · What it costs</h4>
+        <table class="msp-table">
+          <thead>
+            <tr><th>Outcome</th><th>You</th><th>Them</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><strong>Nobody looked, you told the truth</strong></td>
+              <td>Margin back</td>
+              <td>Cards stay in the middle</td>
+            </tr>
+            <tr>
+              <td><strong>Nobody looked, you lied</strong></td>
+              <td><em>Conceal</em>: margin back +${{ conceal_bonus }} skim.<br>
+                  <em>Flash</em>: margin back, and you show the table — one opponent of your
+                  choice eats the cards you just played.</td>
+              <td>—</td>
+            </tr>
+            <tr>
+              <td><strong>Audited, you lied</strong></td>
+              <td>Lose the margin, pay $1 per card in the middle, and pick the whole pile up</td>
+              <td>Auditors split the margin and the fine</td>
+            </tr>
+            <tr>
+              <td><strong>Audited, you told the truth</strong> — the Squeeze</td>
+              <td>Margin back <em>and</em> you take their stake</td>
+              <td>The auditor picks the whole pile up</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <h4>Margin call</h4>
+        <p>If your stack ever reaches $0 you are out on the spot, and your cards go back into
+          the pile.</p>
+
+        <h4>The end, and who actually wins</h4>
+        <p>The hand ends the second someone plays their last card and survives the audit window.
+          The bank then pays <strong>liquidity bonuses</strong> by how few cards each player is
+          left holding — ${{ bonuses[0] }} / ${{ bonuses[1] }} / ${{ bonuses[2] }}, split on a
+          tie. Emptying your hand is <em>not</em> winning: once the bonuses are paid, the biggest
+          stack takes it.</p>
+
+        <h4>House readings</h4>
+        <p class="msp-muted">Where the rulebook left room, this table plays it as: margin is
+          priced off the rank you <em>declare</em>; the fine counts every card in the middle
+          including the ones you just played; a pooled audit pays out pro rata with the largest
+          contributor picking up the pile on a Squeeze.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/toxic_flow.js?v=1"></script>
+</body>
+
+</html>

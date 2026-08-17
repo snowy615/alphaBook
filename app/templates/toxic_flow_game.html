@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Toxic Flow - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <script src="/static/feedback.js?v=1"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Toxic Flow</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/toxic-flow" class="btn ghost">Rules</a>
+      <span id="userName">user</span>
+    </div>
+  </div>
+
+  <div class="container tfl-page">
+    <div id="msg" class="msp-msg hidden"></div>
+    <div id="gameArea"><div class="tfl-loading">Loading table…</div></div>
+  </div>
+
+  <script>window.GAME_ID = "{{ game_id }}";</script>
+  <script src="/static/toxic_flow.js?v=1"></script>
+</body>
+
+</html>

@@ -540,7 +540,56 @@ def _market_sim(p: Dict[str, Any]) -> Dict[str, Any]:
     return _fb(headline, grade, stats, notes)
 
 
+def _toxic_flow(p: Dict[str, Any]) -> Dict[str, Any]:
+    chips = int(p.get("chips", 0))
+    start = int(p.get("starting", 100)) or 100
+    left = int(p.get("cards_left", 0))
+    bust = bool(p.get("bankrupt"))
+    change = chips - start
+
+    if bust:
+        grade, headline = "poor", "Margin called — you ran the stack to zero."
+    elif change > 60:
+        grade, headline = "great", "You read the table and got paid for it."
+    elif change > 0:
+        grade, headline = "good", "Finished up on the night."
+    elif change > -40:
+        grade, headline = "mixed", "Roughly flat — the edge wasn't there."
+    else:
+        grade, headline = "poor", "The table took your capital."
+
+    stats = [
+        {"label": "Final capital", "value": _money(chips)},
+        {"label": "Change", "value": _money(change)},
+        {"label": "Cards left", "value": str(left)},
+    ]
+
+    notes: List[Note] = []
+    if change > 0:
+        notes.append({"kind": "win", "text":
+                      f"You ended {_money(change)} up on your ${start} stake."})
+    if bust:
+        notes.append({"kind": "gap", "text":
+                      "Going bust ends your game whatever your cards were. Big claims "
+                      "cost big margin — size them against the stack you can afford to "
+                      "post, not the hand you wish you had."})
+    elif left == 0:
+        notes.append({"kind": "win", "text":
+                      "You went out first and took the top liquidity bonus."})
+    elif left >= 8:
+        notes.append({"kind": "gap", "text":
+                      f"You finished holding {left} cards. Picking up the pile is what "
+                      f"buries you — either audit earlier or stop claiming into a big pot."})
+
+    notes.append({"kind": "tip", "text":
+                  "The margin is public before anyone decides to look. A small claim is "
+                  "cheap to make and cheap to call; a four-card claim funds the auditor "
+                  "who catches you."})
+    return _fb(headline, grade, stats, notes)
+
+
 ANALYSERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+    "toxic_flow": _toxic_flow,
     "crash_ledger": _crash_ledger,
     "mental_math": _mental_math,
     "fiveos": _fiveos,

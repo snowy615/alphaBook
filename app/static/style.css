@@ -8529,3 +8529,192 @@ body.tut-locked {
 @media (min-height: 900px) {
   .wld-map-body { min-height: 560px; }
 }
+
+/* ── Toxic Flow ──────────────────────────────────────────────────────────────
+   The middle of the table is the story: the pile, the live claim and its
+   countdown sit in one column, with seats and the tape alongside. */
+
+.tfl-page { padding-bottom: 40px; }
+.tfl-loading { padding: 60px; text-align: center; color: var(--muted); }
+
+.tfl-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 330px);
+  gap: 14px;
+  align-items: start;
+}
+
+.tfl-main { display: flex; flex-direction: column; gap: 14px; }
+.tfl-side { display: flex; flex-direction: column; gap: 14px; }
+
+.tfl-pile-card {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 18px 20px;
+}
+
+.tfl-pile { text-align: center; }
+.tfl-pile-n {
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.tfl-seq { margin-top: 8px; font-size: 12.5px; color: var(--muted); }
+
+/* Seats */
+.tfl-seats { display: flex; flex-direction: column; gap: 7px; }
+
+.tfl-seat {
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 9px 11px;
+}
+.tfl-seat.is-turn { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+.tfl-seat.is-out { opacity: .5; }
+
+.tfl-seat-top { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+.tfl-seat-name { font-weight: 700; font-size: 13.5px; }
+
+.tfl-seat-stats {
+  margin-top: 5px;
+  display: flex;
+  gap: 12px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.tfl-chip { color: var(--green); font-weight: 700; }
+.tfl-cards { color: var(--muted); }
+
+.tfl-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  padding: 1px 5px;
+  border: 1px solid currentColor;
+}
+.tfl-badge-turn { color: var(--brand); }
+.tfl-badge-out { color: var(--red); }
+.tfl-badge-you { color: var(--muted); }
+
+/* The live claim */
+.tfl-claim {
+  margin-top: 14px;
+  border: 1px solid var(--brand);
+  background: var(--brand-wash);
+  padding: 13px 15px;
+}
+
+.tfl-claim-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.tfl-claim-title { font-size: 14px; margin-bottom: 3px; }
+.tfl-claim-rank { color: var(--brand); font-weight: 700; }
+
+.tfl-timer { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 12px; }
+.tfl-timer-n { font-size: 24px; font-weight: 700; color: var(--text); }
+
+.tfl-timerbar {
+  height: 4px;
+  background: var(--border);
+  margin: 10px 0 12px;
+}
+.tfl-timerbar span {
+  display: block;
+  height: 100%;
+  background: var(--brand);
+  transition: width 1s linear;
+}
+
+.tfl-audit { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tfl-audit .msp-input { width: 110px; }
+
+.tfl-choice-row { display: flex; gap: 10px; flex-wrap: wrap; margin: 10px 0; }
+.tfl-flash { display: flex; gap: 6px; }
+.tfl-flash .msp-input { width: 150px; }
+
+/* Reveal */
+.tfl-reveal {
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-left: 3px solid var(--muted);
+  background: var(--bg);
+  font-size: 13px;
+}
+.tfl-reveal-caught { border-left-color: var(--red); }
+.tfl-reveal-squeeze { border-left-color: var(--green); }
+.tfl-reveal-flash { border-left-color: var(--brand); }
+
+.tfl-mini {
+  display: inline-block;
+  padding: 1px 5px;
+  margin: 0 2px;
+  border: 1px solid var(--border);
+  font-family: ui-monospace, Menlo, monospace;
+  font-size: 11px;
+}
+
+/* Hand */
+.tfl-hand { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+
+.tfl-card {
+  min-width: 46px;
+  padding: 12px 8px;
+  border: 1px solid var(--border-strong);
+  background: #f4f6fb;
+  color: #10151f;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform .1s, border-color .1s;
+}
+.tfl-card:hover:not(:disabled) { transform: translateY(-3px); }
+.tfl-card.is-picked {
+  transform: translateY(-8px);
+  border-color: var(--brand);
+  box-shadow: 0 0 0 2px var(--brand);
+}
+.tfl-card:disabled { opacity: .55; cursor: default; }
+.tfl-card.tfl-red { color: #c0263a; }
+
+.tfl-play { border-top: 1px solid var(--border); padding-top: 12px; }
+.tfl-play-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 9px;
+  font-size: 13px;
+}
+.tfl-play-row .msp-input { width: 90px; }
+
+.tfl-forced {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  padding: 2px 10px;
+}
+
+.tfl-short { color: var(--red); }
+
+/* Tape */
+.tfl-log { max-height: 260px; font-size: 12.5px; }
+.tfl-log-row {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.tfl-log-row:last-child { border-bottom: none; }
+
+@media (max-width: 900px) {
+  .tfl-board { grid-template-columns: minmax(0, 1fr); }
+}

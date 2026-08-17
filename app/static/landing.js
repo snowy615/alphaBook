@@ -94,6 +94,14 @@
       },
       {
         icon: ICON.cards,
+        name: "Toxic Flow",
+        blurb: "Bluffing where every claim is collateralised. Post margin on what you say you played — the table has 20 seconds to pay to look.",
+        chips: ["3–6 players", "Bluffing", "Margin"],
+        href: "/toxic-flow",
+        mode: "toxic_flow",
+      },
+      {
+        icon: ICON.cards,
         name: "Poker Auction",
         blurb: "Bid sealed-envelope for cards, build the best hand, then trade the hands in a post-auction market.",
         chips: ["Teams", "Auction", "Pricing"],
