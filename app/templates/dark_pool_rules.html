@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dark Pool - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Dark Pool</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/leaderboard" class="btn ghost">Leaderboard</a>
+      <a href="/profile" class="btn ghost">Profile</a>
+      <span id="userName">user</span>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="msp-hero">
+      <h2>Dark Pool</h2>
+      <p>Two hidden tiles, five shared ones revealed in three waves, real chips on every street.
+        The twist: the moment you actually face a bet, the desk stops you. Before your fold, call,
+        or raise buttons unlock, you price the spot yourself — a win-probability slider, a
+        90%-confidence range on that same number, and a chip-EV guess for calling. The server
+        already knows the true odds, so it grades your read immediately and keeps score across
+        the session.</p>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <div class="msp-lobby-grid">
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Open a desk</h3>
+          <span class="msp-muted">you host it</span>
+        </div>
+        <div class="msp-panel-body">
+          <p class="msp-muted" style="margin-top:0;">
+            {{ min_desks }}–{{ max_desks }} desks, ${{ starting_capital }} each,
+            {{ total_prints }} prints per session. Share the code, then deal when seated.
+          </p>
+          <button class="btn primary" id="createBtn">Open desk</button>
+        </div>
+      </div>
+
+      <div class="card msp-panel">
+        <div class="head">
+          <h3>Join a desk</h3>
+          <span class="msp-muted">six characters</span>
+        </div>
+        <div class="msp-panel-body">
+          <label class="msp-label" for="joinCode">Join code</label>
+          <input id="joinCode" class="msp-input msp-code-input" type="text" maxlength="6"
+            placeholder="ABC123" autocomplete="off" spellcheck="false">
+          <button class="btn" id="joinBtn">Join</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card msp-panel">
+      <div class="head"><h3>How a print works</h3></div>
+      <div class="msp-panel-body msp-rules">
+        <h4>1 · The deal</h4>
+        <p>Every desk still solvent posts a flat ${{ ante }} listing fee into the pot, then gets two
+          private tiles (your "book"). There's no button and no blinds — action always starts from
+          seat 1, so there's no positional edge to play around, only the board and the betting.</p>
+
+        <h4>2 · Four streets</h4>
+        <p><strong>Pre-Open</strong> (book only) → <strong>The Open</strong> (3 shared tiles) →
+          <strong>The Revision</strong> (+1) → <strong>The Close</strong> (+1, five shared tiles
+          total). A betting round follows every reveal. Best five-of-seven tiles wins the pot at
+          showdown; ties split it.</p>
+
+        <h4>3 · The calibration checkpoint</h4>
+        <p>This is the part that isn't just a card game. Any time you face an actual bet — not a
+          free check — the table pauses on you specifically:</p>
+        <table class="msp-table">
+          <thead><tr><th>Read</th><th>What it asks</th></tr></thead>
+          <tbody>
+            <tr><td>Win probability</td><td>What's the chance your book is ahead right now, 0–100%?</td></tr>
+            <tr><td>90% confidence range</td><td>A low–high band you're 90% sure contains that same true number.</td></tr>
+            <tr><td>EV of calling</td><td>If you called this exact spot 100 times, average chip gain or loss?</td></tr>
+          </tbody>
+        </table>
+        <p>Submit those three and your fold/call/raise buttons unlock — and you immediately see the
+          engine's true probability and true EV next to your guess. Across the session the desk
+          tracks your average read error, whether your confidence ranges actually captured the
+          truth, and whether your own EV number and your actual action ever contradicted each
+          other. That report — plus a couple of targeted follow-up questions on your worst misses —
+          is what shows up when the session ends.</p>
+
+        <h4>4 · The desk limit</h4>
+        <p>A raise can never push the bet past the shortest stack still live in the print. Nobody is
+          ever asked to call more than they can cover, so there's only ever one pot — the simplified
+          price of not running side pots.</p>
+
+        <h4>The session</h4>
+        <p>{{ total_prints }} prints, stacks carry over between them, host deals the next one once
+          everyone's seen the showdown. Run a stack to zero and you sit out the rest of the
+          session. Final ranking is by chips, but the assessment report is the point.</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/dark_pool.js?v=1"></script>
+</body>
+
+</html>

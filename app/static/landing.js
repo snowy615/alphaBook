@@ -38,6 +38,8 @@
     risk: svg('<path d="M3 6l4 5 3-2 4 9 3-4 4 2"/><path d="M3 20h18"/><path d="M14 18l3-4"/>'),
     // a downward trend with an arrowhead — the crash ledger
     crash: svg('<path d="M4 5v14h16"/><path d="M8 9l3 4 3-3 4 5"/><path d="M18 15v-3h-3"/>'),
+    // a hidden depth gauge — two nested rings and a dashed probe, for Dark Pool
+    pool: svg('<circle cx="12" cy="12" r="8" stroke-dasharray="2.5 2.5"/><circle cx="12" cy="12" r="3.5"/><path d="M12 3v2M12 19v2"/>'),
   };
 
   // ---- Mode board ----
@@ -99,6 +101,16 @@
         chips: ["3–6 players", "Bluffing", "Margin"],
         href: "/toxic-flow",
         mode: "toxic_flow",
+      },
+      {
+        icon: ICON.pool,
+        name: "Dark Pool",
+        blurb: "Hidden tiles, staged reveals, real bets — but every time you actually face a bet, " +
+               "you price it yourself first: a win-probability slider, a confidence range, an EV " +
+               "guess. The desk grades you against the true odds before you act.",
+        chips: ["3–6 desks", "Calibration", "Hidden info"],
+        href: "/dark-pool",
+        mode: "dark_pool",
       },
       {
         icon: ICON.cards,

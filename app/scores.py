@@ -121,6 +121,14 @@ MODES: Dict[str, Dict[str, Any]] = {
         "kind": "per_game",
         "blurb": "Bluffing where every claim is collateralised.",
     },
+    "dark_pool": {
+        "label": "Dark Pool",
+        "metric": "Final capital",
+        "unit": "$",
+        "href": "/dark-pool",
+        "kind": "per_game",
+        "blurb": "Hidden-info betting where every real decision is graded against the true odds.",
+    },
     "mental_math": {
         "label": "Mental Math",
         "metric": "Accuracy",

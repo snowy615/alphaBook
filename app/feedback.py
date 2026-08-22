@@ -588,6 +588,71 @@ def _toxic_flow(p: Dict[str, Any]) -> Dict[str, Any]:
     return _fb(headline, grade, stats, notes)
 
 
+def _dark_pool(p: Dict[str, Any]) -> Dict[str, Any]:
+    chips = int(p.get("chips", 0))
+    start = int(p.get("starting", 500)) or 500
+    bust = bool(p.get("bankrupt"))
+    decisions = int(p.get("decisions", 0))
+    change = chips - start
+    avg_prob_error = float(p.get("avg_prob_error", 0.0))
+    calibration_score = float(p.get("calibration_score", 0.0))
+    rationality_index = float(p.get("rationality_index", 100.0))
+
+    if decisions == 0:
+        return _fb("No real decisions to grade — every bet went unchallenged.", "mixed",
+                    [{"label": "Final capital", "value": _money(chips)}], [])
+
+    if calibration_score >= 70 and change > 0:
+        grade, headline = "great", "Your reads were sharp and your stack agreed."
+    elif calibration_score >= 55:
+        grade, headline = "good", "Solid reads — the numbers you gave were usually close."
+    elif calibration_score >= 35:
+        grade, headline = "mixed", "Your reads were in the right neighbourhood, not the right house."
+    else:
+        grade, headline = "poor", "Your probability reads were a long way from the true odds."
+
+    stats = [
+        {"label": "Final capital", "value": _money(chips)},
+        {"label": "Change", "value": _money(change)},
+        {"label": "Calibration score", "value": f"{calibration_score:.0f}/100"},
+        {"label": "Avg. read error", "value": f"{avg_prob_error:.1f}pp"},
+    ]
+
+    notes: List[Note] = []
+    if calibration_score >= 65:
+        notes.append({"kind": "win", "text":
+                      f"Across {decisions} real decisions your win-probability reads averaged "
+                      f"only {avg_prob_error:.1f} percentage points off the engine's true number — "
+                      f"that's a well-calibrated eye, not just a lucky stack."})
+    elif avg_prob_error >= 20:
+        notes.append({"kind": "gap", "text":
+                      f"Your probability slider missed the true number by {avg_prob_error:.1f} "
+                      f"points on average across {decisions} decisions. That's the number to work "
+                      f"on before the size of your bets — you can't price a call you can't read."})
+
+    if rationality_index < 80:
+        notes.append({"kind": "gap", "text":
+                      f"Your own EV slider disagreed with your action about "
+                      f"{100 - rationality_index:.0f}% of the time — you read a call as -EV and "
+                      f"pushed chips in anyway. If the slider says fold, that's worth listening to."})
+    elif decisions >= 3:
+        notes.append({"kind": "win", "text":
+                      "Whenever your own numbers said fold, you folded. That internal consistency "
+                      "is exactly what the desk is testing for."})
+
+    if bust:
+        notes.append({"kind": "gap", "text":
+                      "You ran the stack to zero. A well-calibrated read still loses sometimes — "
+                      "the fix is sizing bets to survive variance, not reading better every time."})
+
+    notes.append({"kind": "tip", "text":
+                  "The desk shows you the true number the moment you submit a read — use the gap "
+                  "between your guess and the reveal to recalibrate the very next decision, not "
+                  "just at the end of the session."})
+
+    return _fb(headline, grade, stats, notes)
+
+
 ANALYSERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "toxic_flow": _toxic_flow,
     "crash_ledger": _crash_ledger,
@@ -596,6 +661,7 @@ ANALYSERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
     "headline": _headline,
     "risks": _risks,
     "poker_auction": _poker_auction,
+    "dark_pool": _dark_pool,
     "market_sim_py": _bot_run,
     "market_sim": _market_sim,
 }
