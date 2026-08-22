@@ -3,6 +3,7 @@ Mental Math Game Router
 =======================
 Timed mental math quiz game with configurable question types, difficulty, and timer.
 """
+import logging
 import random
 import string
 import math
@@ -24,6 +25,8 @@ from app.models import User
 router = APIRouter(prefix="/mental-math", tags=["mental-math"])
 BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+log = logging.getLogger("uvicorn.error")
 
 
 def _require_host(game_data: dict, user: User) -> None:
@@ -337,7 +340,7 @@ async def game_page(game_id: str, request: Request):
 # ---- Admin: Create game ----
 @router.post("/create")
 async def create_game(req: CreateGameRequest, user: User = Depends(current_user)):
-    """Admin creates a new Mental Math game."""
+    """Open a Mental Math room. Whoever creates it hosts it."""
     # Validate
     types = [t for t in req.question_types if t in VALID_TYPES]
     if not types:
@@ -346,9 +349,27 @@ async def create_game(req: CreateGameRequest, user: User = Depends(current_user)
         raise HTTPException(status_code=400, detail="Invalid difficulty")
     num_q = max(5, min(50, req.num_questions))
     time_q = max(5, min(60, req.time_per_question))
+    difficulty = req.difficulty
+
+    # A competition's format wins over whatever the form sent. The page also
+    # locks its inputs, but that's a courtesy — this is the guarantee that
+    # every entrant sat the same test.
+    try:
+        from app import competitions
+
+        comp = await competitions.active_for_user(str(user.id))
+        if comp and (not comp.get("modes") or "mental_math" in comp["modes"]):
+            fixed = (comp.get("settings") or {}).get("mental_math") or {}
+            if fixed:
+                types = [t for t in fixed.get("question_types", types) if t in VALID_TYPES] or types
+                difficulty = fixed.get("difficulty", difficulty)
+                num_q = max(5, min(50, int(fixed.get("num_questions", num_q))))
+                time_q = max(5, min(60, int(fixed.get("time_per_question", time_q))))
+    except Exception:
+        log.warning("competition format lookup failed", exc_info=True)
 
     # Generate questions
-    questions = generate_questions(types, req.difficulty, num_q)
+    questions = generate_questions(types, difficulty, num_q)
 
     join_code = generate_join_code()
 
@@ -357,7 +378,7 @@ async def create_game(req: CreateGameRequest, user: User = Depends(current_user)
         "status": "lobby",
         "settings": {
             "question_types": types,
-            "difficulty": req.difficulty,
+            "difficulty": difficulty,
             "num_questions": num_q,
             "time_per_question": time_q,
         },

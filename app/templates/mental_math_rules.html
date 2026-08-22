@@ -166,6 +166,49 @@
             }
         })();
 
+        // If this player is in a running competition that scores Mental Math and
+        // the host fixed a format, every entrant has to play the same game — so
+        // the form is filled in from the competition and locked.
+        let lockedFormat = null;
+        (async function applyCompetitionFormat() {
+            try {
+                const r = await fetch("/competitions/format/mental_math", { credentials: "include" });
+                if (!r.ok) return;
+                const f = await r.json();
+                if (!f.locked) return;
+                lockedFormat = f.settings;
+
+                const s = f.settings;
+                document.querySelectorAll('.mm-checkbox input').forEach(cb => {
+                    cb.checked = (s.question_types || []).includes(cb.value);
+                    cb.disabled = true;
+                });
+                document.querySelectorAll('input[name="difficulty"]').forEach(r2 => {
+                    r2.checked = r2.value === s.difficulty;
+                    r2.disabled = true;
+                });
+                const nq = document.getElementById("numQuestions");
+                if (nq) { nq.value = s.num_questions; nq.disabled = true; }
+                const ts = document.getElementById("timeSlider");
+                if (ts) {
+                    ts.value = s.time_per_question;
+                    ts.disabled = true;
+                    ts.dispatchEvent(new Event("input"));
+                }
+
+                const panel = document.getElementById("adminCreate");
+                if (panel && !document.getElementById("cmpLock")) {
+                    const note = document.createElement("div");
+                    note.id = "cmpLock";
+                    note.className = "msp-msg msp-msg-ok";
+                    note.style.marginBottom = "14px";
+                    note.textContent =
+                        `Competition format — ${f.competition}. These settings are fixed so every entrant plays the same game.`;
+                    panel.prepend(note);
+                }
+            } catch { /* not in a competition, or signed out */ }
+        })();
+
         async function createGame() {
             const btn = document.getElementById("createBtn");
             btn.disabled = true;

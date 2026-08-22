@@ -45,15 +45,57 @@
     <!-- Host controls, only for hosts and admins -->
     <div class="card msp-panel hidden" id="hostCard">
       <div class="head">
-        <h3>Run a competition</h3>
+        <h3>Set up a competition</h3>
         <span class="msp-muted">hosts only</span>
       </div>
-      <div class="msp-panel-body">
-        <label class="msp-label" for="cmpName">Name</label>
-        <input id="cmpName" class="msp-input" type="text" maxlength="80"
-          placeholder="Michaelmas Open">
-        <p class="msp-muted cmp-hint">Every mode counts. Open it when you're ready and share the
-          code; close it to freeze the board.</p>
+      <div class="msp-panel-body cmp-setup">
+
+        <div class="cmp-field">
+          <label class="msp-label" for="cmpName">Name</label>
+          <input id="cmpName" class="msp-input cmp-wide" type="text" maxlength="80"
+            placeholder="Michaelmas Open">
+        </div>
+
+        <div class="cmp-field">
+          <label class="msp-label">Games in this competition</label>
+          <p class="msp-muted cmp-hint">Pick the modes that count. Leave every box clear and
+            everything counts.</p>
+          <div class="cmp-modes" id="cmpModes"></div>
+        </div>
+
+        <div class="cmp-field" id="cmpSettingsField" hidden>
+          <label class="msp-label">Format</label>
+          <p class="msp-muted cmp-hint">Fixed for every entrant — a room opened in one of these
+            modes during the competition uses these settings and can't change them.</p>
+          <div class="cmp-settings" id="cmpSettings"></div>
+        </div>
+
+        <div class="cmp-field">
+          <label class="msp-label">When</label>
+          <div class="cmp-when">
+            <label class="cmp-radio">
+              <input type="radio" name="cmpWhen" value="now" checked> Start now
+            </label>
+            <label class="cmp-radio">
+              <input type="radio" name="cmpWhen" value="later"> Schedule it
+            </label>
+            <label class="cmp-radio">
+              <input type="radio" name="cmpWhen" value="draft"> Save as a draft
+            </label>
+          </div>
+          <div class="cmp-times hidden" id="cmpTimes">
+            <label class="cmp-time">
+              <span class="msp-label">Opens</span>
+              <input id="cmpStart" class="msp-input" type="datetime-local">
+            </label>
+            <label class="cmp-time">
+              <span class="msp-label">Closes <span class="msp-muted">(optional)</span></span>
+              <input id="cmpEnd" class="msp-input" type="datetime-local">
+            </label>
+          </div>
+          <p class="msp-muted cmp-hint" id="cmpWhenHint">Opens the moment you create it.</p>
+        </div>
+
         <button class="btn primary" id="cmpCreate">Create competition</button>
       </div>
     </div>

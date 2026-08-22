@@ -102,10 +102,36 @@
 
   // ── The list ──────────────────────────────────────────────────────────
   const STATUS = {
-    draft: { label: "Not started", cls: "cmp-pill-draft" },
+    draft: { label: "Draft", cls: "cmp-pill-draft" },
+    scheduled: { label: "Scheduled", cls: "cmp-pill-soon" },
     running: { label: "Live", cls: "cmp-pill-live" },
     finished: { label: "Finished", cls: "cmp-pill-done" },
   };
+
+  const fmtWhen = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleString(undefined, {
+      weekday: "short", day: "numeric", month: "short",
+      hour: "2-digit", minute: "2-digit",
+    });
+  };
+
+  // What the event covers, in one line.
+  function formatLine(c) {
+    const bits = [];
+    if (c.mode_labels && c.mode_labels.length) {
+      bits.push(c.mode_labels.length <= 3
+        ? c.mode_labels.join(", ")
+        : `${c.mode_labels.slice(0, 3).join(", ")} +${c.mode_labels.length - 3}`);
+    } else {
+      bits.push("every mode");
+    }
+    if (c.starts_at && c.status === "scheduled") bits.push(`opens ${fmtWhen(c.starts_at)}`);
+    if (c.ends_at) bits.push(`closes ${fmtWhen(c.ends_at)}`);
+    return bits.join(" · ");
+  }
 
   function renderList(rows) {
     $("#cmpCount").textContent = rows.length
@@ -129,10 +155,12 @@
               ${c.entrants} entrant${c.entrants === 1 ? "" : "s"}
               ${c.status !== "finished" ? ` · code <span class="cmp-code">${esc(c.code)}</span>` : ""}
             </div>
+            <div class="cmp-row-format">${esc(formatLine(c))}</div>
           </div>
           <div class="cmp-row-actions">
             <button class="btn ghost" data-board="${esc(c.id)}">Board</button>
-            ${mine && c.status === "draft" ? `<button class="btn" data-start="${esc(c.id)}">Open it</button>` : ""}
+            ${mine && (c.status === "draft" || c.status === "scheduled")
+              ? `<button class="btn" data-start="${esc(c.id)}">Open now</button>` : ""}
             ${mine && c.status === "running" ? `<button class="btn" data-finish="${esc(c.id)}">Close it</button>` : ""}
           </div>
         </div>`;
@@ -200,19 +228,149 @@
   async function refresh() {
     state = await api("/competitions/mine");
     renderState();
+    // The setup form is built from the server's spec, so a new mode or a new
+    // scenario appears here without this file being touched.
+    if (state.can_host && !SPEC) {
+      try {
+        SPEC = await api("/competitions/spec");
+        renderModes();
+        renderSettings();
+      } catch { /* the rest of the page still works */ }
+    }
     const { competitions } = await api("/competitions/list");
     renderList(competitions);
     if (selected) loadBoard(selected);
   }
 
-  $("#cmpCreate")?.addEventListener("click", async () => {
+  // ── Setup form ────────────────────────────────────────────────────────
+  let SPEC = null;                    // {modes:[...], settings:{mode:[fields]}}
+
+  const chosenModes = () =>
+    [...document.querySelectorAll("#cmpModes input:checked")].map((i) => i.value);
+
+  function renderModes() {
+    $("#cmpModes").innerHTML = SPEC.modes.map((m) => `
+      <label class="cmp-mode" title="${esc(m.blurb || "")}">
+        <input type="checkbox" value="${esc(m.key)}">
+        <span>${esc(m.label)}${SPEC.settings[m.key] ? ' <span class="cmp-cog">⚙</span>' : ""}</span>
+      </label>`).join("");
+
+    document.querySelectorAll("#cmpModes input").forEach((i) =>
+      i.addEventListener("change", renderSettings));
+  }
+
+  // Only modes that are both selected and configurable get a settings block.
+  function renderSettings() {
+    const picked = chosenModes().filter((m) => SPEC.settings[m]);
+    const field = $("#cmpSettingsField");
+    if (!picked.length) { field.hidden = true; $("#cmpSettings").innerHTML = ""; return; }
+    field.hidden = false;
+
+    $("#cmpSettings").innerHTML = picked.map((mode) => {
+      const label = (SPEC.modes.find((m) => m.key === mode) || {}).label || mode;
+      const fields = SPEC.settings[mode].map((f) => {
+        const id = `set_${mode}_${f.key}`;
+        if (f.type === "select") {
+          return `<label class="cmp-set">
+            <span>${esc(f.label)}</span>
+            <select id="${id}" class="msp-input" data-mode="${esc(mode)}" data-key="${esc(f.key)}">
+              ${f.options.map((o) => `<option value="${esc(o.value)}"${o.value === f.default ? " selected" : ""}>${esc(o.label)}</option>`).join("")}
+            </select></label>`;
+        }
+        if (f.type === "number") {
+          return `<label class="cmp-set">
+            <span>${esc(f.label)}</span>
+            <input id="${id}" class="msp-input" type="number" min="${f.min}" max="${f.max}"
+                   value="${f.default}" data-mode="${esc(mode)}" data-key="${esc(f.key)}"></label>`;
+        }
+        // multi
+        return `<div class="cmp-set cmp-set-multi">
+          <span>${esc(f.label)}</span>
+          <div class="cmp-multi" data-mode="${esc(mode)}" data-key="${esc(f.key)}">
+            ${f.options.map((o) => `
+              <label class="cmp-chip">
+                <input type="checkbox" value="${esc(o.value)}"
+                  ${(f.default || []).includes(o.value) ? "checked" : ""}>
+                <span>${esc(o.label)}</span>
+              </label>`).join("")}
+          </div></div>`;
+      }).join("");
+
+      return `<div class="cmp-setblock">
+        <div class="cmp-setblock-head">${esc(label)}</div>
+        <div class="cmp-setgrid">${fields}</div>
+      </div>`;
+    }).join("");
+  }
+
+  function collectSettings() {
+    const out = {};
+    document.querySelectorAll("#cmpSettings [data-mode][data-key]").forEach((el) => {
+      const { mode, key } = el.dataset;
+      out[mode] = out[mode] || {};
+      if (el.classList.contains("cmp-multi")) {
+        out[mode][key] = [...el.querySelectorAll("input:checked")].map((i) => i.value);
+      } else {
+        out[mode][key] = el.type === "number" ? Number(el.value) : el.value;
+      }
+    });
+    return out;
+  }
+
+  // The three timing choices drive one pair of inputs.
+  function whenMode() {
+    return (document.querySelector('input[name="cmpWhen"]:checked') || {}).value || "now";
+  }
+
+  document.querySelectorAll('input[name="cmpWhen"]').forEach((r) =>
+    r.addEventListener("change", () => {
+      const w = whenMode();
+      $("#cmpTimes").classList.toggle("hidden", w !== "later");
+      $("#cmpWhenHint").textContent = w === "now"
+        ? "Opens the moment you create it."
+        : w === "later"
+          ? "Opens by itself at the time you set — no need to be at a computer."
+          : "Saved without a start time. Open it by hand whenever you like.";
+    }));
+
+  // A datetime-local value is wall-clock in the viewer's zone; send it as a
+  // real instant so a host in one timezone and a player in another agree.
+  const localToIso = (v) => (v ? new Date(v).toISOString() : null);
+
+  $("#cmpCreate")?.addEventListener("click", async (e) => {
     const name = ($("#cmpName").value || "").trim() || "Competition";
+    const w = whenMode();
+    const payload = {
+      name,
+      modes: chosenModes(),
+      settings: collectSettings(),
+      start_now: w === "now",
+      starts_at: w === "later" ? localToIso($("#cmpStart").value) : null,
+      ends_at: w === "later" ? localToIso($("#cmpEnd").value) : null,
+    };
+    if (w === "later" && !payload.starts_at) {
+      showMsg("Pick a time for it to open, or choose Start now.");
+      return;
+    }
+
+    e.target.disabled = true;
     try {
-      const res = await post("/competitions/create", { name, modes: [] });
+      const res = await post("/competitions/create", payload);
+      const c = res.competition;
       $("#cmpName").value = "";
+      document.querySelectorAll("#cmpModes input:checked").forEach((i) => { i.checked = false; });
+      renderSettings();
       await refresh();
-      showMsg(`Created “${res.competition.name}”. Open it when you're ready.`, "ok");
-    } catch (e) { showMsg(e.message); }
+      showMsg(c.status === "running"
+        ? `“${c.name}” is live — share code ${c.code}.`
+        : c.status === "scheduled"
+          ? `“${c.name}” opens ${fmtWhen(c.starts_at)}. Code ${c.code}.`
+          : `“${c.name}” saved as a draft.`, "ok");
+    } catch (err) {
+      showMsg(err.message);
+    } finally {
+      e.target.disabled = false;
+    }
   });
 
   (async () => {

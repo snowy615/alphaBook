@@ -8718,3 +8718,101 @@ body.tut-locked {
 @media (max-width: 900px) {
   .tfl-board { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Competition setup ───────────────────────────────────────────────────────
+   The host form is a sequence of decisions — which games, what format, when —
+   so each is its own labelled block rather than a row of inputs. */
+
+.cmp-setup { display: flex; flex-direction: column; gap: 20px; }
+.cmp-field { display: flex; flex-direction: column; gap: 6px; }
+.cmp-wide { max-width: 420px; }
+
+.cmp-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: 7px;
+  margin-top: 4px;
+}
+
+.cmp-mode {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.cmp-mode:hover { border-color: var(--border-strong); }
+.cmp-mode:has(input:checked) {
+  border-color: var(--brand);
+  background: var(--brand-wash);
+}
+.cmp-mode input { accent-color: var(--brand); }
+.cmp-cog { color: var(--muted); font-size: 11px; }
+
+.cmp-settings { display: flex; flex-direction: column; gap: 10px; margin-top: 4px; }
+
+.cmp-setblock {
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  padding: 12px 14px;
+}
+
+.cmp-setblock-head {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .07em;
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.cmp-setgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+
+.cmp-set { display: flex; flex-direction: column; gap: 4px; font-size: 12px; }
+.cmp-set > span { color: var(--muted); }
+.cmp-set-multi { grid-column: 1 / -1; }
+
+.cmp-multi { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.cmp-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  font-size: 11.5px;
+  cursor: pointer;
+  color: var(--muted);
+}
+.cmp-chip:has(input:checked) {
+  border-color: var(--brand);
+  color: var(--text);
+  background: var(--brand-wash);
+}
+.cmp-chip input { accent-color: var(--brand); }
+
+.cmp-when { display: flex; gap: 16px; flex-wrap: wrap; margin: 2px 0 4px; }
+
+.cmp-radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cmp-radio input { accent-color: var(--brand); }
+
+.cmp-times { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 8px; }
+.cmp-time { display: flex; flex-direction: column; gap: 4px; }
+.cmp-time .msp-input { width: 220px; }
+
+.cmp-row-format { font-size: 11.5px; color: var(--muted); margin-top: 3px; }
+.cmp-pill-soon { color: var(--brand); }
