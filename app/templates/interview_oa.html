@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interview OA - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Interview OA</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <span id="userName">user</span>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 640px;">
+    <div id="msg" class="msp-msg hidden"></div>
+    <div id="app">Loading…</div>
+  </div>
+
+  <script>
+    window.QUESTIONS_PER_SESSION = {{ questions_per_session }};
+    window.TIME_PER_QUESTION = {{ time_per_question }};
+  </script>
+  <script src="/static/interview_oa.js?v=1"></script>
+</body>
+
+</html>

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interview OA Results - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/admin" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Interview OA — results</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions"><a href="/admin" class="btn ghost">Back to admin</a></div>
+  </div>
+
+  <div class="container">
+    {% if not rows %}
+      <div class="card msp-panel"><div class="msp-panel-body">
+        <p class="msp-muted">Nobody has unlocked the assessment yet.</p>
+      </div></div>
+    {% endif %}
+
+    {% for r in rows %}
+      <div class="card msp-panel" style="margin-bottom: 14px;">
+        <div class="head">
+          <h3>{{ r.username }}</h3>
+          <span class="msp-muted">
+            {% if r.status == "finished" %}
+              {{ r.score.correct }}/{{ r.score.total }} correct ({{ r.score.pct }}%)
+            {% else %}
+              {{ r.status }}
+            {% endif %}
+          </span>
+        </div>
+        {% if r.answers %}
+        <div class="msp-panel-body msp-flush">
+          <table class="msp-table">
+            <thead>
+              <tr><th>#</th><th>Question</th><th>Answer</th><th>Key</th><th>Result</th><th>Time</th></tr>
+            </thead>
+            <tbody>
+              {% for a in r.answers %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td>{{ a.prompt }}</td>
+                <td>{{ a.raw if a.raw else "—" }}{% if a.timed_out %} <span class="msp-muted">(timed out)</span>{% endif %}</td>
+                <td>{{ "%.4f"|format(a.answer_key) }} <span class="msp-muted">— {{ a.note }}</span></td>
+                <td>{% if a.correct %}<span style="color: var(--green); font-weight:700;">correct</span>{% else %}<span style="color: var(--red); font-weight:700;">wrong</span>{% endif %}</td>
+                <td>{{ a.time_taken_s }}s</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% else %}
+        <div class="msp-panel-body"><p class="msp-muted">No questions answered yet.</p></div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+</body>
+
+</html>
