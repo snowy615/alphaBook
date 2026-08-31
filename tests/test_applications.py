@@ -18,6 +18,53 @@ from fastapi import HTTPException
 
 from app import applications as ap
 from app import membership as mb
+from app.models import User
+
+
+# ── A minimal Firestore stand-in for the tests below that exercise the
+# actual endpoint functions (require_reviewer, decide, submit_score) rather
+# than the pure state-machine helpers above. Async to match the real client.
+class _FakeDoc:
+    def __init__(self, data):
+        self._data = data
+
+    @property
+    def exists(self):
+        return self._data is not None
+
+    def to_dict(self):
+        return dict(self._data) if self._data else None
+
+
+class _FakeDocRef:
+    def __init__(self, store, key):
+        self._store, self._key = store, key
+
+    async def get(self):
+        return _FakeDoc(self._store.get(self._key))
+
+    async def set(self, data):
+        self._store[self._key] = dict(data)
+
+    async def update(self, patch):
+        self._store.setdefault(self._key, {}).update(patch)
+
+
+class _FakeCollection:
+    def __init__(self, store):
+        self._store = store
+
+    def document(self, doc_id):
+        return _FakeDocRef(self._store, doc_id)
+
+
+class _FakeDB:
+    def __init__(self):
+        self.collections: dict = {}
+
+    def collection(self, name):
+        self.collections.setdefault(name, {})
+        return _FakeCollection(self.collections[name])
 
 
 def ago(seconds: float) -> dt.datetime:
@@ -389,3 +436,237 @@ class TestSubmissionEmail:
         asyncio.run(ap._finish_and_persist("u1", application, "completed"))
         assert sent == []
         assert application["status"] == ap.S_SUBMITTED
+
+
+class TestReviewSummary:
+    def test_averages_only_the_reviewers_who_gave_that_score(self):
+        application = {"reviews": {
+            "r1": {"reviewer_name": "Alice", "cv_score": 8, "written_score": 6},
+            "r2": {"reviewer_name": "Bob", "cv_score": 10, "written_score": None},
+        }}
+        summary = ap._review_summary(application, viewer_id="r1")
+        assert summary["count"] == 2
+        assert summary["cv_avg"] == 9.0
+        assert summary["written_avg"] == 6.0
+        assert summary["mine"]["reviewer_name"] == "Alice"
+
+    def test_no_reviews_yet(self):
+        summary = ap._review_summary({}, viewer_id="r1")
+        assert summary == {"count": 0, "cv_avg": None, "written_avg": None, "entries": [], "mine": None}
+
+
+class TestRequireReviewer:
+    def test_admin_is_always_a_reviewer(self, monkeypatch):
+        monkeypatch.setattr(ap.db_module, "db", _FakeDB())
+        admin = User(id="a1", username="root", is_admin=True)
+        assert asyncio.run(ap.require_reviewer(admin)) is admin
+
+    def test_quant_analyst_member_is_a_reviewer(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {"u2": {"membership": mb.M_QUANT_ANALYST}}
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        user = User(id="u2", username="alice")
+        assert asyncio.run(ap.require_reviewer(user)) is user
+
+    def test_general_member_is_refused(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {"u3": {"membership": mb.M_PUBLIC}}
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        user = User(id="u3", username="bob")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.require_reviewer(user))
+
+    def test_bootcamp_member_is_refused(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {"u4": {"membership": mb.M_QUANT_BOOTCAMP}}
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        user = User(id="u4", username="cara")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.require_reviewer(user))
+
+
+class TestScoring:
+    def _patch(self, monkeypatch, application):
+        store = {"u1": application}
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        return store
+
+    def _base(self, status=ap.S_SUBMITTED):
+        return {"user_id": "u1", "username": "jo", "status": status, "reviews": {}}
+
+    def test_rejects_an_out_of_range_score(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        reviewer = User(id="r1", username="alice")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=11), reviewer))
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=0), reviewer))
+
+    def test_requires_at_least_one_score(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        reviewer = User(id="r1", username="alice")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(), reviewer))
+
+    def test_cannot_score_before_the_assessment_is_submitted(self, monkeypatch):
+        self._patch(monkeypatch, self._base(status=ap.S_OA_ACTIVE))
+        reviewer = User(id="r1", username="alice")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8), reviewer))
+
+    def test_two_independent_reviewers_are_averaged(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        alice = User(id="r1", username="alice")
+        bob = User(id="r2", username="bob")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8, written_score=6), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=10, written_score=8), bob))
+        assert result["review"]["count"] == 2
+        assert result["review"]["cv_avg"] == 9.0
+        assert result["review"]["written_avg"] == 7.0
+
+    def test_resubmitting_updates_your_own_score_not_a_new_one(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        alice = User(id="r1", username="alice")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8, written_score=6), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=9), alice))
+        assert result["review"]["count"] == 1
+        assert result["review"]["cv_avg"] == 9.0
+        # Not touched by the second call, so it's kept rather than wiped.
+        assert result["review"]["written_avg"] == 6.0
+
+    def test_can_still_be_scored_after_a_decision(self, monkeypatch):
+        self._patch(monkeypatch, self._base(status=ap.S_ACCEPTED))
+        reviewer = User(id="r1", username="alice")
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=7), reviewer))
+        assert result["review"]["cv_avg"] == 7.0
+
+
+class TestDecideFlow:
+    def _patch(self, monkeypatch, application):
+        store = {"u1": application}
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None):
+            sent.append((to, subject))
+            return True
+
+        fake_db = _FakeDB()
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return store, sent, fake_db
+
+    def _base(self, status):
+        return {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": mb.M_QUANT_ANALYST, "status": status,
+        }
+
+    def test_submitted_can_be_shortlisted_and_emailed(self, monkeypatch):
+        store, sent, _ = self._patch(monkeypatch, self._base(ap.S_SUBMITTED))
+        admin = User(id="a1", username="root", is_admin=True)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="shortlist"), admin))
+        assert result["status"] == ap.S_SHORTLISTED
+        assert store["u1"]["status"] == ap.S_SHORTLISTED
+        assert sent == [("jo@merton.ox.ac.uk", ap._DECISION_COPY[ap.S_SHORTLISTED]["subject"])]
+
+    def test_cannot_accept_a_submitted_application_that_was_never_shortlisted(self, monkeypatch):
+        _, sent, _ = self._patch(monkeypatch, self._base(ap.S_SUBMITTED))
+        admin = User(id="a1", username="root", is_admin=True)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
+        assert sent == []   # no email fired for a decision that was refused
+
+    def test_shortlisted_can_be_accepted_and_membership_is_granted(self, monkeypatch):
+        store, sent, fake_db = self._patch(monkeypatch, self._base(ap.S_SHORTLISTED))
+        admin = User(id="a1", username="root", is_admin=True)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
+        assert result["status"] == ap.S_ACCEPTED
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
+        assert sent[-1] == ("jo@merton.ox.ac.uk", ap._DECISION_COPY[ap.S_ACCEPTED]["subject"])
+
+    @pytest.mark.parametrize("status", [ap.S_SUBMITTED, ap.S_SHORTLISTED])
+    def test_reject_is_allowed_from_submitted_or_shortlisted(self, monkeypatch, status):
+        store, sent, _ = self._patch(monkeypatch, self._base(status))
+        admin = User(id="a1", username="root", is_admin=True)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
+        assert result["status"] == ap.S_REJECTED
+        assert sent[-1][1] == ap._DECISION_COPY[ap.S_REJECTED]["subject"]
+
+    @pytest.mark.parametrize("status", [ap.S_CV, ap.S_OA_READY, ap.S_OA_ACTIVE])
+    def test_no_decision_is_possible_before_submission(self, monkeypatch, status):
+        self._patch(monkeypatch, self._base(status))
+        admin = User(id="a1", username="root", is_admin=True)
+        for decision in ("shortlist", "accept", "reject"):
+            with pytest.raises(HTTPException):
+                asyncio.run(ap.decide("u1", ap.Decision(decision=decision), admin))
+
+    def test_a_decided_application_cannot_be_decided_again(self, monkeypatch):
+        self._patch(monkeypatch, self._base(ap.S_ACCEPTED))
+        admin = User(id="a1", username="root", is_admin=True)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
+
+
+class TestOxfordStudentConfirmation:
+    def _patch(self, monkeypatch, user_data):
+        store: dict = {}
+
+        async def fake_user_data(uid):
+            return user_data
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        monkeypatch.setattr(ap, "_user_data", fake_user_data)
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        return store
+
+    def test_general_public_must_confirm_to_start(self, monkeypatch):
+        self._patch(monkeypatch, {"email": "jo@gmail.com", "membership": mb.M_PUBLIC})
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.start_application(
+                ap.StartApplication(programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
+                                     confirms_oxford_student=False),
+                user))
+
+    def test_general_public_confirmed_is_recorded(self, monkeypatch):
+        store = self._patch(monkeypatch, {"email": "jo@gmail.com", "membership": mb.M_PUBLIC})
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.start_application(
+            ap.StartApplication(programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
+                                 confirms_oxford_student=True),
+            user))
+        assert result["ok"] is True
+        assert store["u1"]["confirmed_oxford_student"] is True
+        assert store["u1"]["applicant_category"] == mb.M_PUBLIC
+
+    def test_general_alpha_fund_member_does_not_need_to_confirm(self, monkeypatch):
+        store = self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+        assert result["ok"] is True
+        assert store["u1"]["confirmed_oxford_student"] is False
+        assert store["u1"]["applicant_category"] == mb.M_MEMBER

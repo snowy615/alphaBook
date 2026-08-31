@@ -22,25 +22,39 @@
       min-width: 90px;
     }
     .apa-bar span { display: block; height: 100%; background: var(--brand); }
+    .apa-summary table { table-layout: fixed; }
+    .apa-summary th, .apa-summary td { overflow: hidden; text-overflow: ellipsis; }
 
     .apa-card { margin-bottom: 16px; scroll-margin-top: 20px; }
-    .apa-card .head { gap: 12px; flex-wrap: wrap; }
-    .apa-who { display: flex; flex-direction: column; gap: 2px; }
-    .apa-who .apa-email { font-size: 12px; color: var(--muted); font-weight: 400; }
+    .apa-card .head { gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+    .apa-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+    .apa-who .apa-email { font-size: 12px; color: var(--muted); font-weight: 400; word-break: break-word; }
 
-    .apa-tags { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    /* Informational chips and action buttons are visually distinct rows —
+       mixing a button into a row of pills is what made this cramped before. */
+    .apa-tags { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; justify-content: flex-end; }
     .apa-tag {
       font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
       padding: 3px 8px; border: 1px solid var(--border); color: var(--muted);
+      white-space: nowrap;
     }
     .apa-tag.is-good { border-color: var(--green); color: var(--green); }
     .apa-tag.is-bad { border-color: var(--red); color: var(--red); }
     .apa-tag.is-warn { border-color: #d9a441; color: #d9a441; }
+    .apa-tag.is-info { border-color: var(--brand); color: var(--brand); }
+
+    .apa-toolbar {
+      display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
+    }
+    .apa-toolbar .btn { font-size: 12px; padding: 6px 12px; }
+    .apa-reminded {
+      font-size: 12px; color: var(--muted); text-align: right; margin-top: 4px;
+    }
 
     .apa-grid {
       display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
       gap: 1px; background: var(--border); border: 1px solid var(--border);
-      margin-bottom: 18px;
+      margin: 16px 0 18px;
     }
     .apa-cell { background: var(--card); padding: 11px 13px; }
     .apa-cell .apa-k {
@@ -60,7 +74,7 @@
     }
     .apa-essay.is-empty { color: var(--muted); font-style: italic; border-left-style: dashed; }
 
-    details.apa-detail { margin-bottom: 14px; }
+    details.apa-detail { margin-bottom: 4px; }
     details.apa-detail > summary {
       cursor: pointer; font-size: 13px; font-weight: 600; color: var(--brand);
       padding: 6px 0;
@@ -68,13 +82,52 @@
     .apa-ok { color: var(--green); font-weight: 700; }
     .apa-no { color: var(--red); font-weight: 700; }
 
-    .apa-actions {
-      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-      border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px;
+    /* Reviewer scoring */
+    .apa-review {
+      border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
     }
-    .apa-actions input[type="text"] {
+    .apa-review-summary {
+      display: flex; gap: 24px; flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .apa-review-stat { text-align: left; }
+    .apa-review-stat .apa-k {
+      display: block; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted); margin-bottom: 3px;
+    }
+    .apa-review-stat .apa-v { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .apa-review-stat .apa-v .apa-of { font-size: 13px; font-weight: 400; color: var(--muted); }
+    .apa-review-list {
+      font-size: 12.5px; color: var(--muted); margin: 0 0 16px; padding: 0;
+      list-style: none; display: flex; flex-direction: column; gap: 3px;
+    }
+    .apa-score-form {
+      display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end;
+      background: var(--bg); border: 1px solid var(--border); padding: 12px 14px;
+    }
+    .apa-score-field { display: flex; flex-direction: column; gap: 5px; }
+    .apa-score-field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .apa-score-field input[type="number"] {
+      width: 64px; padding: 7px 8px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font: inherit; text-align: center;
+    }
+    .apa-score-field.apa-score-note { flex: 1; min-width: 160px; }
+    .apa-score-field.apa-score-note input[type="text"] {
+      width: 100%; padding: 7px 10px; border: 1px solid var(--border);
+      background: var(--card); color: var(--text); font: inherit; font-size: 13px;
+      box-sizing: border-box;
+    }
+
+    .apa-decide {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
+    }
+    .apa-decide input[type="text"] {
       flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border);
       background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+    }
+    .apa-decided-note {
+      border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
+      font-size: 13px; color: var(--muted);
     }
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
   </style>
@@ -83,7 +136,7 @@
 <body>
   <div class="topbar">
     <div class="brand">
-      <a href="/admin" class="brand-link">
+      <a href="{{ '/admin' if is_admin else '/' }}" class="brand-link">
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
@@ -91,7 +144,9 @@
         </div>
       </a>
     </div>
-    <div class="actions"><a href="/admin" class="btn ghost">Back to admin</a></div>
+    <div class="actions">
+      {% if is_admin %}<a href="/admin" class="btn ghost">Back to admin</a>{% else %}<a href="/" class="btn ghost">Back to AlphaBook</a>{% endif %}
+    </div>
   </div>
 
   <div class="container" style="max-width: 1080px;">
@@ -109,12 +164,12 @@
         <h3>Applicants</h3>
         <span class="msp-muted">{{ scored }} of {{ total }} assessed · ranked by the numerical section</span>
       </div>
-      <div class="msp-panel-body msp-flush">
+      <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         <table class="msp-table">
           <thead>
             <tr>
               <th>#</th><th>Applicant</th><th>Programme</th>
-              <th>Numerical</th><th>Written</th><th>CV</th><th>Status</th>
+              <th>Numerical</th><th>CV score</th><th>Written score</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -134,15 +189,18 @@
                   <span class="msp-muted">not sat</span>
                 {% endif %}
               </td>
-              <td>{% if r.written_words %}{{ r.written_words }} words{% else %}<span class="msp-muted">—</span>{% endif %}</td>
               <td>
-                {% if r.cv_uploaded %}
-                  <a href="/apply/admin/{{ r.user_id }}/cv" target="_blank" rel="noopener">Open ↗</a>
-                {% else %}<span class="msp-muted">none</span>{% endif %}
+                {% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="msp-muted">/{{ score_max }}</span>
+                {% else %}<span class="msp-muted">—</span>{% endif %}
+              </td>
+              <td>
+                {% if r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="msp-muted">/{{ score_max }}</span>
+                {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
                 {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
                 {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
+                {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>
                 {% elif r.status == "submitted" %}<span class="apa-tag">submitted</span>
                 {% elif r.status == "oa_active" %}<span class="apa-tag is-warn">sitting now</span>
                 {% elif r.status == "oa_ready" %}<span class="apa-tag">not started</span>
@@ -155,7 +213,7 @@
       </div>
     </div>
 
-    <!-- One card per applicant: CV, written answer, and every graded answer. -->
+    <!-- One card per applicant: CV, written answer, every graded answer, and scoring. -->
     {% for r in rows %}
     <div class="card msp-panel apa-card" id="a-{{ r.user_id }}">
       <div class="head">
@@ -168,28 +226,29 @@
             {% elif r.email %} · {{ r.email }}{% endif %}
           </span>
         </div>
-        <div class="apa-tags">
-          <span class="apa-tag">{{ r.programme }}</span>
-          {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
-          {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>{% endif %}
-          {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
-          {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
-          {% if r.finish_reason == "session_expired" %}<span class="apa-tag is-warn">ran out of time</span>{% endif %}
-          {% if r.status in ("cv", "oa_ready") %}
-          <button class="btn ghost" style="font-size:12px;padding:5px 10px;"
-                  onclick="remind('{{ r.user_id }}', this)">
-            {% if r.last_reminded_at %}Remind again{% else %}Send reminder{% endif %}
-          </button>
+        <div>
+          <div class="apa-tags">
+            <span class="apa-tag">{{ r.programme }}</span>
+            <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
+            {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
+            {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
+            {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
+            {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
+            {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
+            {% if r.finish_reason == "session_expired" %}<span class="apa-tag is-warn">ran out of time</span>{% endif %}
+          </div>
+          {% if is_admin and r.status in ("cv", "oa_ready") %}
+          <div class="apa-toolbar">
+            <button class="btn ghost" onclick="remind('{{ r.user_id }}', this)">
+              {% if r.last_reminded_at %}Remind again{% else %}Send reminder{% endif %}
+            </button>
+          </div>
+          {% if r.last_reminded_at %}
+          <p class="apa-reminded">Last reminded {{ r.last_reminded_at.strftime("%d %b, %H:%M") }}</p>
+          {% endif %}
           {% endif %}
         </div>
       </div>
-      {% if r.last_reminded_at %}
-      <div class="msp-panel-body" style="padding-top:0;padding-bottom:0;">
-        <p class="msp-muted" style="font-size:12px;margin:0 0 -6px;">
-          Last reminded {{ r.last_reminded_at.strftime("%d %b, %H:%M") }}
-        </p>
-      </div>
-      {% endif %}
 
       <div class="msp-panel-body">
         <div class="apa-grid">
@@ -201,18 +260,17 @@
               {% else %}—{% endif %}
             </span>
           </div>
-          {% for kind in ["probability", "expectation", "pattern"] %}
-          <div class="apa-cell">
-            <span class="apa-k">{{ kind }}</span>
-            <span class="apa-v">
-              {% if kind in r.by_kind %}{{ r.by_kind[kind].correct }}/{{ r.by_kind[kind].total }}
-              {% else %}—{% endif %}
-            </span>
-          </div>
-          {% endfor %}
           <div class="apa-cell">
             <span class="apa-k">Written in</span>
             <span class="apa-v">{% if r.written_seconds %}{{ (r.written_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
+          </div>
+          <div class="apa-cell">
+            <span class="apa-k">Oxford student</span>
+            <span class="apa-v" style="font-size:14px;">
+              {% if r.applicant_category == "General public" %}
+                {{ "Confirmed" if r.confirmed_oxford_student else "Not confirmed" }}
+              {% else %}<span class="msp-muted">n/a — member</span>{% endif %}
+            </span>
           </div>
           <div class="apa-cell">
             <span class="apa-k">Submitted</span>
@@ -240,16 +298,16 @@
 
         {% if r.answers %}
         <details class="apa-detail">
-          <summary>Every answer ({{ r.answers | length }})</summary>
+          <summary>Every numerical answer ({{ r.answers | length }})</summary>
+          <div style="overflow-x:auto;">
           <table class="msp-table">
             <thead>
-              <tr><th>#</th><th>Kind</th><th>Question</th><th>Answered</th><th>Key</th><th>Result</th><th>Time</th></tr>
+              <tr><th>#</th><th>Question</th><th>Answered</th><th>Key</th><th>Result</th><th>Time</th></tr>
             </thead>
             <tbody>
               {% for a in r.answers %}
               <tr>
                 <td>{{ loop.index }}</td>
-                <td class="msp-muted">{{ a.kind }}</td>
                 <td>{{ a.prompt }}</td>
                 <td>{% if a.raw %}{{ a.raw }}{% else %}<span class="msp-muted">—</span>{% endif %}{% if a.timed_out %} <span class="msp-muted">(timed out)</span>{% endif %}</td>
                 <td>{{ a.answer_key }} <span class="msp-muted">— {{ a.note }}</span></td>
@@ -259,21 +317,84 @@
               {% endfor %}
             </tbody>
           </table>
+          </div>
         </details>
         {% endif %}
 
-        {% if r.status == "submitted" %}
-        <div class="apa-actions">
-          <input type="text" id="note-{{ r.user_id }}" placeholder="Note for the record (optional)">
-          <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
-          <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+        <!-- Reviewer scoring: open to every Quant Analyst, not just admins.
+             Several people can score the same applicant independently, and
+             the averages below are what the ranked table and decision are
+             based on. -->
+        {% if r.status in ("submitted", "shortlisted", "accepted", "rejected") %}
+        <div class="apa-review">
+          <p class="apa-h">Reviewer scores</p>
+          <div class="apa-review-summary">
+            <div class="apa-review-stat">
+              <span class="apa-k">CV — average of {{ r.review.count }}</span>
+              <span class="apa-v">{% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
+            </div>
+            <div class="apa-review-stat">
+              <span class="apa-k">Written — average of {{ r.review.count }}</span>
+              <span class="apa-v">{% if r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
+            </div>
+          </div>
+
+          {% if r.review.entries %}
+          <ul class="apa-review-list">
+            {% for e in r.review.entries %}
+            <li>
+              <strong>{{ e.reviewer_name }}</strong> —
+              CV {{ e.cv_score if e.cv_score is not none else "—" }},
+              written {{ e.written_score if e.written_score is not none else "—" }}
+              {% if e.note %}· “{{ e.note }}”{% endif %}
+            </li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+
+          <form class="apa-score-form" onsubmit="return submitScore(event, '{{ r.user_id }}')">
+            <div class="apa-score-field">
+              <label for="cv-{{ r.user_id }}">CV ({{ score_min }}–{{ score_max }})</label>
+              <input type="number" id="cv-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
+                     value="{{ r.review.mine.cv_score if r.review.mine and r.review.mine.cv_score is not none else '' }}">
+            </div>
+            <div class="apa-score-field">
+              <label for="written-{{ r.user_id }}">Written ({{ score_min }}–{{ score_max }})</label>
+              <input type="number" id="written-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
+                     value="{{ r.review.mine.written_score if r.review.mine and r.review.mine.written_score is not none else '' }}">
+            </div>
+            <div class="apa-score-field apa-score-note">
+              <label for="note-{{ r.user_id }}">Note (optional)</label>
+              <input type="text" id="note-{{ r.user_id }}" maxlength="300"
+                     value="{{ r.review.mine.note if r.review.mine else '' }}" placeholder="What stood out">
+            </div>
+            <button class="btn primary" type="submit">
+              {{ "Update my score" if r.review.mine else "Save my score" }}
+            </button>
+          </form>
         </div>
-        {% elif r.status in ("accepted", "rejected") %}
-        <div class="apa-actions">
-          <span class="msp-muted" style="font-size:13px;">
+        {% endif %}
+
+        <!-- Decisions stay admin-only. Shortlisting is the interview gate:
+             accept is only offered once an applicant has been shortlisted. -->
+        {% if is_admin %}
+          {% if r.status == "submitted" %}
+          <div class="apa-decide">
+            <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)">
+            <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
+            <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+          </div>
+          {% elif r.status == "shortlisted" %}
+          <div class="apa-decide">
+            <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)" value="{{ r.decision_note }}">
+            <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
+            <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+          </div>
+          {% elif r.status in ("accepted", "rejected") %}
+          <p class="apa-decided-note">
             {{ r.status | capitalize }}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
-          </span>
-        </div>
+          </p>
+          {% endif %}
         {% endif %}
       </div>
     </div>
@@ -287,6 +408,7 @@
       box.textContent = text;
       box.className = "msp-msg msp-msg-" + (bad ? "error" : "ok");
       box.classList.remove("hidden");
+      box.scrollIntoView({ behavior: "smooth", block: "nearest" });
     }
 
     async function remind(userId, btn) {
@@ -313,11 +435,43 @@
       }
     }
 
+    async function submitScore(event, userId) {
+      event.preventDefault();
+      const btn = event.target.querySelector("button[type=submit]");
+      const cvEl = document.getElementById("cv-" + userId);
+      const writtenEl = document.getElementById("written-" + userId);
+      const noteEl = document.getElementById("note-" + userId);
+      const cv = cvEl.value === "" ? null : Number(cvEl.value);
+      const written = writtenEl.value === "" ? null : Number(writtenEl.value);
+      if (cv === null && written === null) {
+        flash("Enter at least one score", true);
+        return false;
+      }
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/score`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cv_score: cv, written_score: written, note: noteEl.value }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash("Score saved", false);
+        location.reload();
+      } catch (err) {
+        flash(err.message, true);
+        btn.disabled = false;
+      }
+      return false;
+    }
+
     async function decide(userId, decision) {
-      const verb = decision === "accept" ? "Accept" : "Reject";
-      if (!confirm(verb + " this application?" +
-          (decision === "accept" ? " Their membership will be set to the programme they applied for." : ""))) return;
-      const note = document.getElementById("note-" + userId);
+      const verbs = { shortlist: "Shortlist", accept: "Accept", reject: "Reject" };
+      const extra = decision === "accept" ? " Their membership will be set to the programme they applied for."
+        : decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "";
+      if (!confirm(verbs[decision] + " this application?" + extra)) return;
+      const note = document.getElementById("decision-note-" + userId);
       try {
         const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/decide`, {
           method: "POST",

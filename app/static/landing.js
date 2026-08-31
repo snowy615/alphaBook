@@ -320,6 +320,7 @@
     oa_ready: (p) => `Applying: ${p}`,
     oa_active: () => "Assessment in progress",
     submitted: (p) => `Applied: ${p}`,
+    shortlisted: (p) => `Shortlisted: ${p}`,
     accepted: (p) => `Accepted: ${p}`,
     rejected: (p) => `Application: ${p}`,
   };

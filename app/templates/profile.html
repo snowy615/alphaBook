@@ -201,6 +201,19 @@
       <div id="roleBox"></div>
     </div>
 
+    <!-- Every Quant Analyst can read and score applications, not just admins —
+         this is the only route there for someone who isn't one. -->
+    <div id="reviewSection" style="display:none;">
+      <hr class="divider">
+      <h3 style="margin:0 0 6px;">Application review</h3>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
+        As a Quant Analyst you can read applicants' CVs and written responses and
+        score them — your score is averaged with everyone else who reviews the
+        same applicant.
+      </p>
+      <a class="btn primary" href="/apply/admin">Review applications →</a>
+    </div>
+
     <hr class="divider">
 
     <!-- CV Upload -->
@@ -544,6 +557,7 @@
         renderIdentity(data);
         renderRole(data);
         renderApply(data);
+        renderReviewAccess(data);
         loadCompetitionState();
       } catch {
         showToast('Failed to load profile', 'error');
@@ -599,6 +613,11 @@
           : '<a href="/competitions">Run a competition →</a>'}</p>`;
     }
 
+    function renderReviewAccess(d) {
+      document.getElementById('reviewSection').style.display =
+        d.membership === 'Quant Analyst' ? '' : 'none';
+    }
+
     /* Applying to a quant programme: open to general public and general Alpha
      * Fund members, and shown as a single line of state so the profile stays
      * the summary and /apply stays the flow. */
@@ -607,6 +626,7 @@
       oa_ready: 'Your assessment is ready — sit it whenever you have 15 clear minutes.',
       oa_active: 'Your assessment is under way. The clock is running.',
       submitted: 'Your application is in and waiting on the committee.',
+      shortlisted: "You've been shortlisted for interview — the committee will be in touch.",
       accepted: 'Your application was accepted.',
       rejected: 'Your application was not taken forward this time.',
     };

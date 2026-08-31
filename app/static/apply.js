@@ -119,6 +119,12 @@
       </p>`);
   }
 
+  // General public applicants have nothing else on the account vouching for
+  // them being a current Oxford student, so they confirm it directly. A
+  // General Alpha Fund member has already cleared that bar to get their
+  // membership, so there's nothing to re-ask.
+  const GENERAL_PUBLIC = "General public";
+
   function renderChoose(state) {
     const options = (state.programmes || []).map((p) => `
       <label class="apl-choice" data-programme="${esc(p)}">
@@ -126,6 +132,15 @@
         <strong>${esc(p)}</strong>
         <span class="apl-blurb">${esc(PROGRAMME_BLURB[p] || "")}</span>
       </label>`).join("");
+
+    const isGeneralPublic = state.membership === GENERAL_PUBLIC;
+    const categoryBanner = `
+      <div class="apl-category">
+        Applying as <strong>${esc(state.membership || GENERAL_PUBLIC)}</strong>
+        ${isGeneralPublic
+          ? "— open to anyone currently studying at the University of Oxford."
+          : "— you're already an Alpha Fund member, so there's nothing extra to confirm here."}
+      </div>`;
 
     // An account that signed up with an Oxford address already has one on
     // file; everyone else has to name one, since that is the only address
@@ -141,7 +156,17 @@
         </p>
       </div>` : "";
 
+    // Only General public applicants need this — a member's eligibility was
+    // already established when their membership was granted.
+    const studentConfirm = isGeneralPublic ? `
+      <label class="apl-ack" style="margin-top:16px;">
+        <input type="checkbox" id="confirmOxfordStudent">
+        <span>I confirm I am currently studying at the University of Oxford. Applications
+          from anyone else will not be considered eligible.</span>
+      </label>` : "";
+
     $("#app").innerHTML = panel("Apply to Alpha Fund", `
+      ${categoryBanner}
       <p class="msp-muted" style="margin-top:0;">
         Pick the programme you want. You will then put an up-to-date CV on your
         profile and sit a ${CFG.sessionMinutes}-minute assessment — you can start
@@ -149,20 +174,36 @@
       </p>
       ${options}
       ${oxfordField}
+      ${studentConfirm}
       <button class="btn primary" id="applyBtn" style="margin-top:16px;" disabled>Continue</button>`);
+
+    function refreshApplyBtn() {
+      const okStudent = !isGeneralPublic || $("#confirmOxfordStudent").checked;
+      $("#applyBtn").disabled = !pickedProgramme || !okStudent;
+    }
 
     $("#app").querySelectorAll(".apl-choice").forEach((el) => {
       el.addEventListener("click", () => {
         pickedProgramme = el.dataset.programme;
         $("#app").querySelectorAll(".apl-choice").forEach((o) => o.classList.remove("is-picked"));
         el.classList.add("is-picked");
-        $("#applyBtn").disabled = false;
+        refreshApplyBtn();
       });
     });
+    if (isGeneralPublic) {
+      $("#confirmOxfordStudent").addEventListener("change", refreshApplyBtn);
+    }
 
     $("#applyBtn").addEventListener("click", async (e) => {
       if (!pickedProgramme) return;
       const payload = { programme: pickedProgramme };
+      if (isGeneralPublic) {
+        payload.confirms_oxford_student = !!$("#confirmOxfordStudent").checked;
+        if (!payload.confirms_oxford_student) {
+          flash("Confirm you're currently studying at Oxford to continue.", true);
+          return;
+        }
+      }
       const oxInput = $("#oxfordEmail");
       if (oxInput) {
         const value = oxInput.value.trim();

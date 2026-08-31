@@ -96,6 +96,27 @@ def _valid_oxford_email(addr: Optional[str]) -> bool:
     addr = (addr or "").strip()
     return bool(_EMAIL_RE.match(addr)) and is_oxford_email(addr)
 
+
+async def require_reviewer(user: User = Depends(current_user)) -> User:
+    """
+    Anyone who can read the review page and score applicants: admins, and
+    every Quant Analyst member.
+
+    Deliberately wider than the accept/shortlist/reject decision itself
+    (still :func:`app.admin.require_admin`) — reading CVs and scoring them is
+    exactly what Quant Analyst members are there to do, several of them
+    independently, so the average means something. Making the actual call is
+    still a smaller, named decision.
+    """
+    if user.is_admin:
+        return user
+    doc = await db_module.db.collection("users").document(str(user.id)).get()
+    data = doc.to_dict() if doc.exists else {}
+    if mb.membership_of(data) == mb.M_QUANT_ANALYST:
+        return user
+    raise HTTPException(403, "The application review page is open to Quant Analyst members and admins")
+
+
 # ── Clocks (seconds) ─────────────────────────────────────────────────────────
 WRITTEN_SECONDS = 5 * 60          # the essay's own limit
 SECONDS_PER_QUESTION = 30         # each numerical question
@@ -109,14 +130,22 @@ WRITTEN_PROMPT = (
 )
 
 # Statuses an application moves through, in order.
-S_CV = "cv"                # applied; waiting on an up-to-date CV
-S_OA_READY = "oa_ready"    # CV on file; assessment not started
-S_OA_ACTIVE = "oa_active"  # clock running
-S_SUBMITTED = "submitted"  # assessment finished, awaiting a decision
+S_CV = "cv"                    # applied; waiting on an up-to-date CV
+S_OA_READY = "oa_ready"        # CV on file; assessment not started
+S_OA_ACTIVE = "oa_active"      # clock running
+S_SUBMITTED = "submitted"      # assessment finished, awaiting a decision
+S_SHORTLISTED = "shortlisted"  # invited to interview; not yet a final decision
 S_ACCEPTED = "accepted"
 S_REJECTED = "rejected"
 
 DECIDED = {S_ACCEPTED, S_REJECTED}
+# Statuses a reviewer can attach a CV/written score to — once the CV and
+# written response actually exist to be read, through to a final decision.
+SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
+
+# Reviewer scores are on a 1-10 scale — familiar from any CV-review process
+# and coarse enough that an average across several reviewers means something.
+SCORE_MIN, SCORE_MAX = 1, 10
 
 
 # ── Question bank ─────────────────────────────────────────────────────────────
@@ -263,6 +292,15 @@ class StartApplication(BaseModel):
     # Only required when the account's own email isn't already an Oxford
     # address; see is_oxford_email() and the /apply/start handler.
     oxford_email: Optional[str] = None
+    # Only required for a General public applicant — see the eligibility
+    # check in the /apply/start handler.
+    confirms_oxford_student: bool = False
+
+
+class ReviewScore(BaseModel):
+    cv_score: Optional[int] = None
+    written_score: Optional[int] = None
+    note: Optional[str] = None
 
 
 class RemindRequest(BaseModel):
@@ -284,7 +322,7 @@ class FlagEvent(BaseModel):
 
 
 class Decision(BaseModel):
-    decision: str      # "accept" | "reject"
+    decision: str      # "shortlist" | "accept" | "reject"
     note: Optional[str] = None
 
 
@@ -636,7 +674,7 @@ async def state(user: User = Depends(current_user)):
     out["applied_at"] = application.get("created_at")
     if application["status"] == S_OA_ACTIVE:
         out["oa"] = _oa_view(application)
-    elif application["status"] in (S_SUBMITTED, *DECIDED):
+    elif application["status"] in (S_SUBMITTED, S_SHORTLISTED, *DECIDED):
         out["submitted_at"] = application.get("submitted_at")
         out["decision"] = application["status"] if application["status"] in DECIDED else None
     return out
@@ -677,6 +715,17 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     if req.programme not in mb.APPLY_PROGRAMMES:
         raise HTTPException(400, f"Choose one of: {', '.join(mb.APPLY_PROGRAMMES)}")
 
+    # General public applicants aren't Alpha Fund members yet, so nothing else
+    # on the account vouches for them being current Oxford students — ask
+    # directly. A General Alpha Fund member has already cleared that bar to
+    # get their membership, so there's nothing to re-confirm.
+    membership = mb.membership_of(data)
+    if membership == mb.M_PUBLIC and not req.confirms_oxford_student:
+        raise HTTPException(
+            400,
+            "Confirm you are currently studying at the University of Oxford to continue.",
+        )
+
     oxford_email = _resolve_oxford_email(data.get("email") or "", req.oxford_email)
 
     existing = await _load(uid)
@@ -688,6 +737,8 @@ async def start_application(req: StartApplication, user: User = Depends(current_
             raise HTTPException(400, "Your application is already under way")
         existing["programme"] = req.programme
         existing["oxford_email"] = oxford_email
+        if membership == mb.M_PUBLIC:
+            existing["confirmed_oxford_student"] = True
         await _save(uid, existing)
         return {"ok": True, "status": existing["status"], "programme": req.programme}
 
@@ -697,6 +748,8 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         "full_name": data.get("full_name") or "",
         "email": data.get("email") or "",
         "oxford_email": oxford_email,
+        "applicant_category": membership,   # "General public" or "General Alpha Fund member"
+        "confirmed_oxford_student": membership == mb.M_PUBLIC,
         "programme": req.programme,
         "status": S_OA_READY if data.get("cv_blob_path") else S_CV,
         "created_at": _now(),
@@ -854,9 +907,32 @@ async def flag(req: FlagEvent, user: User = Depends(current_user)):
     return {"ok": True}
 
 
-# ── Admin ─────────────────────────────────────────────────────────────────────
+# ── Admin / reviewer ─────────────────────────────────────────────────────────
 
-def _review_row(uid: str, application: Dict[str, Any]) -> Dict[str, Any]:
+def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Every reviewer's CV/written scores, and the averages across them.
+
+    Several Quant Analyst members can score the same applicant independently;
+    nothing here picks a single reviewer's word over another's, which is the
+    whole point of averaging instead of just taking the latest score entered.
+    """
+    reviews = application.get("reviews") or {}
+    cv_scores = [r["cv_score"] for r in reviews.values() if r.get("cv_score") is not None]
+    written_scores = [r["written_score"] for r in reviews.values() if r.get("written_score") is not None]
+    return {
+        "count": len(reviews),
+        "cv_avg": round(sum(cv_scores) / len(cv_scores), 1) if cv_scores else None,
+        "written_avg": round(sum(written_scores) / len(written_scores), 1) if written_scores else None,
+        "entries": sorted(
+            [{"reviewer_id": rid, **r} for rid, r in reviews.items()],
+            key=lambda r: r.get("updated_at") or _now(),
+        ),
+        "mine": reviews.get(viewer_id) if viewer_id else None,
+    }
+
+
+def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
     oa = application.get("oa") or {}
     written = oa.get("written") or {}
     answers = [{
@@ -867,12 +943,6 @@ def _review_row(uid: str, application: Dict[str, Any]) -> Dict[str, Any]:
         "note": QUESTION_BY_ID[a["question_id"]]["note"],
     } for a in oa.get("answers", []) if a.get("question_id") in QUESTION_BY_ID]
 
-    by_kind: Dict[str, Dict[str, int]] = {}
-    for a in answers:
-        tally = by_kind.setdefault(a["kind"], {"correct": 0, "total": 0})
-        tally["total"] += 1
-        tally["correct"] += 1 if a["correct"] else 0
-
     score = oa.get("score") or {}
     return {
         "user_id": uid,
@@ -880,6 +950,8 @@ def _review_row(uid: str, application: Dict[str, Any]) -> Dict[str, Any]:
         "full_name": application.get("full_name") or "",
         "email": application.get("email") or "",
         "oxford_email": application.get("oxford_email") or "",
+        "applicant_category": application.get("applicant_category") or "",
+        "confirmed_oxford_student": bool(application.get("confirmed_oxford_student")),
         "programme": application.get("programme", ""),
         "status": application.get("status", S_CV),
         "created_at": _as_utc(application.get("created_at")),
@@ -892,19 +964,19 @@ def _review_row(uid: str, application: Dict[str, Any]) -> Dict[str, Any]:
         "score": score,
         "correct": score.get("correct"),
         "total": score.get("total", NUMERICAL_QUESTIONS),
-        "by_kind": by_kind,
         "answers": answers,
         "flags": application.get("flags") or {},
         "finish_reason": oa.get("finish_reason"),
         "decision_note": application.get("decision_note") or "",
+        "review": _review_summary(application, viewer_id),
     }
 
 
 @router.get("/admin", include_in_schema=False)
-async def admin_applications(request: Request, admin: User = Depends(require_admin)):
+async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
     """Every applicant, strongest numerical score first."""
     docs = await db_module.db.collection(COLLECTION).get()
-    rows = [_review_row(d.id, d.to_dict() or {}) for d in docs]
+    rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=str(reviewer.id)) for d in docs]
 
     # Ranked by the numerical score, as asked. Applications with no score yet
     # (still on the CV step, or mid-assessment) sort to the bottom rather than
@@ -926,11 +998,14 @@ async def admin_applications(request: Request, admin: User = Depends(require_adm
         "scored": len(scored),
         "questions_total": NUMERICAL_QUESTIONS,
         "written_prompt": WRITTEN_PROMPT,
+        "is_admin": reviewer.is_admin,
+        "score_min": SCORE_MIN,
+        "score_max": SCORE_MAX,
     })
 
 
 @router.get("/admin/{user_id}/cv", include_in_schema=False)
-async def applicant_cv(user_id: str, admin: User = Depends(require_admin)):
+async def applicant_cv(user_id: str, reviewer: User = Depends(require_reviewer)):
     """Stream an applicant's CV for review."""
     if not db_module.bucket:
         raise HTTPException(500, "Storage not configured")
@@ -952,6 +1027,40 @@ async def applicant_cv(user_id: str, admin: User = Depends(require_admin)):
         media_type="application/pdf",
         headers={"Content-Disposition": 'inline; filename="cv.pdf"'},
     )
+
+
+@router.post("/admin/{user_id}/score")
+async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depends(require_reviewer)):
+    """
+    Record this reviewer's CV and written-response scores.
+
+    One entry per reviewer, keyed by their own id — resubmitting updates your
+    own score rather than adding a second one, and the average on display
+    always reflects everyone's latest.
+    """
+    for label, value in (("CV", payload.cv_score), ("Written", payload.written_score)):
+        if value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
+            raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
+    if payload.cv_score is None and payload.written_score is None:
+        raise HTTPException(400, "Enter at least one score")
+
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") not in SCORABLE:
+        raise HTTPException(400, "This application hasn't been submitted yet — nothing to score")
+
+    reviews = application.setdefault("reviews", {})
+    existing = reviews.get(str(reviewer.id), {})
+    reviews[str(reviewer.id)] = {
+        "reviewer_name": reviewer.username,
+        "cv_score": payload.cv_score if payload.cv_score is not None else existing.get("cv_score"),
+        "written_score": payload.written_score if payload.written_score is not None else existing.get("written_score"),
+        "note": (payload.note or "").strip()[:300] or existing.get("note", ""),
+        "updated_at": _now(),
+    }
+    await _save(user_id, application)
+    return {"ok": True, "review": _review_summary(application, str(reviewer.id))}
 
 
 # What a reminder says, by where the applicant is stuck. Nothing to send for
@@ -1013,28 +1122,87 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
     return {"ok": True, "sent_to": to}
 
 
+# Email copy for each stage of the decision. Shortlisting isn't final, so its
+# note is deliberately open — an interview is still to come.
+_DECISION_COPY: Dict[str, Dict[str, str]] = {
+    S_SHORTLISTED: {
+        "subject": "Alpha Fund — you've been shortlisted for interview",
+        "title": "Shortlisted for interview",
+        "body": ("<p>Your <strong>{programme}</strong> application has been shortlisted. "
+                 "The committee will be in touch separately to arrange an interview.</p>"),
+    },
+    S_ACCEPTED: {
+        "subject": "Alpha Fund — you're in",
+        "title": "Application accepted",
+        "body": ("<p>Congratulations — you've been accepted onto <strong>{programme}</strong>. "
+                 "Welcome to Alpha Fund.</p>"),
+    },
+    S_REJECTED: {
+        "subject": "Alpha Fund — an update on your application",
+        "title": "Application decision",
+        "body": ("<p>Thank you for applying to <strong>{programme}</strong>. On this occasion "
+                 "we won't be taking your application further, but we'd encourage you to keep "
+                 "playing and apply again in a future round.</p>"),
+    },
+}
+
+
+async def _send_decision_email(application: dict, status: str) -> None:
+    to = application.get("oxford_email") or application.get("email")
+    copy = _DECISION_COPY.get(status)
+    if not to or not copy:
+        return
+    name = application.get("full_name") or application.get("username") or "there"
+    programme = application.get("programme") or "the programme"
+    body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme)
+    await mailer.send_email(to=to, subject=copy["subject"], title=copy["title"], body_html=body)
+
+
 @router.post("/admin/{user_id}/decide")
 async def decide(user_id: str, payload: Decision, admin: User = Depends(require_admin)):
     """
-    Accept or reject an application. Accepting sets the member's programme.
+    Move an application to shortlisted, accepted or rejected.
+
+    Shortlisting is the interview stage: a submitted application can be
+    shortlisted or rejected outright, but can only be *accepted* once it has
+    been shortlisted — the interview is the chance to actually meet someone
+    before the fund commits to them. Rejecting is available at either point,
+    since not everyone who applies gets an interview. Accepting sets the
+    member's programme; each transition emails the applicant.
     """
-    if payload.decision not in ("accept", "reject"):
-        raise HTTPException(400, "Decision must be accept or reject")
+    if payload.decision not in ("shortlist", "accept", "reject"):
+        raise HTTPException(400, "Decision must be shortlist, accept or reject")
 
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
-    if application.get("status") != S_SUBMITTED:
-        raise HTTPException(400, "That application has not been submitted yet")
+    status = application.get("status")
 
-    accepted = payload.decision == "accept"
-    application["status"] = S_ACCEPTED if accepted else S_REJECTED
-    application["decided_at"] = _now()
-    application["decided_by"] = admin.username
-    application["decision_note"] = (payload.note or "").strip()[:500]
+    if payload.decision == "shortlist":
+        if status != S_SUBMITTED:
+            raise HTTPException(400, "Only a newly submitted application can be shortlisted")
+        application["status"] = S_SHORTLISTED
+        application["shortlisted_at"] = _now()
+        application["shortlisted_by"] = admin.username
+    elif payload.decision == "accept":
+        if status != S_SHORTLISTED:
+            raise HTTPException(400, "Shortlist the applicant and hold the interview before accepting")
+        application["status"] = S_ACCEPTED
+        application["decided_at"] = _now()
+        application["decided_by"] = admin.username
+    else:  # reject
+        if status not in (S_SUBMITTED, S_SHORTLISTED):
+            raise HTTPException(400, "That application has already been decided")
+        application["status"] = S_REJECTED
+        application["decided_at"] = _now()
+        application["decided_by"] = admin.username
+
+    if payload.note is not None:
+        application["decision_note"] = (payload.note or "").strip()[:500]
     await _save(user_id, application)
+    await _send_decision_email(application, application["status"])
 
-    if accepted:
+    if application["status"] == S_ACCEPTED:
         programme = application.get("programme")
         if programme in mb.MEMBERSHIPS:
             legacy = {v: k for k, v in mb.LEGACY_TRACK_TO_MEMBERSHIP.items()}.get(programme, "")
