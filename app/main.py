@@ -1012,3 +1012,6 @@ app.include_router(recruiters.router)
 from app import learning_routes
 app.include_router(learning_routes.router)
 
+from app import applications
+app.include_router(applications.router)
+

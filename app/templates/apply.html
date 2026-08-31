@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Apply — {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    /* ── Application flow ────────────────────────────────────────────────── */
+    .apl-steps {
+      display: flex; gap: 0; margin: 0 0 22px; list-style: none; padding: 0;
+      border: 1px solid var(--border); background: var(--card);
+    }
+    .apl-steps li {
+      flex: 1; padding: 12px 14px; font-size: 13px; font-weight: 600;
+      color: var(--muted); border-right: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .apl-steps li:last-child { border-right: none; }
+    .apl-steps li .apl-n {
+      width: 21px; height: 21px; flex: none; display: inline-flex;
+      align-items: center; justify-content: center; font-size: 12px;
+      border: 1px solid var(--border); color: var(--muted);
+    }
+    .apl-steps li.is-now { color: var(--text); }
+    .apl-steps li.is-now .apl-n { border-color: var(--brand); color: var(--brand); }
+    .apl-steps li.is-done { color: var(--green); }
+    .apl-steps li.is-done .apl-n { border-color: var(--green); color: var(--green); }
+
+    .apl-choice {
+      display: block; border: 1px solid var(--border); background: var(--bg);
+      padding: 16px 18px; margin-bottom: 10px; cursor: pointer;
+    }
+    .apl-choice:hover { border-color: var(--brand); }
+    .apl-choice.is-picked { border-color: var(--brand); background: rgba(108, 92, 231, 0.06); }
+    .apl-choice input { margin-right: 10px; }
+    .apl-choice strong { font-size: 15px; }
+    .apl-choice .apl-blurb {
+      display: block; margin: 6px 0 0 26px; font-size: 13px; color: var(--muted);
+    }
+
+    .apl-rules { margin: 0 0 18px; padding-left: 20px; font-size: 14px; line-height: 1.75; }
+    .apl-rules li::marker { color: var(--muted); }
+
+    .apl-warn {
+      border: 1px solid var(--red); background: rgba(255, 107, 107, 0.08);
+      padding: 14px 16px; margin: 0 0 18px; font-size: 14px; line-height: 1.6;
+    }
+    .apl-warn strong { color: var(--red); display: block; margin-bottom: 4px; }
+
+    .apl-ack {
+      display: flex; gap: 10px; align-items: flex-start;
+      font-size: 14px; margin: 0 0 16px; cursor: pointer;
+    }
+    .apl-ack input { margin-top: 3px; flex: none; }
+
+    /* Clocks. The section clock is the loud one; the session clock sits
+       beside it so a candidate always knows how much of the sitting is left. */
+    .apl-clocks {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 16px; margin-bottom: 14px;
+    }
+    .apl-clock-main {
+      font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+    .apl-clock-main.is-low { color: var(--red); }
+    .apl-clock-sub { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .apl-progress {
+      height: 3px; background: var(--border); margin: 0 0 18px; overflow: hidden;
+    }
+    .apl-progress span {
+      display: block; height: 100%; background: var(--brand);
+      transition: width 0.25s linear;
+    }
+    .apl-progress span.is-low { background: var(--red); }
+
+    .apl-essay {
+      width: 100%; min-height: 260px; resize: vertical; padding: 14px;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      font: inherit; font-size: 15px; line-height: 1.6; box-sizing: border-box;
+    }
+    .apl-essay:focus { outline: none; border-color: var(--brand); }
+    .apl-essay-meta {
+      display: flex; justify-content: space-between; gap: 12px;
+      font-size: 12px; color: var(--muted); margin-top: 8px;
+    }
+
+    .apl-q-kind {
+      display: inline-block; font-size: 11px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
+    }
+    .apl-q-prompt { font-size: 18px; line-height: 1.5; margin: 0 0 18px; }
+    .apl-answer {
+      width: 100%; padding: 14px; font-size: 22px; font-variant-numeric: tabular-nums;
+      border: 1px solid var(--border); background: var(--bg); color: var(--text);
+      box-sizing: border-box;
+    }
+    .apl-answer:focus { outline: none; border-color: var(--brand); }
+    .apl-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
+
+    .field-group label {
+      display: block; font-size: 13px; font-weight: 600;
+      color: var(--muted); margin-bottom: 7px;
+    }
+    .field-group input {
+      width: 100%; padding: 11px 14px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font-size: 15px; box-sizing: border-box;
+    }
+    .field-group input:focus { outline: none; border-color: var(--brand); }
+
+    .apl-done-tick {
+      font-size: 34px; color: var(--green); line-height: 1; margin-bottom: 10px;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Apply to Alpha Fund</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/profile" class="btn ghost" id="profileLink">Profile</a>
+      <span id="userName">user</span>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 720px;">
+    <div id="msg" class="msp-msg hidden"></div>
+    <div id="steps"></div>
+    <div id="app">Loading…</div>
+  </div>
+
+  <script>
+    window.APPLY = {
+      writtenMinutes: {{ written_minutes }},
+      numericalQuestions: {{ numerical_questions }},
+      secondsPerQuestion: {{ seconds_per_question }},
+      sessionMinutes: {{ session_minutes }},
+    };
+  </script>
+  <script src="/static/apply.js?v=1"></script>
+</body>
+
+</html>

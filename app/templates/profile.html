@@ -94,6 +94,21 @@
     .toast.show { opacity: 1; transform: translateY(0); }
     .toast.success { background: #2ecc71; color: #fff; }
     .toast.error   { background: var(--red);  color: #fff; }
+
+    /* Profile / Performance tabs */
+    .ptabs {
+      display: flex; gap: 4px; max-width: 980px; margin: 20px auto 0;
+      padding: 0 20px; border-bottom: 2px solid var(--border);
+    }
+    .ptab {
+      padding: 10px 18px; background: none; border: none; color: var(--muted);
+      cursor: pointer; font-weight: 600; font-size: 14px;
+      border-bottom: 3px solid transparent; margin-bottom: -2px; transition: color 0.15s;
+    }
+    .ptab:hover { color: var(--text); }
+    .ptab.active { color: var(--brand); border-bottom-color: var(--brand); }
+    .ptab-content { display: none; }
+    .ptab-content.active { display: block; }
   </style>
   <script src="/static/theme.js"></script>
 
@@ -108,6 +123,12 @@
     </a>
   </div>
 
+  <div class="ptabs">
+    <button class="ptab active" data-tab="profile" onclick="switchProfileTab('profile', this)">Profile</button>
+    <button class="ptab" data-tab="performance" onclick="switchProfileTab('performance', this)">Performance</button>
+  </div>
+
+  <div id="profile-tab" class="ptab-content active">
   <div class="profile-card">
     <h1>My Profile</h1>
     <p class="subtitle">Who you are on the platform, and what you've chosen to share.</p>
@@ -163,11 +184,22 @@
       </span>
     </label>
 
-    <hr class="divider">
+    <!-- Apply to a programme. General public and general members only; anyone
+         already on a programme has nothing to apply for. -->
+    <div id="applySection" style="display:none;">
+      <hr class="divider">
+      <h3 style="margin:0 0 6px;">Programmes</h3>
+      <div id="applyBox"></div>
+    </div>
 
-    <!-- Role -->
-    <h3 style="margin:0 0 6px;">Role</h3>
-    <div id="roleBox"></div>
+    <!-- Role. Only shown to accounts that already hold one: the recruiter and
+         host roles are granted by an admin to people they know, not requested
+         from a form by whoever finds the page. -->
+    <div id="roleSection" style="display:none;">
+      <hr class="divider">
+      <h3 style="margin:0 0 6px;">Role</h3>
+      <div id="roleBox"></div>
+    </div>
 
     <hr class="divider">
 
@@ -224,8 +256,10 @@
       <iframe id="cvFrame" src="" style="width:100%;height:680px;border:none;display:block;"></iframe>
     </div>
   </div>
+  </div>
 
   <!-- Performance dashboard -->
+  <div id="performance-tab" class="ptab-content">
   <div class="profile-card" id="scorecard-card" style="max-width:980px;">
     <div class="dash-head">
       <div>
@@ -254,6 +288,7 @@
       <h3 class="dash-section">Not played yet</h3>
       <div class="lbx-untried" id="scUntried"></div>
     </div>
+  </div>
   </div>
 
   <!-- Analyst password modal -->
@@ -508,6 +543,7 @@
         document.getElementById('optCvBook').checked = !!data.cv_book_included;
         renderIdentity(data);
         renderRole(data);
+        renderApply(data);
         loadCompetitionState();
       } catch {
         showToast('Failed to load profile', 'error');
@@ -546,76 +582,69 @@
       } catch { /* the chip just stays on Practice */ }
     }
 
+    /* The role block only exists for accounts that already hold a role.
+     * Recruiters see other students' contact details and performance, so the
+     * role is granted by an admin to someone they know — there is nothing here
+     * for a general account to ask for, and a request form on a public profile
+     * page only invites people to try. */
     function renderRole(d) {
+      const section = document.getElementById('roleSection');
       const box = document.getElementById('roleBox');
-      const req = d.role_request;
-      const isGeneral = d.role === 'general';
+      if (d.role === 'general') { section.style.display = 'none'; return; }
 
-      if (!isGeneral) {
-        box.innerHTML = `<p class="role-now">You hold the <strong>${esc(ROLE_LABELS[d.role])}</strong> role.
-          ${d.role === 'recruiter'
-            ? '<a href="/recruiters">Open the recruiter directory →</a>'
-            : '<a href="/competitions">Run a competition →</a>'}</p>`;
+      section.style.display = '';
+      box.innerHTML = `<p class="role-now">You hold the <strong>${esc(ROLE_LABELS[d.role])}</strong> role.
+        ${d.role === 'recruiter'
+          ? '<a href="/recruiters">Open the recruiter directory →</a>'
+          : '<a href="/competitions">Run a competition →</a>'}</p>`;
+    }
+
+    /* Applying to a quant programme: open to general public and general Alpha
+     * Fund members, and shown as a single line of state so the profile stays
+     * the summary and /apply stays the flow. */
+    const APPLY_STATUS_LINE = {
+      cv: 'Your application needs an up-to-date CV before the assessment opens.',
+      oa_ready: 'Your assessment is ready — sit it whenever you have 15 clear minutes.',
+      oa_active: 'Your assessment is under way. The clock is running.',
+      submitted: 'Your application is in and waiting on the committee.',
+      accepted: 'Your application was accepted.',
+      rejected: 'Your application was not taken forward this time.',
+    };
+
+    async function renderApply(d) {
+      const section = document.getElementById('applySection');
+      const box = document.getElementById('applyBox');
+      let state;
+      try {
+        const res = await fetch('/apply/state', { credentials: 'include' });
+        if (!res.ok) throw new Error();
+        state = await res.json();
+      } catch { section.style.display = 'none'; return; }
+
+      // Nothing to show someone who is neither eligible nor already applying.
+      if (!state.eligible && state.status === 'none') { section.style.display = 'none'; return; }
+      section.style.display = '';
+
+      if (state.status === 'none') {
+        box.innerHTML = `
+          <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
+            Applications are open for the <strong>Quant Bootcamp</strong> and
+            <strong>Quant Analyst</strong> programmes. You will upload your
+            up-to-date CV and sit a 15-minute assessment, whenever suits you.
+          </p>
+          <a class="btn primary" href="/apply">Apply to a programme</a>`;
         return;
       }
 
-      if (req && req.status === 'pending') {
-        box.innerHTML = `<p class="role-now">Your request for the
-          <strong>${esc(ROLE_LABELS[req.role] || req.role)}</strong> role is waiting for review.
-          <button class="btn ghost" onclick="withdrawRole()">Withdraw</button></p>`;
-        return;
-      }
-
+      const line = APPLY_STATUS_LINE[state.status] || '';
+      const cta = ['cv', 'oa_ready', 'oa_active'].includes(state.status)
+        ? '<a class="btn primary" href="/apply">Continue your application</a>'
+        : '<a class="btn" href="/apply">View your application</a>';
       box.innerHTML = `
-        <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
-          ${req && req.status === 'rejected'
-            ? 'Your last request was not approved. You can ask again with more detail.'
-            : 'Recruiters can see students who opted in to be contacted. Hosts can run competitions. Both are approved by an admin.'}
+        <p class="role-now" style="margin:0 0 14px;">
+          You have applied to <strong>${esc(state.programme || '')}</strong>. ${esc(line)}
         </p>
-        <div class="field-group">
-          <label>Request a role</label>
-          <select id="roleWanted">
-            <option value="recruiter">Recruiter</option>
-            <option value="host">Host</option>
-          </select>
-        </div>
-        <div class="field-group">
-          <label>Firm or society</label>
-          <input id="roleFirm" type="text" placeholder="e.g. Jane Street">
-        </div>
-        <div class="field-group">
-          <label>Anything else <span style="color:var(--muted);font-weight:400">(optional)</span></label>
-          <input id="roleNote" type="text" placeholder="Why you need it">
-        </div>
-        <button class="btn primary" onclick="requestRole()">Send request</button>`;
-    }
-
-    async function requestRole() {
-      const payload = {
-        role: document.getElementById('roleWanted').value,
-        firm: document.getElementById('roleFirm').value.trim(),
-        note: document.getElementById('roleNote').value.trim(),
-      };
-      try {
-        const res = await fetch('/me/role-request', {
-          method: 'POST', credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        if (!res.ok) throw new Error((await res.json()).detail || 'Failed');
-        showToast('Request sent — an admin will review it', 'success');
-        loadProfile();
-      } catch (err) {
-        showToast('Error: ' + err.message, 'error');
-      }
-    }
-
-    async function withdrawRole() {
-      try {
-        await fetch('/me/role-request', { method: 'DELETE', credentials: 'include' });
-        showToast('Request withdrawn', 'success');
-        loadProfile();
-      } catch { showToast('Could not withdraw', 'error'); }
+        ${cta}`;
     }
 
     async function saveOptIns() {
@@ -871,6 +900,21 @@
     document.getElementById('pwModal').addEventListener('click', function(e) {
       if (e.target === this) cancelPassword();
     });
+
+    function switchProfileTab(name, btn) {
+      try { localStorage.setItem('profileActiveTab', name); } catch { /* ignore */ }
+      document.querySelectorAll('.ptab').forEach((el) => el.classList.remove('active'));
+      (btn || document.querySelector(`.ptab[data-tab="${name}"]`))?.classList.add('active');
+      document.querySelectorAll('.ptab-content').forEach((el) => el.classList.remove('active'));
+      document.getElementById(name + '-tab')?.classList.add('active');
+    }
+
+    // Both tabs' data load in the background regardless of which is visible,
+    // so switching tabs never shows a loading flash.
+    try {
+      const saved = localStorage.getItem('profileActiveTab');
+      if (saved === 'performance') switchProfileTab('performance');
+    } catch { /* default to the Profile tab */ }
 
     loadProfile();
   </script>

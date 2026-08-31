@@ -65,6 +65,13 @@ BOOTCAMP_MEMBERSHIPS = {M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP}
 # Only analysts are eligible for the CV book at all; the opt-in decides.
 CV_BOOK_ELIGIBLE = ANALYST_MEMBERSHIPS
 
+# ── Applications (see app/applications.py) ────────────────────────────────────
+# The two programmes anyone can apply to, and the memberships they can apply
+# from. The password route into these tiers stays as it was for members who
+# were given a code; the application is the route for everybody else.
+APPLY_PROGRAMMES: List[str] = [M_QUANT_BOOTCAMP, M_QUANT_ANALYST]
+APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER}
+
 # ── Clubs ─────────────────────────────────────────────────────────────────────
 CLUB_ALPHA_FUND = "Alpha Fund"
 CLUBS: List[str] = [CLUB_ALPHA_FUND]
@@ -106,6 +113,18 @@ def is_recruiter(data: Dict[str, Any]) -> bool:
 
 def can_host(data: Dict[str, Any]) -> bool:
     return bool((data or {}).get("is_admin")) or (data or {}).get("role") == ROLE_HOST
+
+
+def can_apply(data: Dict[str, Any]) -> bool:
+    """Whether this account may apply to a quant programme.
+
+    General public and general Alpha Fund members can; anyone already in a
+    bootcamp or analyst tier has nothing to apply for, and recruiters and
+    hosts are on the other side of the table.
+    """
+    if role_of(data) != ROLE_GENERAL:
+        return False
+    return membership_of(data) in APPLICANT_MEMBERSHIPS
 
 
 def contactable(data: Dict[str, Any]) -> bool:
@@ -160,6 +179,7 @@ def vocabulary() -> Dict[str, Any]:
         "bootcamp_memberships": sorted(BOOTCAMP_MEMBERSHIPS),
         "cv_book_eligible": sorted(CV_BOOK_ELIGIBLE),
         "requestable_roles": sorted(REQUESTABLE_ROLES),
+        "apply_programmes": list(APPLY_PROGRAMMES),
     }
 
 

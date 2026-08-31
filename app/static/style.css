@@ -6810,6 +6810,51 @@ body.tut-locked {
   border: 1px solid rgba(242, 85, 90, .35);
 }
 
+.auth-card .info {
+  margin-top: 12px;
+  padding: 9px 11px;
+  font-size: 13.5px;
+  color: var(--brand);
+  background: rgba(108, 92, 231, .1);
+  border: 1px solid rgba(108, 92, 231, .35);
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0;
+  font-size: 12px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .05em;
+}
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+
+.auth-google {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  background: #fff;
+  color: #1f1f1f;
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+.auth-google:hover { background: #f6f6f6; }
+.auth-google:disabled { opacity: .6; cursor: default; }
+.auth-google svg { flex: none; }
+
 /* Theme toggle button (injected into the topbar by theme.js) */
 .theme-toggle {
   border: 1px solid var(--border);

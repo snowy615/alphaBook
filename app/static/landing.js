@@ -310,6 +310,44 @@
   }
 
   // ---- Auth UI ----
+
+  // Programme badge labels, by application status. Once someone has chosen a
+  // programme the header should say which one, not just "Apply" — that is
+  // the whole point of showing this on the home page rather than only on
+  // the profile page.
+  const APPLY_BADGE_LABEL = {
+    cv: (p) => `Applying: ${p}`,
+    oa_ready: (p) => `Applying: ${p}`,
+    oa_active: () => "Assessment in progress",
+    submitted: (p) => `Applied: ${p}`,
+    accepted: (p) => `Accepted: ${p}`,
+    rejected: (p) => `Application: ${p}`,
+  };
+
+  // The plain Apply link only appears for accounts with something to apply
+  // for and no application yet. Once one exists, the link is replaced by a
+  // badge naming the programme, so the header always shows what's active.
+  async function refreshApplyBadge() {
+    const link = $("#applyLink");
+    const badge = $("#applyBadge");
+    if (!link && !badge) return;
+    try {
+      const state = await fetchJSON("/apply/state");
+      const hasApplication = state && state.status && state.status !== "none";
+
+      if (link) link.style.display = (state && state.eligible && !hasApplication) ? "" : "none";
+      if (badge) {
+        if (hasApplication) {
+          const label = APPLY_BADGE_LABEL[state.status];
+          badge.textContent = label ? label(state.programme || "") : state.status;
+          badge.style.display = "";
+        } else {
+          badge.style.display = "none";
+        }
+      }
+    } catch { /* leave both hidden */ }
+  }
+
   async function initAuthUI() {
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
@@ -332,6 +370,7 @@
       userBox?.classList.remove("hidden");
       if (adminLink) adminLink.style.display = isAdmin ? "inline-block" : "none";
       if (heroCta) { heroCta.textContent = "Open the market"; heroCta.href = "/market"; }
+      refreshApplyBadge();
     }
 
     try {

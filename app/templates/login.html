@@ -20,6 +20,19 @@
       </div>
     </div>
     {% if error %}<div class="err">{{error}}</div>{% endif %}
+
+    <button type="button" id="googleBtn" class="auth-google">
+      <svg width="18" height="18" viewBox="0 0 18 18">
+        <path fill="#4285F4" d="M17.64 9.2c0-.64-.06-1.25-.16-1.84H9v3.48h4.84a4.14 4.14 0 0 1-1.8 2.72v2.26h2.9c1.7-1.56 2.7-3.87 2.7-6.62z"/>
+        <path fill="#34A853" d="M9 18c2.43 0 4.47-.8 5.96-2.18l-2.9-2.26c-.8.54-1.84.86-3.06.86-2.35 0-4.34-1.59-5.05-3.72H.9v2.33A9 9 0 0 0 9 18z"/>
+        <path fill="#FBBC05" d="M3.95 10.7A5.4 5.4 0 0 1 3.67 9c0-.59.1-1.17.28-1.7V4.97H.9A9 9 0 0 0 0 9c0 1.45.35 2.83.9 4.03l3.05-2.33z"/>
+        <path fill="#EA4335" d="M9 3.58c1.32 0 2.51.46 3.44 1.35l2.58-2.58C13.46.89 11.43 0 9 0A9 9 0 0 0 .9 4.97l3.05 2.33C4.66 5.17 6.65 3.58 9 3.58z"/>
+      </svg>
+      Continue with Google
+    </button>
+
+    <div class="auth-divider">or</div>
+
     <div id="auth-container">
       <form id="login-form">
         <label>Email or username</label>
@@ -33,7 +46,9 @@
 
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
-      import { getAuth, signInWithEmailAndPassword } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+      import {
+        getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup,
+      } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
 
       async function init() {
         let firebaseAuth = null;
@@ -134,11 +149,69 @@
             }
           }
         });
+
+        // ── Google ─────────────────────────────────────────────────────────
+        const googleBtn = document.getElementById('googleBtn');
+        if (!firebaseAuth) {
+          googleBtn.disabled = true;
+          googleBtn.title = "Firebase not configured";
+        } else {
+          const googleBtnDefault = googleBtn.innerHTML;
+          const provider = new GoogleAuthProvider();
+          googleBtn.addEventListener('click', async () => {
+            googleBtn.disabled = true;
+            googleBtn.textContent = "Connecting…";
+            errDiv.style.display = "none";
+            try {
+              const cred = await signInWithPopup(firebaseAuth, provider);
+              const token = await cred.user.getIdToken();
+
+              // An existing account is found by firebase_uid regardless of
+              // username, so this same call covers a returning user and a
+              // first-time Google sign-up. For a first-time sign-up the
+              // backend derives a username from the email if none is given;
+              // on the rare collision, retry once with a random suffix
+              // rather than surfacing a username form nobody asked to fill.
+              const attempt = async (username) => {
+                const formData = new FormData();
+                formData.append('id_token', token);
+                if (username) formData.append('username', username);
+                return fetch("/auth/firebase", { method: "POST", body: formData, credentials: "include" });
+              };
+
+              let loginRes = await attempt();
+              if (!loginRes.ok) {
+                const err = await loginRes.json().catch(() => ({}));
+                if (loginRes.status === 400 && /taken/i.test(err.message || "")) {
+                  const base = (cred.user.email || "user").split("@")[0].replace(/[^a-z0-9]/gi, "");
+                  loginRes = await attempt(base + Math.floor(1000 + Math.random() * 9000));
+                }
+              }
+
+              if (loginRes.ok) {
+                window.location.href = "/";
+              } else {
+                const err2 = await loginRes.json().catch(() => ({}));
+                errDiv.textContent = err2.message || err2.detail || "Google sign-in failed";
+                errDiv.style.display = "block";
+                googleBtn.disabled = false;
+                googleBtn.innerHTML = googleBtnDefault;
+              }
+            } catch (error) {
+              console.error(error);
+              if (error.code !== "auth/popup-closed-by-user" && error.code !== "auth/cancelled-popup-request") {
+                errDiv.textContent = error.message;
+                errDiv.style.display = "block";
+              }
+              googleBtn.disabled = false;
+              googleBtn.innerHTML = googleBtnDefault;
+            }
+          });
+        }
       }
       init();
     </script>
     <div class="auth-alt">No account? <a href="/signup">Create one</a></div>
   </div>
 </body>
-
 </html>

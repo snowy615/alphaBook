@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Applications — {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .apa-summary { margin-bottom: 28px; }
+    .apa-rank {
+      font-variant-numeric: tabular-nums; font-weight: 700; color: var(--muted);
+      width: 44px;
+    }
+    .apa-score {
+      font-variant-numeric: tabular-nums; font-weight: 700; font-size: 15px;
+    }
+    .apa-score small { font-weight: 400; color: var(--muted); }
+    .apa-bar {
+      display: block; height: 4px; background: var(--border); margin-top: 5px;
+      min-width: 90px;
+    }
+    .apa-bar span { display: block; height: 100%; background: var(--brand); }
+
+    .apa-card { margin-bottom: 16px; scroll-margin-top: 20px; }
+    .apa-card .head { gap: 12px; flex-wrap: wrap; }
+    .apa-who { display: flex; flex-direction: column; gap: 2px; }
+    .apa-who .apa-email { font-size: 12px; color: var(--muted); font-weight: 400; }
+
+    .apa-tags { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .apa-tag {
+      font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+      padding: 3px 8px; border: 1px solid var(--border); color: var(--muted);
+    }
+    .apa-tag.is-good { border-color: var(--green); color: var(--green); }
+    .apa-tag.is-bad { border-color: var(--red); color: var(--red); }
+    .apa-tag.is-warn { border-color: #d9a441; color: #d9a441; }
+
+    .apa-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 1px; background: var(--border); border: 1px solid var(--border);
+      margin-bottom: 18px;
+    }
+    .apa-cell { background: var(--card); padding: 11px 13px; }
+    .apa-cell .apa-k {
+      display: block; font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px;
+    }
+    .apa-cell .apa-v { font-size: 16px; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+    .apa-h {
+      font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--muted); margin: 0 0 8px;
+    }
+    .apa-essay {
+      white-space: pre-wrap; line-height: 1.65; font-size: 14.5px;
+      border-left: 2px solid var(--border); padding: 2px 0 2px 16px;
+      margin: 0 0 18px; max-height: 420px; overflow-y: auto;
+    }
+    .apa-essay.is-empty { color: var(--muted); font-style: italic; border-left-style: dashed; }
+
+    details.apa-detail { margin-bottom: 14px; }
+    details.apa-detail > summary {
+      cursor: pointer; font-size: 13px; font-weight: 600; color: var(--brand);
+      padding: 6px 0;
+    }
+    .apa-ok { color: var(--green); font-weight: 700; }
+    .apa-no { color: var(--red); font-weight: 700; }
+
+    .apa-actions {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      border-top: 1px solid var(--border); padding-top: 14px; margin-top: 4px;
+    }
+    .apa-actions input[type="text"] {
+      flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
+    }
+    .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/admin" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Programme applications</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions"><a href="/admin" class="btn ghost">Back to admin</a></div>
+  </div>
+
+  <div class="container" style="max-width: 1080px;">
+    <div id="msg" class="msp-msg hidden"></div>
+
+    {% if not rows %}
+      <div class="card msp-panel"><div class="msp-panel-body">
+        <p class="apa-empty">Nobody has applied yet.</p>
+      </div></div>
+    {% else %}
+
+    <!-- Ranked summary: the whole field on one screen, strongest first. -->
+    <div class="card msp-panel apa-summary">
+      <div class="head">
+        <h3>Applicants</h3>
+        <span class="msp-muted">{{ scored }} of {{ total }} assessed · ranked by the numerical section</span>
+      </div>
+      <div class="msp-panel-body msp-flush">
+        <table class="msp-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Applicant</th><th>Programme</th>
+              <th>Numerical</th><th>Written</th><th>CV</th><th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in rows %}
+            <tr>
+              <td class="apa-rank">{{ r.rank if r.rank else "—" }}</td>
+              <td>
+                <a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
+                <div class="msp-muted" style="font-size:12px;">{{ r.username }}</div>
+              </td>
+              <td>{{ r.programme }}</td>
+              <td>
+                {% if r.correct is not none %}
+                  <span class="apa-score">{{ r.correct }}<small>/{{ r.total }}</small></span>
+                  <span class="apa-bar"><span style="width: {{ (100 * r.correct / r.total) if r.total else 0 }}%"></span></span>
+                {% else %}
+                  <span class="msp-muted">not sat</span>
+                {% endif %}
+              </td>
+              <td>{% if r.written_words %}{{ r.written_words }} words{% else %}<span class="msp-muted">—</span>{% endif %}</td>
+              <td>
+                {% if r.cv_uploaded %}
+                  <a href="/apply/admin/{{ r.user_id }}/cv" target="_blank" rel="noopener">Open ↗</a>
+                {% else %}<span class="msp-muted">none</span>{% endif %}
+              </td>
+              <td>
+                {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
+                {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
+                {% elif r.status == "submitted" %}<span class="apa-tag">submitted</span>
+                {% elif r.status == "oa_active" %}<span class="apa-tag is-warn">sitting now</span>
+                {% elif r.status == "oa_ready" %}<span class="apa-tag">not started</span>
+                {% else %}<span class="apa-tag">awaiting CV</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- One card per applicant: CV, written answer, and every graded answer. -->
+    {% for r in rows %}
+    <div class="card msp-panel apa-card" id="a-{{ r.user_id }}">
+      <div class="head">
+        <div class="apa-who">
+          <h3 style="margin:0;">
+            {% if r.rank %}{{ r.rank }}.{% endif %} {{ r.full_name or r.username }}
+          </h3>
+          <span class="apa-email">
+            {{ r.username }}{% if r.oxford_email %} · {{ r.oxford_email }}
+            {% elif r.email %} · {{ r.email }}{% endif %}
+          </span>
+        </div>
+        <div class="apa-tags">
+          <span class="apa-tag">{{ r.programme }}</span>
+          {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
+          {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>{% endif %}
+          {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
+          {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
+          {% if r.finish_reason == "session_expired" %}<span class="apa-tag is-warn">ran out of time</span>{% endif %}
+          {% if r.status in ("cv", "oa_ready") %}
+          <button class="btn ghost" style="font-size:12px;padding:5px 10px;"
+                  onclick="remind('{{ r.user_id }}', this)">
+            {% if r.last_reminded_at %}Remind again{% else %}Send reminder{% endif %}
+          </button>
+          {% endif %}
+        </div>
+      </div>
+      {% if r.last_reminded_at %}
+      <div class="msp-panel-body" style="padding-top:0;padding-bottom:0;">
+        <p class="msp-muted" style="font-size:12px;margin:0 0 -6px;">
+          Last reminded {{ r.last_reminded_at.strftime("%d %b, %H:%M") }}
+        </p>
+      </div>
+      {% endif %}
+
+      <div class="msp-panel-body">
+        <div class="apa-grid">
+          <div class="apa-cell">
+            <span class="apa-k">Numerical</span>
+            <span class="apa-v">
+              {% if r.correct is not none %}{{ r.correct }}/{{ r.total }}
+                <small class="msp-muted">({{ r.score.pct }}%)</small>
+              {% else %}—{% endif %}
+            </span>
+          </div>
+          {% for kind in ["probability", "expectation", "pattern"] %}
+          <div class="apa-cell">
+            <span class="apa-k">{{ kind }}</span>
+            <span class="apa-v">
+              {% if kind in r.by_kind %}{{ r.by_kind[kind].correct }}/{{ r.by_kind[kind].total }}
+              {% else %}—{% endif %}
+            </span>
+          </div>
+          {% endfor %}
+          <div class="apa-cell">
+            <span class="apa-k">Written in</span>
+            <span class="apa-v">{% if r.written_seconds %}{{ (r.written_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
+          </div>
+          <div class="apa-cell">
+            <span class="apa-k">Submitted</span>
+            <span class="apa-v" style="font-size:13px;font-weight:500;">
+              {{ r.submitted_at.strftime("%d %b, %H:%M") if r.submitted_at else "—" }}
+            </span>
+          </div>
+        </div>
+
+        <p class="apa-h">CV</p>
+        {% if r.cv_uploaded %}
+          <p style="margin:0 0 18px;">
+            <a class="btn" href="/apply/admin/{{ r.user_id }}/cv" target="_blank" rel="noopener">Open CV ↗</a>
+          </p>
+        {% else %}
+          <p class="msp-muted" style="margin:0 0 18px;">No CV on file.</p>
+        {% endif %}
+
+        <p class="apa-h">Written response — {{ written_prompt }}</p>
+        {% if r.written_text %}
+          <div class="apa-essay">{{ r.written_text }}</div>
+        {% else %}
+          <div class="apa-essay is-empty">Nothing written.</div>
+        {% endif %}
+
+        {% if r.answers %}
+        <details class="apa-detail">
+          <summary>Every answer ({{ r.answers | length }})</summary>
+          <table class="msp-table">
+            <thead>
+              <tr><th>#</th><th>Kind</th><th>Question</th><th>Answered</th><th>Key</th><th>Result</th><th>Time</th></tr>
+            </thead>
+            <tbody>
+              {% for a in r.answers %}
+              <tr>
+                <td>{{ loop.index }}</td>
+                <td class="msp-muted">{{ a.kind }}</td>
+                <td>{{ a.prompt }}</td>
+                <td>{% if a.raw %}{{ a.raw }}{% else %}<span class="msp-muted">—</span>{% endif %}{% if a.timed_out %} <span class="msp-muted">(timed out)</span>{% endif %}</td>
+                <td>{{ a.answer_key }} <span class="msp-muted">— {{ a.note }}</span></td>
+                <td>{% if a.correct %}<span class="apa-ok">correct</span>{% else %}<span class="apa-no">wrong</span>{% endif %}</td>
+                <td>{{ a.time_taken_s }}s</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </details>
+        {% endif %}
+
+        {% if r.status == "submitted" %}
+        <div class="apa-actions">
+          <input type="text" id="note-{{ r.user_id }}" placeholder="Note for the record (optional)">
+          <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
+          <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+        </div>
+        {% elif r.status in ("accepted", "rejected") %}
+        <div class="apa-actions">
+          <span class="msp-muted" style="font-size:13px;">
+            {{ r.status | capitalize }}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
+          </span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+    {% endif %}
+  </div>
+
+  <script>
+    function flash(text, bad) {
+      const box = document.getElementById("msg");
+      box.textContent = text;
+      box.className = "msp-msg msp-msg-" + (bad ? "error" : "ok");
+      box.classList.remove("hidden");
+    }
+
+    async function remind(userId, btn) {
+      if (!confirm("Send a reminder email to this applicant?")) return;
+      btn.disabled = true;
+      const original = btn.textContent;
+      btn.textContent = "Sending…";
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/remind`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash(`Reminder sent to ${d.sent_to}`, false);
+        btn.textContent = "Remind again";
+        btn.disabled = false;
+      } catch (err) {
+        flash(err.message, true);
+        btn.textContent = original;
+        btn.disabled = false;
+      }
+    }
+
+    async function decide(userId, decision) {
+      const verb = decision === "accept" ? "Accept" : "Reject";
+      if (!confirm(verb + " this application?" +
+          (decision === "accept" ? " Their membership will be set to the programme they applied for." : ""))) return;
+      const note = document.getElementById("note-" + userId);
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/decide`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ decision, note: note ? note.value : "" }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        location.reload();
+      } catch (err) {
+        flash(err.message, true);
+      }
+    }
+  </script>
+</body>
+
+</html>
