@@ -129,6 +129,18 @@
       border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
       font-size: 13px; color: var(--muted);
     }
+
+    /* Record-keeping actions: visually separate from — and quieter than —
+       the shortlist/accept/reject decisions above them, since these aren't
+       decisions about the applicant, just corrections to the record. */
+    .apa-danger {
+      display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end;
+      border-top: 1px dashed var(--border); margin-top: 16px; padding-top: 12px;
+    }
+    .apa-danger .btn { font-size: 12px; padding: 6px 12px; }
+    .apa-danger-btn { color: var(--red); border-color: rgba(255,107,107,0.4); }
+    .apa-danger-btn:hover { background: rgba(255,107,107,0.1); }
+
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
   </style>
 </head>
@@ -395,6 +407,19 @@
             {{ r.status | capitalize }}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
           </p>
           {% endif %}
+
+          <!-- Record-keeping, not a decision: redo resets the assessment,
+               delete removes the application outright. Both admin-only. -->
+          <div class="apa-danger">
+            {% if r.status not in ("cv", "oa_ready") %}
+            <button class="btn ghost" onclick="redoApplication('{{ r.user_id }}', '{{ (r.full_name or r.username) | e }}')">
+              Let them redo the assessment
+            </button>
+            {% endif %}
+            <button class="btn ghost apa-danger-btn" onclick="deleteApplication('{{ r.user_id }}', '{{ (r.full_name or r.username) | e }}')">
+              Delete application
+            </button>
+          </div>
         {% endif %}
       </div>
     </div>
@@ -478,6 +503,42 @@
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ decision, note: note ? note.value : "" }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        location.reload();
+      } catch (err) {
+        flash(err.message, true);
+      }
+    }
+
+    async function redoApplication(userId, name) {
+      if (!confirm(`Let ${name} redo the assessment? Their answers, written response and `
+        + `reviewer scores will be cleared, and they'll be able to start a fresh sitting. `
+        + `Their CV and programme choice are kept.`)) return;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/redo`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        location.reload();
+      } catch (err) {
+        flash(err.message, true);
+      }
+    }
+
+    async function deleteApplication(userId, name) {
+      if (!confirm(`Permanently delete ${name}'s application? This removes their CV `
+        + `snapshot, every answer, every reviewer score and any decision from the record. `
+        + `This cannot be undone.`)) return;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}`, {
+          method: "DELETE",
+          credentials: "include",
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);

@@ -353,13 +353,14 @@ QUESTION_BY_ID = {q["id"]: q for q in QUESTION_BANK}
 
 # How many questions of each topic go into a paper, by programme. Both sum to
 # NUMERICAL_QUESTIONS, so the sitting is the same length either way. Quant
-# Bootcamp keeps the original probability/expectation/pattern mix untouched;
-# Quant Analyst trims pattern-finding to make room for basic quant concepts,
-# since that programme is the one where knowing what delta is actually
-# matters day to day.
+# Bootcamp keeps the original probability/expectation/pattern mix untouched.
+# Quant Analyst keeps that same probability/expectation weight — the harder
+# math is exactly as present as it is for Bootcamp — and takes the room for
+# quant concepts entirely out of pattern-finding, which is the least
+# job-relevant of the three for that programme.
 PAPER_MIX: Dict[str, Dict[str, int]] = {
     mb.M_QUANT_BOOTCAMP: {"probability": 7, "expectation": 6, "pattern": 7},
-    mb.M_QUANT_ANALYST: {"probability": 6, "expectation": 6, "pattern": 4, "quant concepts": 4},
+    mb.M_QUANT_ANALYST: {"probability": 7, "expectation": 6, "pattern": 3, "quant concepts": 4},
 }
 
 
@@ -1300,3 +1301,61 @@ async def decide(user_id: str, payload: Decision, admin: User = Depends(require_
                 "membership": programme, "track": legacy,
             })
     return {"ok": True, "status": application["status"]}
+
+
+# Everything an OA sitting produces — cleared on redo so the applicant lands
+# back on "your assessment is ready" with a genuinely blank slate. Identity,
+# CV and the programme they applied for are deliberately not in this list.
+_OA_PRODUCED_FIELDS = (
+    "oa", "flags", "reviews", "submitted_at", "confirmation_sent_at",
+    "shortlisted_at", "shortlisted_by", "decided_at", "decided_by", "decision_note",
+)
+
+
+@router.post("/admin/{user_id}/redo")
+async def redo_application(user_id: str, admin: User = Depends(require_admin)):
+    """
+    Let an applicant sit the assessment again, from a clean slate.
+
+    For the rare case that deserves an exception to "one attempt" — a
+    technical failure during the sitting, or the committee wants another
+    look before deciding. Everything the previous sitting produced (answers,
+    written response, reviewer scores, any shortlist/decision) is cleared;
+    their CV, programme choice and Oxford email stay exactly as they were,
+    so they land back on "your assessment is ready" rather than having to
+    reapply from scratch. If they had already been accepted, their granted
+    membership is *not* reverted automatically — that's a separate call for
+    an admin to make deliberately.
+    """
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") in (S_CV, S_OA_READY):
+        raise HTTPException(400, "They haven't started the assessment yet — nothing to redo")
+
+    for field in _OA_PRODUCED_FIELDS:
+        application.pop(field, None)
+    application["status"] = S_OA_READY if application.get("cv_blob_path") else S_CV
+    application["flags"] = {"paste": 0, "left_page": 0}
+    application["redone_at"] = _now()
+    application["redone_by"] = admin.username
+    await _save(user_id, application)
+    return {"ok": True, "status": application["status"]}
+
+
+@router.delete("/admin/{user_id}")
+async def delete_application(user_id: str, admin: User = Depends(require_admin)):
+    """
+    Remove an application from the record entirely.
+
+    Unlike redo, there is nothing left afterward — the CV snapshot, every
+    answer, every reviewer's score and any decision are gone, and the person
+    would need to start a fresh application to appear here again. The
+    uploaded CV file itself lives on their profile, not here, so this does
+    not touch it.
+    """
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    await db_module.db.collection(COLLECTION).document(user_id).delete()
+    return {"ok": True}

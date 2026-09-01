@@ -49,6 +49,9 @@ class _FakeDocRef:
     async def update(self, patch):
         self._store.setdefault(self._key, {}).update(patch)
 
+    async def delete(self):
+        self._store.pop(self._key, None)
+
 
 class _FakeCollection:
     def __init__(self, store):
@@ -741,3 +744,100 @@ class TestOxfordStudentConfirmation:
         assert result["ok"] is True
         assert store["u1"]["confirmed_oxford_student"] is False
         assert store["u1"]["applicant_category"] == mb.M_MEMBER
+
+
+class TestRedoAndDelete:
+    """Admin-only escape hatches: retake the assessment, or wipe the record."""
+
+    def _patch(self, monkeypatch, application):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {"u1": application}
+
+        async def fake_load(uid):
+            return fake_db.collections[ap.COLLECTION].get(uid)
+
+        async def fake_save(uid, app_):
+            fake_db.collections[ap.COLLECTION][uid] = app_
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def _submitted_application(self):
+        return {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": mb.M_QUANT_ANALYST, "status": ap.S_SUBMITTED,
+            "cv_blob_path": "cvs/x.pdf",
+            "oa": {"section": "done", "answers": []},
+            "reviews": {"r1": {"cv_score": 8}},
+            "submitted_at": dt.datetime.now(dt.timezone.utc),
+            "flags": {"paste": 1, "left_page": 0},
+        }
+
+    def test_redo_clears_oa_and_reviews_but_keeps_identity(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, self._submitted_application())
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.redo_application("u1", admin))
+
+        assert result["status"] == ap.S_OA_READY
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert "oa" not in stored
+        assert "reviews" not in stored
+        assert "submitted_at" not in stored
+        assert stored["flags"] == {"paste": 0, "left_page": 0}
+        # Identity, CV and programme survive a redo untouched.
+        assert stored["cv_blob_path"] == "cvs/x.pdf"
+        assert stored["programme"] == mb.M_QUANT_ANALYST
+        assert stored["oxford_email"] == "jo@merton.ox.ac.uk"
+
+    def test_redo_refuses_before_the_assessment_has_started(self, monkeypatch):
+        application = self._submitted_application()
+        application["status"] = ap.S_OA_READY
+        self._patch(monkeypatch, application)
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.redo_application("u1", admin))
+
+    def test_redo_is_available_after_a_decision_too(self, monkeypatch):
+        # An admin might want to give someone another shot even after
+        # rejecting them — the redo itself doesn't re-decide anything.
+        application = self._submitted_application()
+        application["status"] = ap.S_REJECTED
+        application["decision_note"] = "not this time"
+        fake_db = self._patch(monkeypatch, application)
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.redo_application("u1", admin))
+
+        assert result["status"] == ap.S_OA_READY
+        assert "decision_note" not in fake_db.collections[ap.COLLECTION]["u1"]
+
+    def test_redo_without_a_cv_on_file_falls_back_to_the_cv_step(self, monkeypatch):
+        application = self._submitted_application()
+        application.pop("cv_blob_path")
+        self._patch(monkeypatch, application)
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.redo_application("u1", admin))
+
+        assert result["status"] == ap.S_CV
+
+    def test_delete_removes_the_application_entirely(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, self._submitted_application())
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.delete_application("u1", admin))
+
+        assert result == {"ok": True}
+        assert "u1" not in fake_db.collections[ap.COLLECTION]
+
+    def test_delete_a_missing_application_404s(self, monkeypatch):
+        self._patch(monkeypatch, self._submitted_application())
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.delete_application("does-not-exist", admin))
