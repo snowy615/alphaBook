@@ -6,6 +6,8 @@ actually calls the SMTP layer — with the right recipient and subject — when
 it is. The real smtplib call is stubbed out; nothing here touches a network.
 """
 import asyncio
+import datetime as dt
+from email import message_from_bytes
 
 from app import mailer
 
@@ -37,8 +39,8 @@ class TestConfigured:
     def _patch_sync(self, monkeypatch, result=True):
         calls = []
 
-        def fake_send_sync(to, subject, html, text):
-            calls.append({"to": to, "subject": subject, "html": html, "text": text})
+        def fake_send_sync(to, subject, html, text, ics=None):
+            calls.append({"to": to, "subject": subject, "html": html, "text": text, "ics": ics})
             return result
 
         monkeypatch.setattr(mailer, "CONFIGURED", True)
@@ -88,3 +90,83 @@ class TestConfigured:
         ))
         assert "<strong>" not in calls[0]["text"]
         assert "Jo" in calls[0]["text"] and "welcome" in calls[0]["text"]
+
+
+class TestIcsInvite:
+    def _build(self, **overrides):
+        start = dt.datetime(2026, 9, 15, 14, 0, tzinfo=dt.timezone.utc)
+        kwargs = dict(
+            uid="interview-u1-123", summary="Alpha Fund interview — Jo Bloggs",
+            description="Quant Analyst interview with Priya Patel.",
+            start=start, end=start + dt.timedelta(minutes=30),
+            organizer_name="Priya Patel", organizer_email="priya@ox.ac.uk",
+            attendee_name="Jo Bloggs", attendee_email="jo@merton.ox.ac.uk",
+        )
+        kwargs.update(overrides)
+        return mailer.build_ics_invite(**kwargs)
+
+    def test_produces_a_valid_vevent_block(self):
+        ics = self._build().decode()
+        assert ics.startswith("BEGIN:VCALENDAR\r\n")
+        assert ics.endswith("END:VCALENDAR\r\n")
+        assert "BEGIN:VEVENT" in ics and "END:VEVENT" in ics
+        assert "METHOD:REQUEST" in ics
+
+    def test_carries_the_right_times_organizer_and_attendee(self):
+        ics = self._build().decode()
+        assert "DTSTART:20260915T140000Z" in ics
+        assert "DTEND:20260915T143000Z" in ics
+        assert "ORGANIZER;CN=Priya Patel:mailto:priya@ox.ac.uk" in ics
+        assert "ATTENDEE;CN=Jo Bloggs;ROLE=REQ-PARTICIPANT:mailto:jo@merton.ox.ac.uk" in ics
+
+    def test_naive_datetimes_are_treated_as_utc(self):
+        naive = dt.datetime(2026, 9, 15, 14, 0)
+        ics = self._build(start=naive, end=naive + dt.timedelta(minutes=30)).decode()
+        assert "DTSTART:20260915T140000Z" in ics
+
+    def test_special_characters_are_escaped(self):
+        ics = self._build(description="Bring; a laptop, and notes\nplease").decode()
+        assert "Bring\\; a laptop\\, and notes\\nplease" in ics
+
+    def test_attaches_to_the_email_with_calendar_content_type(self, monkeypatch):
+        calls = []
+
+        def fake_send_sync(to, subject, html, text, ics=None):
+            calls.append((to, subject, ics))
+            return True
+
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+
+        ics_bytes = self._build()
+        asyncio.run(mailer.send_email(
+            "jo@merton.ox.ac.uk", "Interview confirmed", "Title", "<p>body</p>", ics=ics_bytes,
+        ))
+
+        assert calls[0][2] == ics_bytes
+
+    def test_ics_attachment_survives_a_real_mime_round_trip(self, monkeypatch):
+        # Build the actual MIME message (skipping the network call) and parse
+        # it back, the way a mail client would — catches a bad Content-Type
+        # or a truncated attachment that string checks alone would miss.
+        ics_bytes = self._build()
+        sent_holder = {}
+
+        class _CaptureSMTP:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def starttls(self): pass
+            def login(self, *a): pass
+            def send_message(self, msg): sent_holder["msg"] = msg
+
+        monkeypatch.setattr(mailer.smtplib, "SMTP", _CaptureSMTP)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+
+        mailer._send_sync("jo@merton.ox.ac.uk", "Interview confirmed", "<p>hi</p>", "hi", ics_bytes)
+
+        raw = sent_holder["msg"].as_bytes()
+        parsed = message_from_bytes(raw)
+        ics_parts = [p for p in parsed.walk() if p.get_content_type() == "text/calendar"]
+        assert len(ics_parts) == 1
+        assert ics_parts[0].get_payload(decode=True) == ics_bytes

@@ -28,6 +28,26 @@
     .apl-steps li.is-now .apl-n { border-color: var(--brand); color: var(--brand); }
     .apl-steps li.is-done { color: var(--green); }
     .apl-steps li.is-done .apl-n { border-color: var(--green); color: var(--green); }
+    /* A stage the pipeline never reached — e.g. rejected without ever being
+       shortlisted. Muted rather than hidden, so the shape of the process
+       still reads even when a step was skipped. */
+    .apl-steps li.is-skipped { color: var(--muted); opacity: 0.55; }
+    .apl-steps li.is-skipped .apl-n { border-style: dashed; }
+
+    /* ── Interview scheduling (candidate side) ───────────────────────────── */
+    .apl-interview {
+      border: 1px solid var(--border); padding: 16px 18px; margin: 4px 0 0;
+      font-size: 14px; line-height: 1.6;
+    }
+    .apl-interview p:first-child { margin-top: 0; }
+    .apl-interview p:last-child { margin-bottom: 0; }
+    .apl-interview.is-confirmed { border-color: var(--green); }
+    .apl-interview.is-declined { border-color: var(--border); }
+    .apl-interview-note {
+      color: var(--muted); font-style: italic; border-left: 2px solid var(--border);
+      padding-left: 12px; margin: 12px 0;
+    }
+    .apl-interview-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
 
     .apl-category {
       font-size: 13px; color: var(--muted); background: var(--bg);

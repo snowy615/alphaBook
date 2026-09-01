@@ -155,6 +155,14 @@ SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 # and coarse enough that an average across several reviewers means something.
 SCORE_MIN, SCORE_MAX = 1, 10
 
+# How an interview record moves: a reviewer proposes a time, and the
+# candidate either confirms it (a calendar invite follows) or declines it
+# (the assigned interviewer is emailed to sort out an alternative directly).
+INTERVIEW_PROPOSED = "proposed"
+INTERVIEW_CONFIRMED = "confirmed"
+INTERVIEW_DECLINED = "declined"
+INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
+
 
 # ── Question bank ─────────────────────────────────────────────────────────────
 # Every answer is a whole number, so grading is an exact match. Probability
@@ -400,6 +408,16 @@ class FlagEvent(BaseModel):
 
 class Decision(BaseModel):
     decision: str      # "shortlist" | "accept" | "reject"
+    note: Optional[str] = None
+
+
+class ScheduleInterview(BaseModel):
+    interviewer_id: str
+    when: dt.datetime          # candidate-facing slot, any ISO 8601 the browser sends
+    message: Optional[str] = None
+
+
+class InterviewDecline(BaseModel):
     note: Optional[str] = None
 
 
@@ -768,7 +786,25 @@ async def state(user: User = Depends(current_user)):
     elif application["status"] in (S_SUBMITTED, S_SHORTLISTED, *DECIDED):
         out["submitted_at"] = application.get("submitted_at")
         out["decision"] = application["status"] if application["status"] in DECIDED else None
+        # Lets the pipeline view show whether a decided application passed
+        # through the interview stage or was decided straight from submitted.
+        out["was_shortlisted"] = bool(application.get("shortlisted_at"))
+        if application.get("interview"):
+            out["interview"] = _interview_view(application["interview"])
     return out
+
+
+def _interview_view(interview: Dict[str, Any]) -> Dict[str, Any]:
+    """The candidate-facing slice of an interview record — everything here is
+    already meant for them, since it's their own application."""
+    return {
+        "status": interview.get("status"),
+        "when": interview.get("when"),
+        "interviewer_name": interview.get("interviewer_name"),
+        "interviewer_email": interview.get("interviewer_email"),
+        "message": interview.get("message") or "",
+        "responded_at": interview.get("responded_at"),
+    }
 
 
 def _resolve_oxford_email(account_email: str, provided: Optional[str]) -> str:
@@ -1023,6 +1059,20 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     }
 
 
+def _admin_interview_view(interview: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The interview record with its datetimes normalised to plain aware
+    UTC — Firestore can hand back a provider-specific datetime subclass, and
+    the admin template calls .strftime() on `when` directly."""
+    if not interview:
+        return None
+    return {
+        **interview,
+        "when": _as_utc(interview.get("when")),
+        "scheduled_at": _as_utc(interview.get("scheduled_at")),
+        "responded_at": _as_utc(interview.get("responded_at")),
+    }
+
+
 def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
     oa = application.get("oa") or {}
     written = oa.get("written") or {}
@@ -1060,7 +1110,29 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "finish_reason": oa.get("finish_reason"),
         "decision_note": application.get("decision_note") or "",
         "review": _review_summary(application, viewer_id),
+        "interview": _admin_interview_view(application.get("interview")),
     }
+
+
+async def _list_reviewers() -> List[Dict[str, str]]:
+    """Everyone who could plausibly be assigned to interview a candidate:
+    admins and Quant Analyst members, provided they have an email on file —
+    without one there's nothing to put in the invite."""
+    docs = await db_module.db.collection("users").get()
+    out: List[Dict[str, str]] = []
+    for d in docs:
+        data = d.to_dict() or {}
+        email = data.get("email") or ""
+        if not email:
+            continue
+        if data.get("is_admin") or mb.membership_of(data) == mb.M_QUANT_ANALYST:
+            out.append({
+                "id": d.id,
+                "name": data.get("full_name") or data.get("username") or d.id,
+                "email": email,
+            })
+    out.sort(key=lambda r: r["name"].lower())
+    return out
 
 
 @router.get("/admin", include_in_schema=False)
@@ -1092,6 +1164,9 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "is_admin": reviewer.is_admin,
         "score_min": SCORE_MIN,
         "score_max": SCORE_MAX,
+        "reviewers": await _list_reviewers(),
+        "viewer_id": str(reviewer.id),
+        "interview_minutes": INTERVIEW_MINUTES,
     })
 
 
@@ -1152,6 +1227,50 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
     }
     await _save(user_id, application)
     return {"ok": True, "review": _review_summary(application, str(reviewer.id))}
+
+
+@router.post("/admin/{user_id}/interview")
+async def schedule_interview(user_id: str, payload: ScheduleInterview,
+                              reviewer: User = Depends(require_reviewer)):
+    """
+    Propose an interview slot — open to any reviewer, not just admins,
+    since deciding *who* interviews someone is exactly the kind of call a
+    Quant Analyst member should be able to make without needing an admin in
+    the loop. Only available once shortlisted: that's the whole point of the
+    shortlist stage. Re-submitting (a different interviewer, a different
+    time) overwrites whatever was pending and sends a fresh proposal.
+    """
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") != S_SHORTLISTED:
+        raise HTTPException(400, "Only a shortlisted applicant can have an interview scheduled")
+
+    reviewers_by_id = {r["id"]: r for r in await _list_reviewers()}
+    interviewer = reviewers_by_id.get(payload.interviewer_id)
+    if interviewer is None:
+        raise HTTPException(400, "Choose a valid interviewer")
+
+    when = payload.when
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+
+    interview = {
+        "interviewer_id": interviewer["id"],
+        "interviewer_name": interviewer["name"],
+        "interviewer_email": interviewer["email"],
+        "message": (payload.message or "").strip()[:1000],
+        "when": when,
+        "status": INTERVIEW_PROPOSED,
+        "scheduled_by": reviewer.username,
+        "scheduled_at": _now(),
+        "responded_at": None,
+        "candidate_note": None,
+    }
+    application["interview"] = interview
+    await _save(user_id, application)
+    await _send_interview_proposal_email(application, interview)
+    return {"ok": True, "interview": interview}
 
 
 # What a reminder says, by where the applicant is stuck. Nothing to send for
@@ -1249,6 +1368,155 @@ async def _send_decision_email(application: dict, status: str) -> None:
     await mailer.send_email(to=to, subject=copy["subject"], title=copy["title"], body_html=body)
 
 
+# ── Interview scheduling ─────────────────────────────────────────────────────
+# Times are stored and shown in UTC throughout — consistent with everything
+# else in this module, and it sidesteps depending on the deployment image
+# having IANA timezone data installed. The .ics attachment carries an
+# absolute timestamp, so each recipient's own calendar still localises it
+# correctly regardless of the text in the email.
+
+def _fmt_when(when: dt.datetime) -> str:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when.astimezone(dt.timezone.utc).strftime("%a %d %b %Y, %H:%M") + " UTC"
+
+
+async def _send_interview_proposal_email(application: dict, interview: dict) -> None:
+    to = application.get("oxford_email") or application.get("email")
+    if not to:
+        return
+    name = application.get("full_name") or application.get("username") or "there"
+    programme = application.get("programme") or "the programme"
+    note_block = ""
+    if interview.get("message"):
+        note_block = (f'<p style="color:#555;">A note from {interview["interviewer_name"]}: '
+                      f'&ldquo;{interview["message"]}&rdquo;</p>')
+    body = (
+        f"<p>Hi {name},</p>"
+        f"<p>The committee would like to interview you for <strong>{programme}</strong>.</p>"
+        f"<p><strong>Proposed time:</strong> {_fmt_when(interview['when'])}<br>"
+        f"<strong>Interviewer:</strong> {interview['interviewer_name']} "
+        f"(<a href=\"mailto:{interview['interviewer_email']}\">{interview['interviewer_email']}</a>)</p>"
+        f"{note_block}"
+        f"<p>Sign in and open your application to confirm this time. If it doesn't work, "
+        f"you can say so there too, and {interview['interviewer_name']} will be in touch "
+        f"directly to find another.</p>"
+    )
+    await mailer.send_email(
+        to=to, subject=f"Alpha Fund — interview proposed: {_fmt_when(interview['when'])}",
+        title="Interview time proposed", body_html=body,
+        cta_label="Review and confirm", cta_url=f"{BASE_URL}/apply",
+    )
+
+
+async def _send_interview_confirmed_emails(application: dict, interview: dict) -> None:
+    """Both sides get the same calendar invite — the candidate so it's on
+    their calendar, the interviewer so they know it landed."""
+    candidate_to = application.get("oxford_email") or application.get("email")
+    candidate_name = application.get("full_name") or application.get("username") or "Candidate"
+    interviewer_name = interview.get("interviewer_name") or "Interviewer"
+    interviewer_email = interview.get("interviewer_email") or ""
+    programme = application.get("programme") or "the programme"
+    when = interview["when"]
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    end = when + dt.timedelta(minutes=INTERVIEW_MINUTES)
+
+    ics = mailer.build_ics_invite(
+        uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
+        summary=f"Alpha Fund interview — {candidate_name}",
+        description=f"{programme} interview with {interviewer_name}.",
+        start=when, end=end,
+        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.SMTP_FROM,
+        attendee_name=candidate_name, attendee_email=candidate_to or "",
+    )
+
+    if candidate_to:
+        await mailer.send_email(
+            to=candidate_to, subject="Alpha Fund — your interview is confirmed",
+            title="Interview confirmed",
+            body_html=(f"<p>Hi {candidate_name},</p>"
+                       f"<p>Your interview for <strong>{programme}</strong> is confirmed for "
+                       f"<strong>{_fmt_when(when)}</strong> with {interviewer_name}. "
+                       f"A calendar invite is attached.</p>"),
+            ics=ics,
+        )
+    if interviewer_email:
+        await mailer.send_email(
+            to=interviewer_email, subject=f"Interview confirmed — {candidate_name}",
+            title="Candidate confirmed",
+            body_html=(f"<p>Hi {interviewer_name},</p>"
+                       f"<p>{candidate_name} has confirmed the interview for "
+                       f"<strong>{_fmt_when(when)}</strong>. A calendar invite is attached.</p>"),
+            ics=ics,
+        )
+
+
+async def _send_interview_declined_email(application: dict, interview: dict) -> None:
+    interviewer_email = interview.get("interviewer_email")
+    if not interviewer_email:
+        return
+    interviewer_name = interview.get("interviewer_name") or "there"
+    candidate_name = application.get("full_name") or application.get("username") or "The candidate"
+    candidate_email = application.get("oxford_email") or application.get("email") or ""
+    note_block = ""
+    if interview.get("candidate_note"):
+        note_block = f'<p style="color:#555;">Their note: &ldquo;{interview["candidate_note"]}&rdquo;</p>'
+    body = (
+        f"<p>Hi {interviewer_name},</p>"
+        f"<p><strong>{candidate_name}</strong> can't make the proposed interview time "
+        f"({_fmt_when(interview['when'])}).</p>"
+        f"{note_block}"
+        f"<p>Reach out directly to arrange another time — their email is "
+        f"<a href=\"mailto:{candidate_email}\">{candidate_email}</a>.</p>"
+    )
+    await mailer.send_email(
+        to=interviewer_email,
+        subject=f"Alpha Fund — {candidate_name} needs a different interview time",
+        title="Interview time declined", body_html=body,
+    )
+
+
+@router.post("/interview/confirm")
+async def confirm_interview(user: User = Depends(current_user)):
+    """The candidate accepts the proposed time — both sides get a calendar invite."""
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None:
+        raise HTTPException(404, "No application on file")
+    interview = application.get("interview")
+    if not interview or interview.get("status") != INTERVIEW_PROPOSED:
+        raise HTTPException(400, "There's no interview time waiting for a response")
+
+    interview["status"] = INTERVIEW_CONFIRMED
+    interview["responded_at"] = _now()
+    application["interview"] = interview
+    await _save(uid, application)
+    await _send_interview_confirmed_emails(application, interview)
+    return {"ok": True, "interview": _interview_view(interview)}
+
+
+@router.post("/interview/decline")
+async def decline_interview(payload: InterviewDecline, user: User = Depends(current_user)):
+    """The candidate can't make the proposed time — the assigned interviewer
+    is emailed directly to sort out an alternative."""
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None:
+        raise HTTPException(404, "No application on file")
+    interview = application.get("interview")
+    if not interview or interview.get("status") != INTERVIEW_PROPOSED:
+        raise HTTPException(400, "There's no interview time waiting for a response")
+
+    interview["status"] = INTERVIEW_DECLINED
+    interview["responded_at"] = _now()
+    interview["candidate_note"] = (payload.note or "").strip()[:500]
+    application["interview"] = interview
+    await _save(uid, application)
+    await _send_interview_declined_email(application, interview)
+    return {"ok": True, "interview": _interview_view(interview)}
+
+
 @router.post("/admin/{user_id}/decide")
 async def decide(user_id: str, payload: Decision, admin: User = Depends(require_admin)):
     """
@@ -1309,6 +1577,7 @@ async def decide(user_id: str, payload: Decision, admin: User = Depends(require_
 _OA_PRODUCED_FIELDS = (
     "oa", "flags", "reviews", "submitted_at", "confirmation_sent_at",
     "shortlisted_at", "shortlisted_by", "decided_at", "decided_by", "decision_note",
+    "interview",
 )
 
 

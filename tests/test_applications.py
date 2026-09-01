@@ -25,8 +25,9 @@ from app.models import User
 # actual endpoint functions (require_reviewer, decide, submit_score) rather
 # than the pure state-machine helpers above. Async to match the real client.
 class _FakeDoc:
-    def __init__(self, data):
+    def __init__(self, data, id=None):
         self._data = data
+        self.id = id
 
     @property
     def exists(self):
@@ -59,6 +60,9 @@ class _FakeCollection:
 
     def document(self, doc_id):
         return _FakeDocRef(self._store, doc_id)
+
+    async def get(self):
+        return [_FakeDoc(data, id=doc_id) for doc_id, data in self._store.items()]
 
 
 class _FakeDB:
@@ -841,3 +845,171 @@ class TestRedoAndDelete:
 
         with pytest.raises(HTTPException):
             asyncio.run(ap.delete_application("does-not-exist", admin))
+
+
+class TestAdminInterviewView:
+    def test_normalises_datetimes_and_passes_through_other_fields(self):
+        when = dt.datetime.now(dt.timezone.utc)
+        interview = {"interviewer_name": "Priya", "when": when, "scheduled_at": when,
+                     "responded_at": None, "status": "proposed"}
+
+        view = ap._admin_interview_view(interview)
+
+        assert view["interviewer_name"] == "Priya"
+        assert view["when"] == when
+        assert view["responded_at"] is None
+
+    def test_none_in_none_out(self):
+        assert ap._admin_interview_view(None) is None
+
+
+class TestInterviewScheduling:
+    """
+    The full loop: a reviewer proposes a time, the candidate confirms
+    (calendar invites both ways) or declines (the interviewer is emailed to
+    sort out something else directly).
+    """
+
+    def _patch(self, monkeypatch, application, users=None):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {"u1": application}
+        fake_db.collections["users"] = users or {}
+
+        async def fake_load(uid):
+            return fake_db.collections[ap.COLLECTION].get(uid)
+
+        async def fake_save(uid, app_):
+            fake_db.collections[ap.COLLECTION][uid] = app_
+
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
+            sent.append({"to": to, "subject": subject, "has_ics": ics is not None})
+            return True
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+        return fake_db, sent
+
+    def _shortlisted_application(self):
+        return {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": mb.M_QUANT_ANALYST, "status": ap.S_SHORTLISTED,
+        }
+
+    def _reviewer_users(self):
+        return {
+            "qa1": {"username": "priya", "full_name": "Priya Patel",
+                    "email": "priya@ox.ac.uk", "membership": mb.M_QUANT_ANALYST},
+            "admin1": {"username": "root", "full_name": "Root Admin",
+                       "email": "root@ox.ac.uk", "is_admin": True},
+            "noemail": {"username": "sam", "membership": mb.M_QUANT_ANALYST},   # no email — excluded
+            "general": {"username": "bob", "email": "bob@ox.ac.uk"},            # not a reviewer — excluded
+        }
+
+    def test_list_reviewers_includes_admins_and_quant_analysts_with_email(self, monkeypatch):
+        self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        reviewers = asyncio.run(ap._list_reviewers())
+        assert {r["id"] for r in reviewers} == {"qa1", "admin1"}
+
+    def test_schedule_interview_requires_shortlisted_status(self, monkeypatch):
+        application = self._shortlisted_application()
+        application["status"] = ap.S_SUBMITTED
+        self._patch(monkeypatch, application, self._reviewer_users())
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.schedule_interview(
+                "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), reviewer))
+
+    def test_schedule_interview_rejects_an_unknown_interviewer(self, monkeypatch):
+        self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.schedule_interview(
+                "u1", ap.ScheduleInterview(interviewer_id="ghost", when=when), reviewer))
+
+    def test_schedule_interview_stores_and_emails_the_candidate(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        result = asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when,
+                                        message="Looking forward to it"), reviewer))
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["status"] == ap.INTERVIEW_PROPOSED
+        assert stored["interviewer_email"] == "priya@ox.ac.uk"
+        assert stored["message"] == "Looking forward to it"
+        assert len(sent) == 1
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert result["interview"]["status"] == ap.INTERVIEW_PROPOSED
+
+    def _proposed_application(self):
+        application = self._shortlisted_application()
+        application["interview"] = {
+            "interviewer_id": "qa1", "interviewer_name": "Priya Patel", "interviewer_email": "priya@ox.ac.uk",
+            "message": "", "when": dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2),
+            "status": ap.INTERVIEW_PROPOSED, "scheduled_by": "priya",
+            "scheduled_at": dt.datetime.now(dt.timezone.utc), "responded_at": None, "candidate_note": None,
+        }
+        return application
+
+    def test_confirm_requires_a_pending_proposal(self, monkeypatch):
+        self._patch(monkeypatch, self._shortlisted_application())
+        user = User(id="u1", username="jo")
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.confirm_interview(user))
+
+    def test_confirm_moves_to_confirmed_and_emails_both_sides_with_ics(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch, self._proposed_application())
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.confirm_interview(user))
+
+        assert result["interview"]["status"] == ap.INTERVIEW_CONFIRMED
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["status"] == ap.INTERVIEW_CONFIRMED
+        assert stored["responded_at"] is not None
+        assert len(sent) == 2   # candidate + interviewer
+        assert all(s["has_ics"] for s in sent)
+        assert {s["to"] for s in sent} == {"jo@merton.ox.ac.uk", "priya@ox.ac.uk"}
+
+    def test_decline_requires_a_pending_proposal(self, monkeypatch):
+        self._patch(monkeypatch, self._shortlisted_application())
+        user = User(id="u1", username="jo")
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.decline_interview(ap.InterviewDecline(note="busy"), user))
+
+    def test_decline_moves_to_declined_and_emails_only_the_interviewer(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch, self._proposed_application())
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.decline_interview(ap.InterviewDecline(note="Can we do next week?"), user))
+
+        assert result["interview"]["status"] == ap.INTERVIEW_DECLINED
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["candidate_note"] == "Can we do next week?"
+        assert len(sent) == 1
+        assert sent[0]["to"] == "priya@ox.ac.uk"
+        assert "different interview time" in sent[0]["subject"]
+
+    def test_redo_also_clears_a_pending_interview(self, monkeypatch):
+        application = self._proposed_application()
+        application["cv_blob_path"] = "cvs/x.pdf"
+        fake_db, _ = self._patch(monkeypatch, application)
+        admin = User(id="admin1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.redo_application("u1", admin))
+
+        assert result["status"] == ap.S_OA_READY
+        assert "interview" not in fake_db.collections[ap.COLLECTION]["u1"]

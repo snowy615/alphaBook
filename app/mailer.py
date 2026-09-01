@@ -22,6 +22,7 @@ that triggered the email — a candidate finishing their OA should never see a
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import os
 import smtplib
@@ -73,13 +74,67 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     </div>"""
 
 
-def _send_sync(to: str, subject: str, html: str, text: str) -> bool:
+def _ics_stamp(when: dt.datetime) -> str:
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    return when.astimezone(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _ics_escape(text: str) -> str:
+    # RFC 5545 §3.3.11: backslash, semicolon, comma and newline are escaped.
+    return (text or "").replace("\\", "\\\\").replace(";", "\\;") \
+        .replace(",", "\\,").replace("\n", "\\n")
+
+
+def build_ics_invite(
+    *, uid: str, summary: str, description: str, start: dt.datetime, end: dt.datetime,
+    organizer_name: str, organizer_email: str, attendee_name: str, attendee_email: str,
+    location: str = "Online — details to follow",
+) -> bytes:
+    """
+    A minimal RFC 5545 VEVENT, valid enough for Gmail/Outlook/Apple Calendar
+    to offer an "Add to calendar" prompt. No external library — the format
+    is simple enough that hand-writing it is less risk than a new dependency
+    for one small feature.
+    """
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//AlphaBook//Interview Scheduling//EN",
+        "CALSCALE:GREGORIAN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:{uid}@alphabook.uk",
+        f"DTSTAMP:{_ics_stamp(dt.datetime.now(dt.timezone.utc))}",
+        f"DTSTART:{_ics_stamp(start)}",
+        f"DTEND:{_ics_stamp(end)}",
+        f"SUMMARY:{_ics_escape(summary)}",
+        f"DESCRIPTION:{_ics_escape(description)}",
+        f"LOCATION:{_ics_escape(location)}",
+        f"ORGANIZER;CN={_ics_escape(organizer_name)}:mailto:{organizer_email}",
+        f"ATTENDEE;CN={_ics_escape(attendee_name)};ROLE=REQ-PARTICIPANT:mailto:{attendee_email}",
+        "STATUS:CONFIRMED",
+        "SEQUENCE:0",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+
+
+def _send_sync(to: str, subject: str, html: str, text: str,
+                ics: Optional[bytes] = None) -> bool:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     msg["To"] = to
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
+
+    if ics:
+        msg.add_attachment(ics, maintype="text", subtype="calendar", filename="interview.ics")
+        part = msg.get_payload()[-1]
+        part.set_param("method", "REQUEST")
+        part.set_param("name", "interview.ics")
 
     try:
         if SMTP_USE_STARTTLS:
@@ -100,7 +155,8 @@ def _send_sync(to: str, subject: str, html: str, text: str) -> bool:
 
 
 async def send_email(to: str, subject: str, title: str, body_html: str,
-                      cta_label: Optional[str] = None, cta_url: Optional[str] = None) -> bool:
+                      cta_label: Optional[str] = None, cta_url: Optional[str] = None,
+                      ics: Optional[bytes] = None) -> bool:
     """Send one email. Never raises — returns whether it actually went out."""
     if not to or "@" not in to:
         log.warning("mailer: refusing to send %r to invalid address %r", subject, to)
@@ -118,4 +174,4 @@ async def send_email(to: str, subject: str, title: str, body_html: str,
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
 
-    return await asyncio.to_thread(_send_sync, to, subject, html, text)
+    return await asyncio.to_thread(_send_sync, to, subject, html, text, ics)

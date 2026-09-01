@@ -332,26 +332,148 @@
     });
   }
 
+  // Where the application stands after submission, matching the language
+  // used elsewhere ("committee is reviewing", "shortlisted", "decision").
+  // Absorbed into one pipeline rather than the apply-flow stepper above,
+  // since this tracks what the committee is doing, not what the applicant
+  // did to get here.
+  function renderReviewSteps(state) {
+    const status = state.status;
+    const decided = status === "accepted" || status === "rejected";
+    const wasShortlisted = status === "shortlisted" || !!state.was_shortlisted;
+
+    const items = [
+      { label: "Committee is reviewing", done: status !== "submitted", now: status === "submitted" },
+      { label: "Shortlisted for interview", done: wasShortlisted && decided,
+        now: status === "shortlisted", skipped: decided && !wasShortlisted },
+      { label: decided ? (status === "accepted" ? "Accepted" : "Not taken forward") : "Decision",
+        done: decided, now: false },
+    ];
+
+    return `<ol class="apl-steps" style="margin-bottom:20px;">${items.map((it, i) => {
+      const cls = it.skipped ? "is-skipped" : it.done ? "is-done" : it.now ? "is-now" : "";
+      const mark = it.skipped ? "–" : it.done ? "✓" : String(i + 1);
+      return `<li class="${cls}"><span class="apl-n">${mark}</span>${esc(it.label)}</li>`;
+    }).join("")}</ol>`;
+  }
+
+  function fmtLocal(iso) {
+    try {
+      return new Date(iso).toLocaleString(undefined, {
+        weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+      });
+    } catch { return iso; }
+  }
+
+  // The interview block for a shortlisted applicant: nothing yet, a time
+  // waiting for a response, or the outcome of that response.
+  function renderInterviewBlock(interview) {
+    if (!interview) {
+      return `<p class="msp-muted">The committee will be in touch to arrange an interview.</p>`;
+    }
+    if (interview.status === "confirmed") {
+      return `
+        <div class="apl-interview is-confirmed">
+          <p><strong>Interview confirmed</strong> for ${esc(fmtLocal(interview.when))}
+             with ${esc(interview.interviewer_name || "")}.</p>
+          <p class="msp-muted">A calendar invite has been sent to your email.</p>
+        </div>`;
+    }
+    if (interview.status === "declined") {
+      return `
+        <div class="apl-interview is-declined">
+          <p>You let us know that time doesn't work.
+             ${esc(interview.interviewer_name || "The interviewer")} will be in touch directly
+             to find another.</p>
+        </div>`;
+    }
+    // proposed — waiting on the candidate
+    const note = interview.message ? `
+      <p class="apl-interview-note">A note from ${esc(interview.interviewer_name || "")}:
+        &ldquo;${esc(interview.message)}&rdquo;</p>` : "";
+    return `
+      <div class="apl-interview is-proposed">
+        <p><strong>Proposed time:</strong> ${esc(fmtLocal(interview.when))}<br>
+           <strong>Interviewer:</strong> ${esc(interview.interviewer_name || "")}
+           ${interview.interviewer_email ? `(<a href="mailto:${esc(interview.interviewer_email)}">${esc(interview.interviewer_email)}</a>)` : ""}
+        </p>
+        ${note}
+        <div class="apl-interview-actions">
+          <button class="btn primary" id="confirmInterviewBtn">Confirm this time</button>
+          <button class="btn ghost" id="declineInterviewToggle">I can't make it</button>
+        </div>
+        <div id="declineForm" style="display:none;margin-top:12px;">
+          <input type="text" id="declineNote" class="msp-input"
+                 placeholder="What times might work better? (optional)">
+          <button class="btn ghost" id="declineInterviewBtn" style="margin-top:8px;">Send</button>
+        </div>
+      </div>`;
+  }
+
+  function wireInterviewActions() {
+    const confirmBtn = $("#confirmInterviewBtn");
+    const declineToggle = $("#declineInterviewToggle");
+    const declineForm = $("#declineForm");
+    const declineBtn = $("#declineInterviewBtn");
+
+    confirmBtn?.addEventListener("click", async () => {
+      confirmBtn.disabled = true;
+      try {
+        await api("/apply/interview/confirm", {});
+        flash("Interview confirmed — check your email for the calendar invite.", false);
+        drawnKey = "";
+        await refresh();
+      } catch (err) { flash(err.message, true); confirmBtn.disabled = false; }
+    });
+    declineToggle?.addEventListener("click", () => {
+      declineForm.style.display = declineForm.style.display === "none" ? "block" : "none";
+    });
+    declineBtn?.addEventListener("click", async () => {
+      declineBtn.disabled = true;
+      const note = $("#declineNote")?.value.trim() || "";
+      try {
+        await api("/apply/interview/decline", { note });
+        flash("Got it — they'll be in touch to find another time.", false);
+        drawnKey = "";
+        await refresh();
+      } catch (err) { flash(err.message, true); declineBtn.disabled = false; }
+    });
+  }
+
   function renderDone(state) {
     stopTicking();
     const decided = state.status === "accepted" || state.status === "rejected";
-    const body = decided
-      ? (state.status === "accepted"
-        ? `<p>Your application to <strong>${esc(state.programme || "")}</strong> was
+    const shortlisted = state.status === "shortlisted";
+
+    let body;
+    if (state.status === "accepted") {
+      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> was
              <strong style="color:var(--green);">accepted</strong>. Your membership has been
-             updated — have a look at your <a href="/profile">profile</a>.</p>`
-        : `<p>Your application to <strong>${esc(state.programme || "")}</strong> was not
+             updated — have a look at your <a href="/profile">profile</a>.</p>`;
+    } else if (state.status === "rejected") {
+      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> was not
              taken forward this time. You are welcome to keep playing and apply again
-             in a future round.</p>`)
-      : `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
+             in a future round.</p>`;
+    } else if (shortlisted) {
+      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> has been
+             <strong style="color:var(--brand);">shortlisted for interview</strong>.</p>
+             ${renderInterviewBlock(state.interview)}`;
+    } else {
+      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
            assessment has been submitted. The committee reads your CV, your written answer
            and your score together — nothing else is needed from you.</p>
          <p class="msp-muted">You will not see your own score. That is deliberate: it keeps
            the questions usable for the people applying after you.</p>`;
+    }
 
-    $("#app").innerHTML = panel("Application submitted", `
+    $("#app").innerHTML = panel(decided ? "Decision" : "Application submitted", `
+      ${renderReviewSteps(state)}
       <div class="apl-done-tick">✓</div>${body}
-      <a class="btn" href="/" style="margin-top:8px;">Back to the trading floor</a>`);
+      <a class="btn" href="/" style="margin-top:16px;">Back to the trading floor</a>`);
+
+    if (shortlisted && state.interview && state.interview.status === "proposed") {
+      wireInterviewActions();
+    }
   }
 
   // ── The live assessment ────────────────────────────────────────────────────
@@ -549,7 +671,13 @@
         if (oa.section === "numerical" && oa.question) return "q" + oa.question.index;
         return "oa";
       }
-      default: return "done:" + state.status;
+      default: {
+        // Interview status is folded in so a poll that picks up a fresh
+        // proposal, or the candidate's own confirm/decline landing, forces
+        // a redraw even though the outer application status hasn't moved.
+        const iv = state.interview ? state.interview.status : "none";
+        return "done:" + state.status + ":" + iv;
+      }
     }
   }
 

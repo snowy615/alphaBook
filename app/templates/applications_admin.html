@@ -387,6 +387,60 @@
         </div>
         {% endif %}
 
+        <!-- Interview scheduling: open to every reviewer, same as scoring —
+             deciding who interviews someone is exactly the kind of call a
+             Quant Analyst member should be able to make without an admin. -->
+        {% if r.status == "shortlisted" %}
+        <div class="apa-review">
+          <p class="apa-h">Interview</p>
+          {% if r.interview %}
+          <div class="apa-interview-current">
+            <p style="margin:0 0 6px;">
+              <strong>{{ r.interview.interviewer_name }}</strong>
+              {% if r.interview.interviewer_email %}({{ r.interview.interviewer_email }}){% endif %}
+              proposed <strong>{{ r.interview.when.strftime("%a %d %b %Y, %H:%M") }} UTC</strong>
+              {% if r.interview.status == "proposed" %}<span class="apa-tag is-warn">awaiting response</span>
+              {% elif r.interview.status == "confirmed" %}<span class="apa-tag is-good">confirmed</span>
+              {% elif r.interview.status == "declined" %}<span class="apa-tag is-bad">declined</span>{% endif %}
+            </p>
+            {% if r.interview.message %}
+            <p class="msp-muted" style="font-size:13px;margin:0 0 4px;">Note sent: &ldquo;{{ r.interview.message }}&rdquo;</p>
+            {% endif %}
+            {% if r.interview.status == "declined" and r.interview.candidate_note %}
+            <p class="msp-muted" style="font-size:13px;margin:0;">Their note: &ldquo;{{ r.interview.candidate_note }}&rdquo;</p>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          {% if reviewers %}
+          <form class="apa-score-form" style="margin-top:12px;" onsubmit="return scheduleInterview(event, '{{ r.user_id }}')">
+            <div class="apa-score-field">
+              <label for="interviewer-{{ r.user_id }}">Interviewer</label>
+              <select id="interviewer-{{ r.user_id }}">
+                {% for rv in reviewers %}
+                <option value="{{ rv.id }}" {% if r.interview and r.interview.interviewer_id == rv.id %}selected
+                  {% elif not r.interview and rv.id == viewer_id %}selected{% endif %}>{{ rv.name }}</option>
+                {% endfor %}
+              </select>
+            </div>
+            <div class="apa-score-field">
+              <label for="when-{{ r.user_id }}">Date &amp; time (your local time)</label>
+              <input type="datetime-local" id="when-{{ r.user_id }}">
+            </div>
+            <div class="apa-score-field apa-score-note">
+              <label for="interview-msg-{{ r.user_id }}">Message to candidate (optional)</label>
+              <input type="text" id="interview-msg-{{ r.user_id }}" maxlength="500" placeholder="e.g. looking forward to it">
+            </div>
+            <button class="btn primary" type="submit">
+              {{ "Propose a new time" if r.interview else "Propose this time" }}
+            </button>
+          </form>
+          {% else %}
+          <p class="msp-muted">No eligible interviewers found — a Quant Analyst member or admin needs an email on file.</p>
+          {% endif %}
+        </div>
+        {% endif %}
+
         <!-- Decisions stay admin-only. Shortlisting is the interview gate:
              accept is only offered once an applicant has been shortlisted. -->
         {% if is_admin %}
@@ -483,6 +537,43 @@
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         flash("Score saved", false);
+        location.reload();
+      } catch (err) {
+        flash(err.message, true);
+        btn.disabled = false;
+      }
+      return false;
+    }
+
+    async function scheduleInterview(event, userId) {
+      event.preventDefault();
+      const btn = event.target.querySelector("button[type=submit]");
+      const interviewerEl = document.getElementById("interviewer-" + userId);
+      const whenEl = document.getElementById("when-" + userId);
+      const msgEl = document.getElementById("interview-msg-" + userId);
+      if (!whenEl.value) {
+        flash("Pick a date and time for the interview", true);
+        return false;
+      }
+      // datetime-local has no timezone of its own — new Date() reads it as
+      // this browser's local time, and toISOString() converts that to UTC
+      // for the backend, so "2pm" here means 2pm wherever the reviewer is.
+      const whenIso = new Date(whenEl.value).toISOString();
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/interview`, {
+          method: "POST",
+          credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            interviewer_id: interviewerEl.value,
+            when: whenIso,
+            message: msgEl.value,
+          }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash("Interview proposed — the candidate has been emailed.", false);
         location.reload();
       } catch (err) {
         flash(err.message, true);
