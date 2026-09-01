@@ -237,6 +237,12 @@
             {{ r.username }}{% if r.oxford_email %} · {{ r.oxford_email }}
             {% elif r.email %} · {{ r.email }}{% endif %}
           </span>
+          {% if r.previous_application %}
+          <span class="msp-muted" style="font-size:12px;">
+            Previously {{ r.previous_application.status }} for {{ r.previous_application.programme }}
+            {% if r.previous_application.decided_at %}({{ r.previous_application.decided_at.strftime("%d %b %Y") }}){% endif %}
+          </span>
+          {% endif %}
         </div>
         <div>
           <div class="apa-tags">

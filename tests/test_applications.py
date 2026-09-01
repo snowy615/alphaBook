@@ -385,10 +385,16 @@ class TestEligibility:
     def test_an_account_with_no_membership_set_may_apply(self):
         assert mb.can_apply({}) is True
 
-    def test_someone_already_on_a_programme_may_not(self):
+    def test_quant_analyst_is_the_ceiling(self):
         assert mb.can_apply({"membership": mb.M_QUANT_ANALYST}) is False
-        assert mb.can_apply({"membership": mb.M_QUANT_BOOTCAMP}) is False
+
+    def test_quant_bootcamp_can_still_apply_on_to_analyst(self):
+        assert mb.can_apply({"membership": mb.M_QUANT_BOOTCAMP}) is True
+        assert mb.apply_programmes_for(mb.M_QUANT_BOOTCAMP) == [mb.M_QUANT_ANALYST]
+
+    def test_fundamental_track_membership_is_a_separate_system(self):
         assert mb.can_apply({"membership": mb.M_FUND_ANALYST}) is False
+        assert mb.can_apply({"membership": mb.M_FUND_BOOTCAMP}) is False
 
     def test_recruiters_and_hosts_are_on_the_other_side_of_the_table(self):
         assert mb.can_apply({"membership": mb.M_PUBLIC, "role": mb.ROLE_RECRUITER}) is False
@@ -1013,3 +1019,167 @@ class TestInterviewScheduling:
 
         assert result["status"] == ap.S_OA_READY
         assert "interview" not in fake_db.collections[ap.COLLECTION]["u1"]
+
+
+class TestStateEndpoint:
+    """
+    /apply/state decides three very different screens: the ceiling message
+    for a Quant Analyst (regardless of any old application on file), the
+    live application flow, and a decided application with or without a way
+    back in.
+    """
+
+    def _patch(self, monkeypatch, users=None, applications=None):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = users or {}
+        fake_db.collections[ap.COLLECTION] = applications or {}
+
+        async def fake_load(uid):
+            return fake_db.collections[ap.COLLECTION].get(uid)
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def test_a_quant_analyst_sees_the_ceiling_regardless_of_old_applications(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_QUANT_ANALYST, "email": "jo@merton.ox.ac.uk"}},
+            applications={"u1": {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_ANALYST}},
+        )
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["status"] == "analyst"
+        assert result["is_reviewer"] is True
+        assert "programme" not in result   # the old application is not surfaced at all
+
+    def test_an_admin_is_flagged_as_a_reviewer_too(self, monkeypatch):
+        self._patch(monkeypatch, users={"u1": {"username": "root"}})
+        user = User(id="u1", username="root", is_admin=True)
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["is_reviewer"] is True
+        assert result["eligible"] is False   # admins don't apply, they review
+
+    def test_no_application_on_file_is_plain_none(self, monkeypatch):
+        self._patch(monkeypatch, users={"u1": {"username": "jo", "membership": mb.M_PUBLIC}})
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["status"] == "none"
+        assert result["programmes"] == mb.APPLY_PROGRAMMES
+
+    def test_bootcamp_member_only_sees_analyst_as_a_choice(self, monkeypatch):
+        self._patch(monkeypatch, users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP}})
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["programmes"] == [mb.M_QUANT_ANALYST]
+
+    def test_accepted_into_bootcamp_can_apply_again_for_analyst(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP, "email": "jo@merton.ox.ac.uk"}},
+            applications={"u1": {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
+                                 "oxford_email": "jo@merton.ox.ac.uk"}},
+        )
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["status"] == ap.S_ACCEPTED
+        assert result["decision"] == ap.S_ACCEPTED
+        assert result["can_apply_again"] is True
+
+    def test_rejected_general_public_can_try_again(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_PUBLIC, "email": "jo@merton.ox.ac.uk"}},
+            applications={"u1": {"status": ap.S_REJECTED, "programme": mb.M_QUANT_BOOTCAMP,
+                                 "oxford_email": "jo@merton.ox.ac.uk"}},
+        )
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["can_apply_again"] is True
+
+    def test_a_live_application_is_shown_as_is_with_no_reapply_flag(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_PUBLIC}},
+            applications={"u1": {"status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP}},
+        )
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["status"] == ap.S_CV
+        assert "can_apply_again" not in result
+
+
+class TestReapplyAfterDecision:
+    def _patch(self, monkeypatch, users, applications):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = users
+        fake_db.collections[ap.COLLECTION] = applications
+
+        async def fake_load(uid):
+            return fake_db.collections[ap.COLLECTION].get(uid)
+
+        async def fake_save(uid, app_):
+            fake_db.collections[ap.COLLECTION][uid] = app_
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def test_bootcamp_member_can_start_a_fresh_analyst_application(self, monkeypatch):
+        fake_db = self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP,
+                          "email": "jo@merton.ox.ac.uk", "cv_blob_path": "cvs/old.pdf"}},
+            applications={"u1": {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
+                                 "decided_at": dt.datetime.now(dt.timezone.utc)}},
+        )
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.start_application(
+            ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+
+        assert result["ok"] is True
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["programme"] == mb.M_QUANT_ANALYST
+        assert stored["status"] == ap.S_OA_READY   # CV already on file
+        assert stored["previous_application"]["programme"] == mb.M_QUANT_BOOTCAMP
+        assert stored["previous_application"]["status"] == ap.S_ACCEPTED
+
+    def test_bootcamp_member_cannot_choose_bootcamp_again(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP, "email": "jo@merton.ox.ac.uk"}},
+            applications={},
+        )
+        user = User(id="u1", username="jo")
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.start_application(
+                ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP), user))
+
+    def test_a_live_application_still_cannot_be_restarted(self, monkeypatch):
+        self._patch(
+            monkeypatch,
+            users={"u1": {"username": "jo", "membership": mb.M_PUBLIC, "email": "jo@merton.ox.ac.uk"}},
+            applications={"u1": {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP}},
+        )
+        user = User(id="u1", username="jo")
+
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.start_application(
+                ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))

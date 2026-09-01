@@ -69,8 +69,10 @@ CV_BOOK_ELIGIBLE = ANALYST_MEMBERSHIPS
 # The two programmes anyone can apply to, and the memberships they can apply
 # from. The password route into these tiers stays as it was for members who
 # were given a code; the application is the route for everybody else.
+# A Quant Bootcamp member can still apply on to Quant Analyst — Bootcamp isn't
+# a ceiling — but Quant Analyst itself is: there is nowhere further to apply.
 APPLY_PROGRAMMES: List[str] = [M_QUANT_BOOTCAMP, M_QUANT_ANALYST]
-APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER}
+APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER, M_QUANT_BOOTCAMP}
 
 # ── Clubs ─────────────────────────────────────────────────────────────────────
 CLUB_ALPHA_FUND = "Alpha Fund"
@@ -118,13 +120,27 @@ def can_host(data: Dict[str, Any]) -> bool:
 def can_apply(data: Dict[str, Any]) -> bool:
     """Whether this account may apply to a quant programme.
 
-    General public and general Alpha Fund members can; anyone already in a
-    bootcamp or analyst tier has nothing to apply for, and recruiters and
-    hosts are on the other side of the table.
+    General public, general Alpha Fund members and Quant Bootcamp members can
+    (Bootcamp members applying on to Analyst); a Quant Analyst has reached
+    the ceiling and has nothing left to apply for, and recruiters and hosts
+    are on the other side of the table.
     """
     if role_of(data) != ROLE_GENERAL:
         return False
     return membership_of(data) in APPLICANT_MEMBERSHIPS
+
+
+def apply_programmes_for(membership: str) -> List[str]:
+    """
+    Which programmes this membership may choose from.
+
+    A Quant Bootcamp member can only apply on to Quant Analyst — Bootcamp
+    itself is off the table, since they're already in it. Everyone else
+    eligible sees the full list.
+    """
+    if membership == M_QUANT_BOOTCAMP:
+        return [M_QUANT_ANALYST]
+    return list(APPLY_PROGRAMMES)
 
 
 def contactable(data: Dict[str, Any]) -> bool:

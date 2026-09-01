@@ -748,13 +748,14 @@ async def state(user: User = Depends(current_user)):
     """Everything the apply page needs: eligibility, CV, and the live clocks."""
     uid = str(user.id)
     data = await _user_data(uid)
-    application = await _load(uid)
+    membership = mb.membership_of(data)
+    is_reviewer = bool(user.is_admin) or membership == mb.M_QUANT_ANALYST
 
     account_email = data.get("email") or ""
     out: Dict[str, Any] = {
         "eligible": mb.can_apply({**data, "is_admin": user.is_admin}),
-        "membership": mb.membership_of(data),
-        "programmes": list(mb.APPLY_PROGRAMMES),
+        "membership": membership,
+        "programmes": mb.apply_programmes_for(membership),
         "cv_uploaded": bool(data.get("cv_blob_path")),
         "full_name": data.get("full_name") or "",
         "graduation_year": data.get("graduation_year"),
@@ -763,6 +764,9 @@ async def state(user: User = Depends(current_user)):
         # Whether the choose-programme step needs to ask for an Oxford email:
         # false when the account itself signed up with one.
         "needs_oxford_email": not is_oxford_email(account_email),
+        # Quant Analyst is the ceiling — someone already there has nothing
+        # left to apply for, so the page points them at reviewing instead.
+        "is_reviewer": is_reviewer,
         "rules": {
             "session_seconds": SESSION_SECONDS,
             "written_seconds": WRITTEN_SECONDS,
@@ -771,6 +775,14 @@ async def state(user: User = Depends(current_user)):
         },
     }
 
+    if membership == mb.M_QUANT_ANALYST:
+        # Nothing below matters once someone has reached the ceiling — not
+        # even an old application record, which the review-page link
+        # replaces entirely rather than showing a stale "accepted" screen.
+        out["status"] = "analyst"
+        return out
+
+    application = await _load(uid)
     if application is None:
         out["status"] = "none"
         return out
@@ -791,6 +803,13 @@ async def state(user: User = Depends(current_user)):
         out["was_shortlisted"] = bool(application.get("shortlisted_at"))
         if application.get("interview"):
             out["interview"] = _interview_view(application["interview"])
+        if application["status"] in DECIDED:
+            # A decided application doesn't disappear — the candidate keeps
+            # seeing the outcome — but if they're still eligible (accepted
+            # into Bootcamp, or rejected and free to try again), the page
+            # offers a button to start a fresh one rather than that ever
+            # happening silently.
+            out["can_apply_again"] = out["eligible"]
     return out
 
 
@@ -830,23 +849,31 @@ def _resolve_oxford_email(account_email: str, provided: Optional[str]) -> str:
 
 @router.post("/start")
 async def start_application(req: StartApplication, user: User = Depends(current_user)):
-    """Open an application to one of the quant programmes."""
+    """
+    Open an application to one of the quant programmes.
+
+    Also how a Bootcamp member applies on to Analyst, and how anyone whose
+    last application was decided (accepted into Bootcamp, or rejected) opens
+    a fresh one — see the DECIDED branch below.
+    """
     uid = str(user.id)
     data = await _user_data(uid)
     if not mb.can_apply({**data, "is_admin": user.is_admin}):
         raise HTTPException(
             403,
-            "Applications are open to general accounts. You are already on a "
-            "programme, or hold a recruiter or host role.",
+            "Applications are open to general accounts below Quant Analyst. "
+            "You are already at the top of the programme, or hold a recruiter "
+            "or host role.",
         )
-    if req.programme not in mb.APPLY_PROGRAMMES:
-        raise HTTPException(400, f"Choose one of: {', '.join(mb.APPLY_PROGRAMMES)}")
+    membership = mb.membership_of(data)
+    allowed_programmes = mb.apply_programmes_for(membership)
+    if req.programme not in allowed_programmes:
+        raise HTTPException(400, f"Choose one of: {', '.join(allowed_programmes)}")
 
     # General public applicants aren't Alpha Fund members yet, so nothing else
     # on the account vouches for them being current Oxford students — ask
-    # directly. A General Alpha Fund member has already cleared that bar to
-    # get their membership, so there's nothing to re-confirm.
-    membership = mb.membership_of(data)
+    # directly. Anyone already a member (general, or progressing from
+    # Bootcamp) has already cleared that bar, so there's nothing to re-confirm.
     if membership == mb.M_PUBLIC and not req.confirms_oxford_student:
         raise HTTPException(
             400,
@@ -856,7 +883,7 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     oxford_email = _resolve_oxford_email(data.get("email") or "", req.oxford_email)
 
     existing = await _load(uid)
-    if existing is not None:
+    if existing is not None and existing["status"] not in DECIDED:
         # Switching programme (or fixing the Oxford address) before the
         # assessment starts is free; afterwards the paper has already been
         # sat and both are fixed.
@@ -875,13 +902,21 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         "full_name": data.get("full_name") or "",
         "email": data.get("email") or "",
         "oxford_email": oxford_email,
-        "applicant_category": membership,   # "General public" or "General Alpha Fund member"
+        "applicant_category": membership,
         "confirmed_oxford_student": membership == mb.M_PUBLIC,
         "programme": req.programme,
         "status": S_OA_READY if data.get("cv_blob_path") else S_CV,
         "created_at": _now(),
         "flags": {"paste": 0, "left_page": 0},
     }
+    if existing is not None and existing["status"] in DECIDED:
+        # A fresh application over a decided one — keep a breadcrumb of the
+        # prior outcome for the admin rather than silently discarding it.
+        application["previous_application"] = {
+            "programme": existing.get("programme"),
+            "status": existing["status"],
+            "decided_at": existing.get("decided_at"),
+        }
     await _save(uid, application)
     return {"ok": True, "status": application["status"], "programme": req.programme}
 
@@ -1111,6 +1146,11 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "decision_note": application.get("decision_note") or "",
         "review": _review_summary(application, viewer_id),
         "interview": _admin_interview_view(application.get("interview")),
+        "previous_application": (
+            {**application["previous_application"],
+             "decided_at": _as_utc(application["previous_application"].get("decided_at"))}
+            if application.get("previous_application") else None
+        ),
     }
 
 

@@ -76,6 +76,11 @@
   let busy = false;
   let draftTimer = null;
   let pickedProgramme = null;
+  // True from the moment "Apply again" is clicked until a fresh /apply/start
+  // actually succeeds. Nothing server-side has changed in between, so the
+  // background poll would otherwise redraw straight back to the old decision
+  // screen the instant it landed — this tells render() to leave it alone.
+  let reapplying = false;
 
   // ── Progress rail ──────────────────────────────────────────────────────────
   const STEP_ORDER = ["choose", "cv", "oa", "done"];
@@ -111,12 +116,27 @@
   }
 
   function renderIneligible(state) {
+    // An admin visiting /apply has nothing to submit either, but they do
+    // have somewhere useful to go — same message a Quant Analyst gets.
+    if (state.is_reviewer) { renderAnalyst(state); return; }
     $("#app").innerHTML = panel("Applications are for general accounts", `
       <p class="msp-muted" style="margin-top:0;">
         Your account is set to <strong>${esc(state.membership)}</strong>, so there is
         nothing here to apply for. If that is wrong, change it on your
         <a href="/profile">profile</a> or ask an admin.
       </p>`);
+  }
+
+  // Quant Analyst is the ceiling — nothing left to apply for. The apply page
+  // retires itself and points straight at the review page instead of ever
+  // showing a stale "accepted" screen.
+  function renderAnalyst() {
+    $("#app").innerHTML = panel("You're a Quant Analyst", `
+      <p class="msp-muted" style="margin-top:0;">
+        There's nothing left here to apply for — you're already at the top of
+        the programme. Help review this round's applicants instead.
+      </p>
+      <a class="btn primary" href="/apply/admin">Open the review page →</a>`);
   }
 
   // General public applicants have nothing else on the account vouching for
@@ -126,6 +146,7 @@
   const GENERAL_PUBLIC = "General public";
 
   function renderChoose(state) {
+    cvScreen = null;   // a fresh application starts the CV step with a clean decision
     const options = (state.programmes || []).map((p) => `
       <label class="apl-choice" data-programme="${esc(p)}">
         <input type="radio" name="programme" value="${esc(p)}">
@@ -217,6 +238,7 @@
       e.target.disabled = true;
       try {
         await api("/apply/start", payload);
+        reapplying = false;   // server state has actually moved now
         await refresh();
       } catch (err) {
         flash(err.message, true);
@@ -225,32 +247,108 @@
     });
   }
 
+  // Which CV screen is showing, independent of whether a CV happens to be
+  // on file at this exact instant — that distinction matters because a
+  // first-time upload flips cv_uploaded to true mid-flow, and without a
+  // separate flag the next redraw would mistake "just uploaded" for
+  // "already had one" and ask a question that was just answered by uploading.
+  //   null    — not yet decided; renderCv derives it from whether a CV exists
+  //   "first" — no CV existed when this screen opened; show Continue, no Back
+  //   "replace" — a CV already existed; uploading auto-confirms, Back cancels
+  let cvScreen = null;
+
   function renderCv(state) {
     const has = state.cv_uploaded;
-    $("#app").innerHTML = panel("Upload your CV", `
+    if (cvScreen === "first" || cvScreen === "replace") { renderCvUpload(state, cvScreen); return; }
+    if (has) { renderCvAsk(state); return; }
+    cvScreen = "first";
+    renderCvUpload(state, "first");
+  }
+
+  // A CV is already on file: ask outright rather than leaving it to a
+  // "Replace" button someone might miss and upload over by accident.
+  function renderCvAsk(state) {
+    $("#app").innerHTML = panel("Your CV is on file", `
+      <p class="msp-muted" style="margin-top:0;">
+        Applying for <strong>${esc(state.programme || "")}</strong>. You already have a CV
+        on your AlphaBook profile — this is the copy the committee would read.
+      </p>
+      <div class="cv-status-banner uploaded"
+           style="display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;font-size:14px;font-weight:600;
+                  border:1px solid var(--green);color:var(--green);">
+        <span>✓</span><span>A CV is on file</span>
+      </div>
+      <div id="cvPreviewArea"></div>
+      <p style="font-size:15px;font-weight:600;margin:20px 0 12px;">Would you like to update it?</p>
+      <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn primary" id="cvUpdateYes">Yes, upload a new one</button>
+        <button class="btn" id="cvUpdateNo">No, use this one</button>
+      </div>`);
+
+    wireCvPreview($("#cvPreviewArea"));
+
+    $("#cvUpdateYes").addEventListener("click", () => { cvScreen = "replace"; renderCvUpload(state, "replace"); });
+    $("#cvUpdateNo").addEventListener("click", async (e) => {
+      e.target.disabled = true;
+      try { await api("/apply/cv-confirm", {}); cvScreen = null; await refresh(); }
+      catch (err) { flash(err.message, true); e.target.disabled = false; }
+    });
+  }
+
+  // A small "View CV" toggle that renders the PDF inline, so reading it
+  // never means leaving the apply flow — a plain link to open it in a new
+  // tab is offered alongside for whoever would rather have that.
+  function wireCvPreview(container) {
+    container.innerHTML = `
+      <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:4px;">
+        <button class="btn ghost" id="cvToggle">View CV</button>
+        <a class="btn ghost" href="/me/cv" target="_blank" rel="noopener">Open in new tab ↗</a>
+      </div>
+      <div id="cvFrameWrap" style="display:none;margin-top:12px;border:1px solid var(--border);">
+        <iframe id="cvFrame" src="" style="width:100%;height:520px;border:none;display:block;"></iframe>
+      </div>`;
+    const toggle = container.querySelector("#cvToggle");
+    const wrap = container.querySelector("#cvFrameWrap");
+    const frame = container.querySelector("#cvFrame");
+    toggle.addEventListener("click", () => {
+      const showing = wrap.style.display !== "none";
+      if (showing) {
+        wrap.style.display = "none"; frame.src = ""; toggle.textContent = "View CV";
+      } else {
+        frame.src = "/me/cv?t=" + Date.now();
+        wrap.style.display = "block"; toggle.textContent = "Hide CV";
+      }
+    });
+  }
+
+  function renderCvUpload(state, screen) {
+    const isReplace = screen === "replace";
+    $("#app").innerHTML = panel(isReplace ? "Upload a new CV" : "Upload your CV", `
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>. Put your most
         up-to-date CV on your profile — this is the copy the committee reads, and
         it is the same file that appears everywhere else on your profile.
       </p>
-      <div class="cv-status-banner ${has ? "uploaded" : "missing"}"
+      <div class="cv-status-banner ${state.cv_uploaded ? "uploaded" : "missing"}"
            style="display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;font-size:14px;font-weight:600;
-                  border:1px solid ${has ? "var(--green)" : "var(--border)"};color:${has ? "var(--green)" : "var(--muted)"};">
-        <span>${has ? "✓" : "✗"}</span>
-        <span id="cvText">${has ? "A CV is on file" : "No CV uploaded yet"}</span>
+                  border:1px solid ${state.cv_uploaded ? "var(--green)" : "var(--border)"};color:${state.cv_uploaded ? "var(--green)" : "var(--muted)"};">
+        <span>${state.cv_uploaded ? "✓" : "✗"}</span>
+        <span id="cvText">${state.cv_uploaded ? "A CV is on file" : "No CV uploaded yet"}</span>
       </div>
       <input type="file" id="cvFile" accept="application/pdf,.pdf" style="display:none">
       <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;">
-        <button class="btn" id="pickBtn">${has ? "Replace CV" : "Choose PDF"}</button>
-        ${has ? '<a class="btn ghost" href="/me/cv" target="_blank" rel="noopener">View current CV ↗</a>' : ""}
+        <button class="btn" id="pickBtn">${isReplace ? "Choose a replacement PDF" : "Choose PDF"}</button>
+        ${isReplace ? '<button class="btn ghost" id="cvBack">Back</button>' : ""}
       </div>
       <p class="apl-hint">PDF only · max 10 MB</p>
+      ${isReplace ? "" : `
       <hr class="divider" style="border:none;border-top:1px solid var(--border);margin:22px 0;">
-      <button class="btn primary" id="cvNext" ${has ? "" : "disabled"}>
+      <button class="btn primary" id="cvNext" ${state.cv_uploaded ? "" : "disabled"}>
         This is my up-to-date CV — continue
-      </button>`);
+      </button>`}`);
 
     $("#pickBtn").addEventListener("click", () => $("#cvFile").click());
+    $("#cvBack")?.addEventListener("click", () => { cvScreen = null; renderCv(state); });
     $("#cvFile").addEventListener("change", async (e) => {
       const file = e.target.files && e.target.files[0];
       if (!file) return;
@@ -267,8 +365,17 @@
           const d = await r.json().catch(() => ({}));
           throw new Error(d.detail || "Upload failed");
         }
-        flash("CV uploaded", false);
-        await refresh();
+        if (isReplace) {
+          // They already answered "yes, update it" — the upload itself was
+          // the confirmation, so this moves straight on.
+          flash("CV updated", false);
+          await api("/apply/cv-confirm", {});
+          cvScreen = null;
+          await refresh();
+        } else {
+          flash("CV uploaded", false);
+          await refresh();   // redraws this same screen with Continue enabled
+        }
       } catch (err) {
         flash(err.message, true);
         $("#pickBtn").disabled = false;
@@ -276,9 +383,9 @@
       }
     });
 
-    $("#cvNext").addEventListener("click", async (e) => {
+    $("#cvNext")?.addEventListener("click", async (e) => {
       e.target.disabled = true;
-      try { await api("/apply/cv-confirm", {}); await refresh(); }
+      try { await api("/apply/cv-confirm", {}); cvScreen = null; await refresh(); }
       catch (err) { flash(err.message, true); e.target.disabled = false; }
     });
   }
@@ -466,13 +573,32 @@
            the questions usable for the people applying after you.</p>`;
     }
 
+    // Decided, but still eligible — accepted into Bootcamp with Analyst
+    // still open, or rejected and free to try again. Nothing happens
+    // automatically; this is the only way back into the choose-programme step.
+    const canApplyAgain = decided && state.can_apply_again;
+    const againLabel = (state.programmes || []).length === 1
+      ? `Apply for ${state.programmes[0]}` : "Apply again";
+    const againBtn = canApplyAgain
+      ? `<button class="btn ghost" id="applyAgainBtn" style="margin-top:16px;margin-left:10px;">${esc(againLabel)}</button>`
+      : "";
+
     $("#app").innerHTML = panel(decided ? "Decision" : "Application submitted", `
       ${renderReviewSteps(state)}
       <div class="apl-done-tick">✓</div>${body}
-      <a class="btn" href="/" style="margin-top:16px;">Back to the trading floor</a>`);
+      <a class="btn" href="/" style="margin-top:16px;">Back to the trading floor</a>${againBtn}`);
 
     if (shortlisted && state.interview && state.interview.status === "proposed") {
       wireInterviewActions();
+    }
+    if (canApplyAgain) {
+      $("#applyAgainBtn").addEventListener("click", () => {
+        // Nothing has changed server-side yet, so the background poll needs
+        // to be told to leave this screen alone until they actually submit —
+        // see the `reapplying` flag.
+        reapplying = true;
+        renderChoose(state);
+      });
     }
   }
 
@@ -660,6 +786,7 @@
    * keystrokes would wipe the essay, untick the acknowledgement, or drop the
    * file the candidate just chose. */
   function keyFor(state) {
+    if (state.status === "analyst") return "analyst";
     if (!state.eligible && state.status === "none") return "ineligible";
     switch (state.status) {
       case "none": return "choose";
@@ -682,6 +809,7 @@
   }
 
   function render(state) {
+    if (reapplying) return;   // mid "Apply again" — nothing server-side has moved yet
     const key = keyFor(state);
     const isLive = key === "written" || key.charAt(0) === "q";
 
@@ -695,9 +823,13 @@
     stopTicking();
     if (key === drawnKey) return;
     drawnKey = key;
-    renderSteps(state);
 
-    if (key === "ineligible") { renderIneligible(state); return; }
+    // Neither of these is really "mid-apply-flow", so the choose/CV/
+    // assessment/submitted stepper above would just be clutter.
+    if (key === "analyst") { $("#steps").innerHTML = ""; renderAnalyst(state); return; }
+    if (key === "ineligible") { $("#steps").innerHTML = ""; renderIneligible(state); return; }
+
+    renderSteps(state);
     switch (state.status) {
       case "none": renderChoose(state); break;
       case "cv": renderCv(state); break;
