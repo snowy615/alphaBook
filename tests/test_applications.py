@@ -140,23 +140,94 @@ class TestQuestionBank:
     def test_ids_are_unique(self):
         assert len({q["id"] for q in ap.QUESTION_BANK}) == len(ap.QUESTION_BANK)
 
-    def test_mix_adds_up_to_the_paper(self):
-        assert sum(ap.PAPER_MIX.values()) == ap.NUMERICAL_QUESTIONS
+    def test_every_question_has_a_recognised_difficulty(self):
+        assert all(q["difficulty"] in ap.DIFFICULTIES for q in ap.QUESTION_BANK)
 
-    def test_bank_can_fill_every_slot(self):
-        by_kind = Counter(q["kind"] for q in ap.QUESTION_BANK)
-        for kind, needed in ap.PAPER_MIX.items():
-            assert by_kind[kind] >= needed
+    def test_every_topic_carries_an_even_four_per_difficulty(self):
+        by_topic_difficulty = Counter((q["kind"], q["difficulty"]) for q in ap.QUESTION_BANK)
+        topics = {q["kind"] for q in ap.QUESTION_BANK}
+        for topic in topics:
+            for difficulty in ap.DIFFICULTIES:
+                assert by_topic_difficulty[(topic, difficulty)] == 4, (topic, difficulty)
 
-    def test_paper_has_the_fixed_mix_and_no_repeats(self):
-        paper = ap.build_paper(random.Random(7))
-        assert len(paper) == ap.NUMERICAL_QUESTIONS
-        assert len(set(paper)) == ap.NUMERICAL_QUESTIONS
-        assert Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper) == Counter(ap.PAPER_MIX)
+    def test_each_programmes_mix_adds_up_to_the_paper(self):
+        for programme, mix in ap.PAPER_MIX.items():
+            assert sum(mix.values()) == ap.NUMERICAL_QUESTIONS, programme
+
+    def test_the_bank_can_fill_every_programmes_slots(self):
+        by_topic = Counter(q["kind"] for q in ap.QUESTION_BANK)
+        for mix in ap.PAPER_MIX.values():
+            for kind, needed in mix.items():
+                assert by_topic[kind] >= needed
 
     def test_the_two_sections_fill_the_sitting_exactly(self):
         assert (ap.WRITTEN_SECONDS
                 + ap.NUMERICAL_QUESTIONS * ap.SECONDS_PER_QUESTION) == ap.SESSION_SECONDS
+
+
+class TestEvenSplit:
+    def test_splits_as_equally_as_possible(self):
+        assert ap._even_split(6) == [2, 2, 2]
+        assert ap._even_split(7) == [3, 2, 2]
+        assert ap._even_split(4) == [2, 1, 1]
+        assert ap._even_split(3) == [1, 1, 1]
+
+    def test_always_sums_back_to_n(self):
+        for n in range(0, 30):
+            assert sum(ap._even_split(n)) == n
+
+
+class TestBuildPaper:
+    def test_quant_bootcamp_keeps_the_original_three_topics(self):
+        paper = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(7))
+        assert len(paper) == ap.NUMERICAL_QUESTIONS
+        assert len(set(paper)) == ap.NUMERICAL_QUESTIONS   # no repeats
+        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
+        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_BOOTCAMP])
+        assert "quant concepts" not in kinds
+
+    def test_quant_analyst_includes_quant_concepts(self):
+        paper = ap.build_paper(mb.M_QUANT_ANALYST, random.Random(7))
+        assert len(paper) == ap.NUMERICAL_QUESTIONS
+        assert len(set(paper)) == ap.NUMERICAL_QUESTIONS
+        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
+        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_ANALYST])
+        assert kinds["quant concepts"] == 4
+
+    def test_difficulty_spread_is_the_same_every_time_within_a_programme(self):
+        # The specific questions vary, but how many of each difficulty land
+        # in the paper is deterministic — that's the whole point of the
+        # even split, so a paper never happens to be all-hard by chance.
+        for seed in range(10):
+            paper = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(seed))
+            difficulties = Counter(ap.QUESTION_BY_ID[q]["difficulty"] for q in paper)
+            assert difficulties == Counter({"easy": 8, "medium": 6, "hard": 6})
+
+    def test_different_seeds_draw_different_questions(self):
+        paper_a = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(1))
+        paper_b = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(2))
+        assert paper_a != paper_b
+
+    def test_unknown_programme_falls_back_to_bootcamp(self):
+        paper = ap.build_paper("Some Other Programme", random.Random(7))
+        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
+        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_BOOTCAMP])
+
+
+class TestQuantConcepts:
+    def test_every_quant_concepts_answer_is_still_a_whole_number(self):
+        qc = [q for q in ap.QUESTION_BANK if q["kind"] == "quant concepts"]
+        assert len(qc) == 12
+        assert all(isinstance(q["answer"], int) for q in qc)
+
+    def test_multiple_choice_answers_are_a_small_option_number(self):
+        # A handful are genuinely multiple choice — those answers should read
+        # as an option index (1-4), not a computed quantity, so a stray
+        # off-by-one in the bank stands out immediately.
+        mc_ids = {"qc_delta_def", "qc_long_profit", "qc_gamma_def", "qc_putcall", "qc_replication"}
+        for q in ap.QUESTION_BANK:
+            if q["id"] in mc_ids:
+                assert 1 <= q["answer"] <= 4, q["id"]
 
 
 class TestGrading:

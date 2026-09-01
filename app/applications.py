@@ -20,10 +20,18 @@ The shape of the assessment:
   questions at 30 seconds each, which is exactly the remaining ten minutes.
 * **Whole-number answers only.** Every numerical question is written so the
   answer is a plain integer — a count of outcomes, an expected value that
-  comes out whole, a "1 in N" probability, or the next term of a sequence.
-  That makes grading exact instead of tolerance-based, and it means a
-  candidate never loses a mark to rounding or to how they chose to write a
-  fraction.
+  comes out whole, a "1 in N" probability, the next term of a sequence, or
+  (for a multiple-choice quant-concepts question) the option number. That
+  makes grading exact instead of tolerance-based, and it means a candidate
+  never loses a mark to rounding or to how they chose to write a fraction.
+* **A random draw, not a fixed set.** Each topic carries an even four easy,
+  four medium and four hard questions (see :data:`QUESTION_BANK`); a paper
+  draws its slots randomly within each difficulty tier and shuffles the
+  result, so the difficulty spread is the same for every candidate but the
+  actual questions differ. The mix of topics itself depends on the
+  programme applied for — see :data:`PAPER_MIX`. Quant Bootcamp keeps the
+  original probability/expectation/pattern set; Quant Analyst trims
+  pattern-finding to make room for basic quant-concept questions.
 * **No AI.** Said plainly on the gate, acknowledged with a tick before the
   clock starts, and backed by the clocks themselves: 30 seconds is enough to
   think through one of these questions and not enough to consult a chatbot.
@@ -151,140 +159,208 @@ SCORE_MIN, SCORE_MAX = 1, 10
 # ── Question bank ─────────────────────────────────────────────────────────────
 # Every answer is a whole number, so grading is an exact match. Probability
 # questions are framed as a count of outcomes or as "1 in N" precisely so the
-# answer stays an integer. "note" is the one-line justification shown only to
-# the reviewer.
+# answer stays an integer; a multiple-choice question's answer is the option
+# number. "note" is the one-line justification shown only to the reviewer.
+#
+# Each topic carries exactly four "easy", four "medium" and four "hard"
+# questions — the even split is what lets a paper draw randomly within a
+# topic and still land on a predictable difficulty spread every time (see
+# build_paper). The easy tier is deliberately not the easiest imaginable
+# version of each topic: a plain complement or a memorised card count reads
+# as "recall" rather than "reasoning", so easy here still means one genuine
+# step of combinatorics or expectation, just the shortest one in the topic.
+DIFFICULTIES: List[str] = ["easy", "medium", "hard"]
+
 QUESTION_BANK: List[Dict[str, Any]] = [
     # ── Probability ──────────────────────────────────────────────────────────
-    {"id": "p_coin3_2h", "kind": "probability",
-     "prompt": "A fair coin is flipped 3 times. Of the 8 equally likely outcomes, how many have exactly 2 heads?",
-     "answer": 3, "note": "C(3,2) = 3"},
-    {"id": "p_dice_sum7", "kind": "probability",
-     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum of 7?",
-     "answer": 6, "note": "(1,6)…(6,1)"},
-    {"id": "p_heart", "kind": "probability",
+    {"id": "p_heart", "kind": "probability", "difficulty": "easy",
      "prompt": "You draw one card from a standard 52-card deck. The probability it is a heart is 1 in N. What is N?",
      "answer": 4, "note": "13/52 = 1/4"},
-    {"id": "p_face_cards", "kind": "probability",
-     "prompt": "How many of the 52 cards in a standard deck are face cards (J, Q or K)?",
-     "answer": 12, "note": "3 per suit x 4 suits"},
-    {"id": "p_coin3_atleast1", "kind": "probability",
-     "prompt": "A fair coin is flipped 3 times. In how many of the 8 equally likely outcomes is there at least one head?",
-     "answer": 7, "note": "8 - 1 all-tails"},
-    {"id": "p_dice_over9", "kind": "probability",
-     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum greater than 9?",
-     "answer": 6, "note": "sums 10, 11, 12 → 3 + 2 + 1"},
-    {"id": "p_two_red", "kind": "probability",
-     "prompt": "A jar holds 3 red and 2 blue balls. You draw 2 without replacement. Of the 10 possible pairs, how many are both red?",
-     "answer": 3, "note": "C(3,2) = 3"},
-    {"id": "p_two_aces", "kind": "probability",
-     "prompt": "You draw 2 cards without replacement from a 52-card deck. The probability both are aces is 1 in N. What is N?",
-     "answer": 221, "note": "(4/52)(3/51) = 1/221"},
-    {"id": "p_coin5_3h", "kind": "probability",
-     "prompt": "A fair coin is flipped 5 times. In how many of the 32 equally likely outcomes are there exactly 3 heads?",
-     "answer": 10, "note": "C(5,3) = 10"},
-    {"id": "p_dice_doubles", "kind": "probability",
+    {"id": "p_dice_doubles", "kind": "probability", "difficulty": "easy",
      "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many show the same number on both dice?",
      "answer": 6, "note": "(1,1)…(6,6)"},
-    {"id": "p_alphabetical", "kind": "probability",
-     "prompt": "Four distinct letters are shuffled into a random order. The probability they land in alphabetical order is 1 in N. What is N?",
-     "answer": 24, "note": "4! = 24 orderings, 1 of them sorted"},
-    {"id": "p_coin4_more_heads", "kind": "probability",
-     "prompt": "A fair coin is flipped 4 times. In how many of the 16 equally likely outcomes do heads outnumber tails?",
-     "answer": 5, "note": "C(4,3) + C(4,4) = 4 + 1"},
-    {"id": "p_two_kings", "kind": "probability",
+    {"id": "p_coin3_2h", "kind": "probability", "difficulty": "easy",
+     "prompt": "A fair coin is flipped 3 times. Of the 8 equally likely outcomes, how many have exactly 2 heads?",
+     "answer": 3, "note": "C(3,2) = 3"},
+    {"id": "p_two_coin_atleast1", "kind": "probability", "difficulty": "easy",
+     "prompt": "Two fair coins are flipped. Of the 4 equally likely outcomes, how many have at least one head?",
+     "answer": 3, "note": "4 - 1 all-tails"},
+
+    {"id": "p_dice_sum7", "kind": "probability", "difficulty": "medium",
+     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum of 7?",
+     "answer": 6, "note": "(1,6)…(6,1)"},
+    {"id": "p_two_red", "kind": "probability", "difficulty": "medium",
+     "prompt": "A jar holds 3 red and 2 blue balls. You draw 2 without replacement. Of the 10 possible pairs, how many are both red?",
+     "answer": 3, "note": "C(3,2) = 3"},
+    {"id": "p_two_kings", "kind": "probability", "difficulty": "medium",
      "prompt": "How many different 2-card hands from a standard deck consist of two kings? (Order does not matter.)",
      "answer": 6, "note": "C(4,2) = 6"},
-    {"id": "p_pair_sum7", "kind": "probability",
-     "prompt": "A bag holds balls numbered 1 to 6. You draw 2 without replacement. Of the 15 possible pairs, how many sum to 7?",
-     "answer": 3, "note": "{1,6}, {2,5}, {3,4}"},
+    {"id": "p_coin3_atleast1", "kind": "probability", "difficulty": "medium",
+     "prompt": "A fair coin is flipped 3 times. In how many of the 8 equally likely outcomes is there at least one head?",
+     "answer": 7, "note": "8 - 1 all-tails"},
+
+    {"id": "p_dice_over9", "kind": "probability", "difficulty": "hard",
+     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum greater than 9?",
+     "answer": 6, "note": "sums 10, 11, 12 → 3 + 2 + 1"},
+    {"id": "p_coin5_3h", "kind": "probability", "difficulty": "hard",
+     "prompt": "A fair coin is flipped 5 times. In how many of the 32 equally likely outcomes are there exactly 3 heads?",
+     "answer": 10, "note": "C(5,3) = 10"},
+    {"id": "p_alphabetical", "kind": "probability", "difficulty": "hard",
+     "prompt": "Four distinct letters are shuffled into a random order. The probability they land in alphabetical order is 1 in N. What is N?",
+     "answer": 24, "note": "4! = 24 orderings, 1 of them sorted"},
+    {"id": "p_coin4_more_heads", "kind": "probability", "difficulty": "hard",
+     "prompt": "A fair coin is flipped 4 times. In how many of the 16 equally likely outcomes do heads outnumber tails?",
+     "answer": 5, "note": "C(4,3) + C(4,4) = 4 + 1"},
 
     # ── Expectation ──────────────────────────────────────────────────────────
-    {"id": "e_rolls_to_six", "kind": "expectation",
-     "prompt": "You roll a fair six-sided die repeatedly until you see a 6. What is the expected number of rolls?",
-     "answer": 6, "note": "1/p with p = 1/6"},
-    {"id": "e_flips_to_heads", "kind": "expectation",
-     "prompt": "You flip a fair coin repeatedly until it lands heads. What is the expected number of flips?",
-     "answer": 2, "note": "1/p with p = 1/2"},
-    {"id": "e_two_dice_sum", "kind": "expectation",
+    {"id": "e_two_dice_sum", "kind": "expectation", "difficulty": "easy",
      "prompt": "You roll two fair six-sided dice. What is the expected value of their sum?",
      "answer": 7, "note": "2 x 3.5"},
-    {"id": "e_eight_coins", "kind": "expectation",
+    {"id": "e_eight_coins", "kind": "expectation", "difficulty": "easy",
      "prompt": "You flip 8 fair coins. What is the expected number of heads?",
      "answer": 4, "note": "np = 8 x 0.5"},
-    {"id": "e_tenner_fifth", "kind": "expectation",
-     "prompt": "A game pays £10 with probability 1/5 and nothing otherwise. What is the expected payout, in pounds?",
-     "answer": 2, "note": "10 x 1/5"},
-    {"id": "e_second_heads", "kind": "expectation",
-     "prompt": "You flip a fair coin repeatedly until it has landed heads twice. What is the expected number of flips?",
-     "answer": 4, "note": "r/p with r = 2, p = 1/2"},
-    {"id": "e_hypergeometric", "kind": "expectation",
-     "prompt": "A box holds 10 balls, 4 of them white. You draw 5 without replacement. What is the expected number of white balls drawn?",
-     "answer": 2, "note": "nK/N = 5 x 4/10"},
-    {"id": "e_die_thirty", "kind": "expectation",
+    {"id": "e_die_thirty", "kind": "expectation", "difficulty": "easy",
      "prompt": "A fair six-sided die is rolled once. You win £30 if it shows a 6 and nothing otherwise. What are your expected winnings, in pounds?",
      "answer": 5, "note": "30 x 1/6"},
-    {"id": "e_draws_to_ace", "kind": "expectation",
-     "prompt": "You draw a card from a full deck, note it, and replace it, repeating until you draw an ace. What is the expected number of draws?",
-     "answer": 13, "note": "1/p with p = 4/52"},
-    {"id": "e_biased_twelve", "kind": "expectation",
+    {"id": "e_card_ace_52", "kind": "expectation", "difficulty": "easy",
+     "prompt": "You draw one card from a standard 52-card deck. You win £52 if it's an ace, and nothing otherwise. What are your expected winnings, in pounds?",
+     "answer": 4, "note": "P(ace) = 4/52, 52 x 4/52 = 4"},
+
+    {"id": "e_flips_to_heads", "kind": "expectation", "difficulty": "medium",
+     "prompt": "You flip a fair coin repeatedly until it lands heads. What is the expected number of flips?",
+     "answer": 2, "note": "1/p with p = 1/2"},
+    {"id": "e_rolls_to_six", "kind": "expectation", "difficulty": "medium",
+     "prompt": "You roll a fair six-sided die repeatedly until you see a 6. What is the expected number of rolls?",
+     "answer": 6, "note": "1/p with p = 1/6"},
+    {"id": "e_biased_twelve", "kind": "expectation", "difficulty": "medium",
      "prompt": "A biased coin lands heads 1/4 of the time. You flip it 12 times. What is the expected number of heads?",
      "answer": 3, "note": "np = 12 x 1/4"},
-    {"id": "e_rolls_over_four", "kind": "expectation",
-     "prompt": "You roll a fair six-sided die repeatedly until it shows a number greater than 4. What is the expected number of rolls?",
-     "answer": 3, "note": "1/p with p = 2/6"},
-    {"id": "e_lottery", "kind": "expectation",
+    {"id": "e_lottery", "kind": "expectation", "difficulty": "medium",
      "prompt": "A lottery ticket pays £1000 with probability 1/500 and nothing otherwise. What is its expected value, in pounds?",
      "answer": 2, "note": "1000/500"},
 
+    {"id": "e_second_heads", "kind": "expectation", "difficulty": "hard",
+     "prompt": "You flip a fair coin repeatedly until it has landed heads twice. What is the expected number of flips?",
+     "answer": 4, "note": "r/p with r = 2, p = 1/2"},
+    {"id": "e_hypergeometric", "kind": "expectation", "difficulty": "hard",
+     "prompt": "A box holds 10 balls, 4 of them white. You draw 5 without replacement. What is the expected number of white balls drawn?",
+     "answer": 2, "note": "nK/N = 5 x 4/10"},
+    {"id": "e_draws_to_ace", "kind": "expectation", "difficulty": "hard",
+     "prompt": "You draw a card from a full deck, note it, and replace it, repeating until you draw an ace. What is the expected number of draws?",
+     "answer": 13, "note": "1/p with p = 4/52"},
+    {"id": "e_rolls_over_four", "kind": "expectation", "difficulty": "hard",
+     "prompt": "You roll a fair six-sided die repeatedly until it shows a number greater than 4. What is the expected number of rolls?",
+     "answer": 3, "note": "1/p with p = 2/6"},
+
     # ── Pattern finding ──────────────────────────────────────────────────────
-    {"id": "n_oblong", "kind": "pattern",
-     "prompt": "What comes next?   2, 6, 12, 20, 30, ?",
-     "answer": 42, "note": "n(n+1)"},
-    {"id": "n_squares", "kind": "pattern",
+    {"id": "n_squares", "kind": "pattern", "difficulty": "easy",
      "prompt": "What comes next?   1, 4, 9, 16, 25, ?",
      "answer": 36, "note": "square numbers"},
-    {"id": "n_fib", "kind": "pattern",
-     "prompt": "What comes next?   1, 1, 2, 3, 5, 8, ?",
-     "answer": 13, "note": "Fibonacci"},
-    {"id": "n_doubling", "kind": "pattern",
+    {"id": "n_doubling", "kind": "pattern", "difficulty": "easy",
      "prompt": "What comes next?   3, 6, 12, 24, 48, ?",
      "answer": 96, "note": "x2 each step"},
-    {"id": "n_triangular", "kind": "pattern",
+    {"id": "n_triangular", "kind": "pattern", "difficulty": "easy",
      "prompt": "What comes next?   1, 3, 6, 10, 15, ?",
      "answer": 21, "note": "triangular numbers"},
-    {"id": "n_primes", "kind": "pattern",
-     "prompt": "What comes next?   2, 3, 5, 7, 11, 13, ?",
-     "answer": 17, "note": "primes"},
-    {"id": "n_factorial", "kind": "pattern",
-     "prompt": "What comes next?   1, 2, 6, 24, 120, ?",
-     "answer": 720, "note": "n!"},
-    {"id": "n_cubes", "kind": "pattern",
-     "prompt": "What comes next?   1, 8, 27, 64, 125, ?",
-     "answer": 216, "note": "cubes"},
-    {"id": "n_2n_plus_1", "kind": "pattern",
-     "prompt": "What comes next?   2, 5, 11, 23, 47, ?",
-     "answer": 95, "note": "double then add 1"},
-    {"id": "n_lazy_caterer", "kind": "pattern",
-     "prompt": "What comes next?   1, 2, 4, 7, 11, 16, ?",
-     "answer": 22, "note": "gaps grow by 1"},
-    {"id": "n_zigzag", "kind": "pattern",
-     "prompt": "What comes next?   9, 7, 10, 8, 11, 9, ?",
-     "answer": 12, "note": "-2 then +3, alternating"},
-    {"id": "n_interleaved", "kind": "pattern",
-     "prompt": "What comes next?   1, 4, 2, 8, 3, 12, 4, ?",
-     "answer": 16, "note": "counting interleaved with multiples of 4"},
-    {"id": "n_powers_of_three", "kind": "pattern",
+    {"id": "n_powers_of_three", "kind": "pattern", "difficulty": "easy",
      "prompt": "What comes next?   81, 27, 9, 3, ?",
      "answer": 1, "note": "divide by 3"},
-    {"id": "n_double_minus", "kind": "pattern",
-     "prompt": "What comes next?   6, 11, 21, 41, 81, ?",
-     "answer": 161, "note": "double then subtract 1"},
+
+    {"id": "n_oblong", "kind": "pattern", "difficulty": "medium",
+     "prompt": "What comes next?   2, 6, 12, 20, 30, ?",
+     "answer": 42, "note": "n(n+1)"},
+    {"id": "n_fib", "kind": "pattern", "difficulty": "medium",
+     "prompt": "What comes next?   1, 1, 2, 3, 5, 8, ?",
+     "answer": 13, "note": "Fibonacci"},
+    {"id": "n_primes", "kind": "pattern", "difficulty": "medium",
+     "prompt": "What comes next?   2, 3, 5, 7, 11, 13, ?",
+     "answer": 17, "note": "primes"},
+    {"id": "n_cubes", "kind": "pattern", "difficulty": "medium",
+     "prompt": "What comes next?   1, 8, 27, 64, 125, ?",
+     "answer": 216, "note": "cubes"},
+
+    {"id": "n_factorial", "kind": "pattern", "difficulty": "hard",
+     "prompt": "What comes next?   1, 2, 6, 24, 120, ?",
+     "answer": 720, "note": "n!"},
+    {"id": "n_2n_plus_1", "kind": "pattern", "difficulty": "hard",
+     "prompt": "What comes next?   2, 5, 11, 23, 47, ?",
+     "answer": 95, "note": "double then add 1"},
+    {"id": "n_lazy_caterer", "kind": "pattern", "difficulty": "hard",
+     "prompt": "What comes next?   1, 2, 4, 7, 11, 16, ?",
+     "answer": 22, "note": "gaps grow by 1"},
+    {"id": "n_zigzag", "kind": "pattern", "difficulty": "hard",
+     "prompt": "What comes next?   9, 7, 10, 8, 11, 9, ?",
+     "answer": 12, "note": "-2 then +3, alternating"},
+
+    # ── Quant concepts (Quant Analyst only) ────────────────────────────────────
+    # Basic finance/quant vocabulary and one-step calculations — multiple
+    # choice (answer = option number) or a plain arithmetic answer, nothing
+    # requiring a calculator or prior modelling experience.
+    {"id": "qc_delta_def", "kind": "quant concepts", "difficulty": "easy",
+     "prompt": ("Which of these best describes an option's delta? "
+                "1) Its time decay per day  2) Its price sensitivity to a $1 move in the underlying  "
+                "3) Its sensitivity to volatility  4) Its sensitivity to interest rates "
+                "— enter the option number."),
+     "answer": 2, "note": "delta = d(option price)/d(underlying price)"},
+    {"id": "qc_long_profit", "kind": "quant concepts", "difficulty": "easy",
+     "prompt": ("A trader is 'long' a stock. They profit when the price does what? "
+                "1) Falls  2) Rises  3) Stays perfectly flat  4) Becomes illiquid "
+                "— enter the option number."),
+     "answer": 2, "note": "long = owns the asset, wants it to rise"},
+    {"id": "qc_position_value", "kind": "quant concepts", "difficulty": "easy",
+     "prompt": "A stock is priced at £50. You buy 100 shares. What is your total position value, in pounds?",
+     "answer": 5000, "note": "50 x 100"},
+    {"id": "qc_pct_return", "kind": "quant concepts", "difficulty": "easy",
+     "prompt": "You buy a stock at £20 and sell it at £26. What is your percentage return, to the nearest whole percent?",
+     "answer": 30, "note": "6/20 = 30%"},
+
+    {"id": "qc_delta_calc", "kind": "quant concepts", "difficulty": "medium",
+     "prompt": "A call option has delta 0.5. If the underlying stock rises by £4, what is the approximate change in the option's price, in pounds?",
+     "answer": 2, "note": "0.5 x 4"},
+    {"id": "qc_gamma_def", "kind": "quant concepts", "difficulty": "medium",
+     "prompt": ("Which Greek measures the sensitivity of an option's delta to a $1 move in the underlying? "
+                "1) Vega  2) Gamma  3) Theta  4) Rho — enter the option number."),
+     "answer": 2, "note": "gamma = d(delta)/d(underlying price)"},
+    {"id": "qc_short_pnl", "kind": "quant concepts", "difficulty": "medium",
+     "prompt": "You short-sell a stock at £30 and buy it back at £22. What is your profit per share, in pounds?",
+     "answer": 8, "note": "30 - 22"},
+    {"id": "qc_delta_calc2", "kind": "quant concepts", "difficulty": "medium",
+     "prompt": "A call option has delta 0.4. The stock rises by £5. What is the approximate change in the option's price, in pounds, to the nearest whole pound?",
+     "answer": 2, "note": "0.4 x 5 = 2"},
+
+    {"id": "qc_sharpe", "kind": "quant concepts", "difficulty": "hard",
+     "prompt": ("A portfolio has a Sharpe ratio of 1.5 and an annual standard deviation of 20%. "
+                "If the risk-free rate is 2%, what is the portfolio's expected annual return, "
+                "to the nearest whole percent?"),
+     "answer": 32, "note": "R = Sharpe x sigma + Rf = 1.5x20 + 2"},
+    {"id": "qc_putcall", "kind": "quant concepts", "difficulty": "hard",
+     "prompt": ("Under put-call parity, if the strike and expiry are the same and the underlying pays no "
+                "dividends, what happens to a call's price relative to a put's as the stock price rises, "
+                "all else equal? 1) Call rises, put falls  2) Both rise  3) Both fall  "
+                "4) Call falls, put rises — enter the option number."),
+     "answer": 1, "note": "call gains intrinsic value, put loses it"},
+    {"id": "qc_duration", "kind": "quant concepts", "difficulty": "hard",
+     "prompt": ("A bond has a modified duration of 5. If interest rates rise by 1 percentage point, "
+                "what is the approximate percentage fall in the bond's price, to the nearest whole percent?"),
+     "answer": 5, "note": "-duration x rate change"},
+    {"id": "qc_replication", "kind": "quant concepts", "difficulty": "hard",
+     "prompt": ("A stock and a risk-free bond are combined to exactly replicate an option's payoff. "
+                "This is an example of which concept? 1) Put-call parity  2) Risk-neutral valuation  "
+                "3) Delta hedging / replication  4) Arbitrage-free bootstrapping — enter the option number."),
+     "answer": 3, "note": "replicating portfolio argument"},
 ]
 QUESTION_BY_ID = {q["id"]: q for q in QUESTION_BANK}
 
-# How many of each kind go into a paper. They add up to NUMERICAL_QUESTIONS, so
-# every candidate gets the same mix even though the questions differ.
-PAPER_MIX = {"probability": 7, "expectation": 6, "pattern": 7}
+# How many questions of each topic go into a paper, by programme. Both sum to
+# NUMERICAL_QUESTIONS, so the sitting is the same length either way. Quant
+# Bootcamp keeps the original probability/expectation/pattern mix untouched;
+# Quant Analyst trims pattern-finding to make room for basic quant concepts,
+# since that programme is the one where knowing what delta is actually
+# matters day to day.
+PAPER_MIX: Dict[str, Dict[str, int]] = {
+    mb.M_QUANT_BOOTCAMP: {"probability": 7, "expectation": 6, "pattern": 7},
+    mb.M_QUANT_ANALYST: {"probability": 6, "expectation": 6, "pattern": 4, "quant concepts": 4},
+}
 
 
 class StartApplication(BaseModel):
@@ -390,14 +466,28 @@ def grade(question: Dict[str, Any], parsed: Optional[int]) -> bool:
     return parsed is not None and parsed == question["answer"]
 
 
-def build_paper(rng: Optional[random.Random] = None) -> List[str]:
-    """Pick one paper: the fixed mix of kinds, shuffled within and across."""
+def _even_split(n: int, parts: int = len(DIFFICULTIES)) -> List[int]:
+    """n as `parts` whole-number shares, as equal as possible (extras go first)."""
+    base, extra = divmod(n, parts)
+    return [base + (1 if i < extra else 0) for i in range(parts)]
+
+
+def build_paper(programme: str, rng: Optional[random.Random] = None) -> List[str]:
+    """
+    Pick one paper for this programme: each topic's slots are split as evenly
+    as possible across easy/medium/hard, a question is drawn at random within
+    each slice, and the whole thing is shuffled together — so every sitting
+    has a predictable difficulty spread but a different set of questions.
+    """
     rng = rng or random
+    mix = PAPER_MIX.get(programme, PAPER_MIX[mb.M_QUANT_BOOTCAMP])
     chosen: List[str] = []
-    for kind, count in PAPER_MIX.items():
-        pool = [q["id"] for q in QUESTION_BANK if q["kind"] == kind]
-        rng.shuffle(pool)
-        chosen.extend(pool[:count])
+    for kind, count in mix.items():
+        for difficulty, want in zip(DIFFICULTIES, _even_split(count)):
+            pool = [q["id"] for q in QUESTION_BANK
+                    if q["kind"] == kind and q["difficulty"] == difficulty]
+            rng.shuffle(pool)
+            chosen.extend(pool[:want])
     rng.shuffle(chosen)
     return chosen
 
@@ -810,7 +900,7 @@ async def start_oa(user: User = Depends(current_user)):
         "started_at": now,
         "section": "written",
         "written": {"prompt": WRITTEN_PROMPT, "text": ""},
-        "question_ids": build_paper(),
+        "question_ids": build_paper(application.get("programme", "")),
         "current_index": 0,
         "answers": [],
     }

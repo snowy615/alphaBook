@@ -283,8 +283,15 @@
     });
   }
 
+  const NUMERICAL_TOPICS = {
+    "Quant Bootcamp": "Probability, expected value and pattern finding.",
+    "Quant Analyst": "Probability, expected value, pattern finding, and basic quant concepts "
+      + "(things like delta and Sharpe ratio — some multiple choice, some a short calculation).",
+  };
+
   function renderOaGate(state) {
     const r = state.rules || {};
+    const topics = NUMERICAL_TOPICS[state.programme] || NUMERICAL_TOPICS["Quant Bootcamp"];
     $("#app").innerHTML = panel("Your assessment is ready", `
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>. Start this whenever
@@ -297,7 +304,7 @@
         <li><strong>${Math.round((r.session_seconds || 900) / 60)} minutes in total</strong>, in one sitting. One attempt.</li>
         <li><strong>Part one — ${Math.round((r.written_seconds || 300) / 60)} minutes of writing.</strong> A single question, in your own words.</li>
         <li><strong>Part two — ${r.numerical_questions || 20} questions at ${r.seconds_per_question || 30} seconds each.</strong>
-            Probability, expected value and pattern finding. Every answer is a whole number.</li>
+            ${esc(topics)} Every answer is a whole number.</li>
         <li>Questions arrive one at a time. You cannot go back, and the clock does not pause.</li>
         <li>Pen and paper are fine. A calculator is not needed — nothing here requires one.</li>
       </ul>
