@@ -905,7 +905,12 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         "applicant_category": membership,
         "confirmed_oxford_student": membership == mb.M_PUBLIC,
         "programme": req.programme,
-        "status": S_OA_READY if data.get("cv_blob_path") else S_CV,
+        # Always start at the CV step, even for someone whose profile already
+        # has one on file — jumping straight to oa_ready here used to skip
+        # the explicit "is this still up to date?" question entirely, and
+        # skip stamping this application's own CV snapshot along with it
+        # (cv-confirm is the only place that happens).
+        "status": S_CV,
         "created_at": _now(),
         "flags": {"paste": 0, "left_page": 0},
     }

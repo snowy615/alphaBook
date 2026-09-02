@@ -756,6 +756,64 @@ class TestOxfordStudentConfirmation:
         assert store["u1"]["applicant_category"] == mb.M_MEMBER
 
 
+class TestNewApplicationAlwaysStartsAtCv:
+    """
+    Regression coverage for a real bug: a brand-new application used to jump
+    straight to oa_ready whenever the account's profile already had a CV on
+    file (common for anyone who applied before) — skipping the "would you
+    like to update it?" question entirely, and skipping the stamp of this
+    application's own CV snapshot along with it, since only cv-confirm does
+    that. Every new application must start at the CV step regardless of
+    what's already on the profile.
+    """
+
+    def _patch(self, monkeypatch, user_data):
+        store: dict = {}
+
+        async def fake_user_data(uid):
+            return user_data
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        monkeypatch.setattr(ap, "_user_data", fake_user_data)
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        return store
+
+    def test_a_profile_with_an_existing_cv_still_starts_at_the_cv_step(self, monkeypatch):
+        store = self._patch(monkeypatch, {
+            "email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER,
+            "cv_blob_path": "cvs/2027/Quant/u1.pdf",   # a CV from an earlier application
+        })
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+
+        assert result["status"] == ap.S_CV
+        stored = store["u1"]
+        assert stored["status"] == ap.S_CV
+        # And critically: this application has not snapshotted a CV of its
+        # own yet — only cv-confirm does that, and it has not run.
+        assert "cv_blob_path" not in stored
+
+    def test_only_cv_confirm_stamps_the_applications_own_snapshot(self, monkeypatch):
+        store = self._patch(monkeypatch, {
+            "email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER,
+            "cv_blob_path": "cvs/2027/Quant/u1.pdf",
+        })
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+
+        asyncio.run(ap.confirm_cv(user))
+
+        assert store["u1"]["status"] == ap.S_OA_READY
+        assert store["u1"]["cv_blob_path"] == "cvs/2027/Quant/u1.pdf"
+
+
 class TestRedoAndDelete:
     """Admin-only escape hatches: retake the assessment, or wipe the record."""
 
@@ -1156,7 +1214,11 @@ class TestReapplyAfterDecision:
         assert result["ok"] is True
         stored = fake_db.collections[ap.COLLECTION]["u1"]
         assert stored["programme"] == mb.M_QUANT_ANALYST
-        assert stored["status"] == ap.S_OA_READY   # CV already on file
+        # Always the CV step, even though their profile already has one on
+        # file from the Bootcamp application — that's what makes the "would
+        # you like to update it?" question actually get asked, and stamps
+        # this new application's own CV snapshot via cv-confirm.
+        assert stored["status"] == ap.S_CV
         assert stored["previous_application"]["programme"] == mb.M_QUANT_BOOTCAMP
         assert stored["previous_application"]["status"] == ap.S_ACCEPTED
 
