@@ -23,9 +23,17 @@
   }[c]));
 
   const PROGRAMME_BLURB = {
+    "Fundamental Bootcamp":
+      "The taught track for fundamental investing: company analysis, valuation and " +
+      "stock-picking, with the games on this site as the practical half.",
     "Quant Bootcamp":
       "The taught track: a term of sessions on probability, market making and " +
       "systematic trading, with the games on this site as the practical half.",
+    "Fundamental & Quant Bootcamp":
+      "Both taught tracks together, if you'd rather not choose one side yet.",
+    "Fundamental Analyst":
+      "The research track for fundamental investing: you pitch and defend your own " +
+      "ideas, and go into the CV book firms read.",
     "Quant Analyst":
       "The research track: you run your own ideas, contribute to the fund's " +
       "quant work, and go into the CV book firms read.",
@@ -70,8 +78,7 @@
   let tickTimer = null;
   let drawnKey = "";          // what the DOM currently shows
   let sessionLeft = 0;        // local mirror of the 15-minute clock
-  let sectionLeft = 0;        // local mirror of the written / per-question clock
-  let questionIndex = -1;
+  let sectionLeft = 0;        // local mirror of the motivation / estimation clock
   let autoFiredKey = "";      // guards against firing the same auto-submit twice
   let busy = false;
   let draftTimer = null;
@@ -390,15 +397,8 @@
     });
   }
 
-  const NUMERICAL_TOPICS = {
-    "Quant Bootcamp": "Probability, expected value and pattern finding.",
-    "Quant Analyst": "Probability, expected value, pattern finding, and basic quant concepts "
-      + "(things like delta and Sharpe ratio — some multiple choice, some a short calculation).",
-  };
-
   function renderOaGate(state) {
     const r = state.rules || {};
-    const topics = NUMERICAL_TOPICS[state.programme] || NUMERICAL_TOPICS["Quant Bootcamp"];
     $("#app").innerHTML = panel("Your assessment is ready", `
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>. Start this whenever
@@ -408,19 +408,23 @@
       </p>
 
       <ul class="apl-rules">
-        <li><strong>${Math.round((r.session_seconds || 900) / 60)} minutes in total</strong>, in one sitting. One attempt.</li>
-        <li><strong>Part one — ${Math.round((r.written_seconds || 300) / 60)} minutes of writing.</strong> A single question, in your own words.</li>
-        <li><strong>Part two — ${r.numerical_questions || 20} questions at ${r.seconds_per_question || 30} seconds each.</strong>
-            ${esc(topics)} Every answer is a whole number.</li>
-        <li>Questions arrive one at a time. You cannot go back, and the clock does not pause.</li>
-        <li>Pen and paper are fine. A calculator is not needed — nothing here requires one.</li>
+        <li><strong>${Math.round((r.session_seconds || 900) / 60)} minutes in total</strong>, in one sitting. One attempt, two questions.</li>
+        <li><strong>Part one — ${Math.round((r.motivation_seconds || 300) / 60)} minutes.</strong>
+            Why do you want to join Alpha Fund, and why you?</li>
+        <li><strong>Part two — ${Math.round((r.estimation_seconds || 600) / 60)} minutes.</strong>
+            Pick something large and hard to count exactly — the number of bicycles in
+            Oxford, say — and estimate it. Show your reasoning, or use your own example.</li>
+        <li>Both questions take plain text, and LaTeX if you want to show a formula —
+            each has a Preview button to check it renders the way you mean.</li>
+        <li>Submitting part one early moves straight to part two; it does not bank the
+            leftover time. The clock does not pause, and you cannot go back.</li>
       </ul>
 
       <div class="apl-warn">
         <strong>No AI, and no outside help.</strong>
         You may not use ChatGPT, Claude, Copilot or any other AI tool, and you may not
         search the web or ask anyone else. We are interested in how you think, not what
-        a model outputs. Pasting into the written answer is disabled, and leaving the
+        a model outputs. Pasting into either answer is disabled, and leaving the
         page is recorded and shown to the reviewer.
       </div>
 
@@ -603,69 +607,87 @@
   }
 
   // ── The live assessment ────────────────────────────────────────────────────
+  // Both questions are free text, so they share one essay-box template and
+  // one submit path — the backend already knows which section is open and
+  // saves into it accordingly.
 
-  function renderWritten(oa) {
-    const w = oa.written || {};
-    const key = "written";
-    if (drawnKey !== key) {
-      drawnKey = key;
-      autoFiredKey = "";
-      sectionLeft = w.seconds_left;
-      sessionLeft = oa.session_seconds_left;
-      $("#steps").innerHTML = "";
-      $("#app").innerHTML = panel("Part one — written", `
-        <div class="apl-clocks">
-          <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
-          <span class="apl-clock-sub">Part 1 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
-        </div>
-        <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
-        <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
-        <textarea class="apl-essay" id="essay" placeholder="Take a minute to think, then write."
-                  spellcheck="true"></textarea>
-        <div class="apl-essay-meta">
-          <span id="wordCount">0 words</span>
-          <span>Saved automatically · pasting is disabled</span>
-        </div>
-        <button class="btn primary" id="essayNext" style="margin-top:14px;">
-          Submit and go to part two
-        </button>
-        <p class="apl-hint">
-          Moving on early does not add time to part two — each question there has its
-          own ${CFG.secondsPerQuestion} seconds either way.
-        </p>`, "one question");
-
-      const essay = $("#essay");
-      essay.value = w.text || "";
-      essay.focus();
-      updateWordCount();
-      essay.addEventListener("input", () => { updateWordCount(); scheduleDraft(); });
-      essay.addEventListener("paste", (e) => {
-        e.preventDefault();
-        flash("Pasting is disabled for this answer — please type it yourself.", true);
-        api("/apply/oa/flag", { kind: "paste" }).catch(() => {});
-      });
-      essay.addEventListener("drop", (e) => e.preventDefault());
-      $("#essayNext").addEventListener("click", () => submitWritten(true));
-      startTicking();
-    } else {
-      // Only nudge the clocks forward — never touch what they are typing.
-      sectionLeft = Math.max(sectionLeft, w.seconds_left);
-      sessionLeft = Math.max(sessionLeft, oa.session_seconds_left);
-    }
+  function renderEssayBox(id) {
+    return `
+      <textarea class="apl-essay" id="${id}" placeholder="Take a minute to think, then write."
+                spellcheck="true"></textarea>
+      <div class="apl-essay-meta">
+        <span id="${id}Count">0 words</span>
+        <button type="button" class="btn ghost apl-preview-btn" id="${id}PreviewToggle">Preview</button>
+      </div>
+      <div class="apl-preview" id="${id}Preview" style="display:none;"></div>
+      <p class="apl-hint">
+        Plain text is fine. For a formula, type LaTeX — <code>$x^2$</code> or
+        <code>$$\\sum_i x_i$$</code> — and hit Preview to see how it will render.
+        Saved automatically · pasting is disabled.
+      </p>`;
   }
 
-  function updateWordCount() {
-    const essay = $("#essay");
-    const el = $("#wordCount");
-    if (!essay || !el) return;
-    const n = essay.value.trim() ? essay.value.trim().split(/\s+/).length : 0;
-    el.textContent = n + (n === 1 ? " word" : " words");
+  // Renders LaTeX delimited by $...$ / $$...$$ inside otherwise-plain text.
+  // textContent first (never innerHTML) so nothing the candidate typed is
+  // interpreted as markup — auto-render then finds and replaces just the
+  // math spans it recognises.
+  function renderMathPreview(container, text) {
+    container.textContent = text.trim() ? text : "(nothing written yet)";
+    if (!window.renderMathInElement) return;
+    try {
+      renderMathInElement(container, {
+        delimiters: [
+          { left: "$$", right: "$$", display: true },
+          { left: "$", right: "$", display: false },
+        ],
+        throwOnError: false,
+      });
+    } catch { /* a malformed formula just shows as typed */ }
+  }
+
+  function wireEssayBox(id, initialText, onInput) {
+    const essay = $("#" + id);
+    const countEl = $("#" + id + "Count");
+    const toggle = $("#" + id + "PreviewToggle");
+    const preview = $("#" + id + "Preview");
+
+    essay.value = initialText || "";
+    const updateCount = () => {
+      const n = essay.value.trim() ? essay.value.trim().split(/\s+/).length : 0;
+      countEl.textContent = n + (n === 1 ? " word" : " words");
+    };
+    updateCount();
+
+    essay.addEventListener("input", () => {
+      updateCount();
+      onInput();
+      if (preview.style.display !== "none") renderMathPreview(preview, essay.value);
+    });
+    essay.addEventListener("paste", (e) => {
+      e.preventDefault();
+      flash("Pasting is disabled for this answer — please type it yourself.", true);
+      api("/apply/oa/flag", { kind: "paste" }).catch(() => {});
+    });
+    essay.addEventListener("drop", (e) => e.preventDefault());
+
+    toggle.addEventListener("click", () => {
+      const showing = preview.style.display !== "none";
+      if (showing) {
+        preview.style.display = "none";
+        toggle.textContent = "Preview";
+      } else {
+        renderMathPreview(preview, essay.value);
+        preview.style.display = "block";
+        toggle.textContent = "Hide preview";
+      }
+    });
+    return essay;
   }
 
   function scheduleDraft() {
     if (draftTimer) return;
     // Autosave, not on every keystroke: the wall clock runs whether the tab is
-    // open or not, so a crash mid-essay should cost at most a few seconds of it.
+    // open or not, so a crash mid-answer should cost at most a few seconds of it.
     draftTimer = setTimeout(async () => {
       draftTimer = null;
       const essay = $("#essay");
@@ -689,59 +711,71 @@
     await refresh();
   }
 
-  function renderNumerical(oa) {
-    const q = oa.question;
-    if (!q) return;
-    const key = "q" + q.index;
+  function renderMotivation(oa) {
+    const w = oa.motivation || {};
+    const key = "motivation";
     if (drawnKey !== key) {
       drawnKey = key;
       autoFiredKey = "";
-      questionIndex = q.index;
-      sectionLeft = q.seconds_left;
+      sectionLeft = w.seconds_left;
       sessionLeft = oa.session_seconds_left;
       $("#steps").innerHTML = "";
-      $("#app").innerHTML = panel(`Part two — question ${q.index + 1} of ${q.total}`, `
+      $("#app").innerHTML = panel("Part one — why you", `
         <div class="apl-clocks">
-          <span class="apl-clock-main" id="clockMain">${Math.ceil(sectionLeft)}s</span>
-          <span class="apl-clock-sub"><span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
+          <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
+          <span class="apl-clock-sub">Part 1 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
         </div>
         <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
-        <span class="apl-q-kind">${esc(q.kind)}</span>
-        <p class="apl-q-prompt">${esc(q.prompt)}</p>
-        <input class="apl-answer" id="answer" type="text" inputmode="numeric"
-               autocomplete="off" placeholder="A whole number">
-        <p class="apl-hint">Every answer is a whole number. Press Enter to submit.</p>
-        <button class="btn primary" id="answerBtn" style="margin-top:12px;">Submit</button>`,
-        `${q.seconds_per_question}s per question`);
+        <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
+        ${renderEssayBox("essay")}
+        <button class="btn primary" id="essayNext" style="margin-top:14px;">
+          Submit and go to part two
+        </button>
+        <p class="apl-hint">
+          Moving on early does not add time to part two — the estimation question
+          keeps its own ${CFG.estimationMinutes} minutes either way.
+        </p>`, "part one of two");
 
-      const input = $("#answer");
-      input.focus();
-      // Whole numbers only, enforced as they type so nobody wastes a second of
-      // their thirty discovering the field rejected what they wrote.
-      input.addEventListener("input", () => {
-        const cleaned = input.value.replace(/[^0-9-]/g, "").replace(/(?!^)-/g, "");
-        if (cleaned !== input.value) input.value = cleaned;
-      });
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter") submitAnswer(false); });
-      $("#answerBtn").addEventListener("click", () => submitAnswer(false));
+      wireEssayBox("essay", w.text, scheduleDraft);
+      $("#essay").focus();
+      $("#essayNext").addEventListener("click", () => submitWritten(true));
       startTicking();
     } else {
-      sectionLeft = Math.max(sectionLeft, q.seconds_left);
+      // Only nudge the clocks forward — never touch what they are typing.
+      sectionLeft = Math.max(sectionLeft, w.seconds_left);
       sessionLeft = Math.max(sessionLeft, oa.session_seconds_left);
     }
   }
 
-  async function submitAnswer() {
-    if (busy) return;
-    busy = true;
-    const btn = $("#answerBtn");
-    if (btn) btn.disabled = true;
-    const input = $("#answer");
-    try {
-      await api("/apply/oa/answer", { index: questionIndex, value: input ? input.value : "" });
-    } catch { /* the next poll reconciles either way */ }
-    busy = false;
-    await refresh();
+  function renderEstimation(oa) {
+    const w = oa.estimation || {};
+    const key = "estimation";
+    if (drawnKey !== key) {
+      drawnKey = key;
+      autoFiredKey = "";
+      sectionLeft = w.seconds_left;
+      sessionLeft = oa.session_seconds_left;
+      $("#steps").innerHTML = "";
+      $("#app").innerHTML = panel("Part two — estimate something large", `
+        <div class="apl-clocks">
+          <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
+          <span class="apl-clock-sub">Part 2 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
+        </div>
+        <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
+        <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
+        ${renderEssayBox("essay")}
+        <button class="btn primary" id="essayNext" style="margin-top:14px;">Submit</button>
+        <p class="apl-hint">This is the last question — submitting finishes the assessment.</p>`,
+        "part two of two");
+
+      wireEssayBox("essay", w.text, scheduleDraft);
+      $("#essay").focus();
+      $("#essayNext").addEventListener("click", () => submitWritten(true));
+      startTicking();
+    } else {
+      sectionLeft = Math.max(sectionLeft, w.seconds_left);
+      sessionLeft = Math.max(sessionLeft, oa.session_seconds_left);
+    }
   }
 
   // ── Clock ticker ───────────────────────────────────────────────────────────
@@ -755,22 +789,23 @@
       const main = $("#clockMain");
       const bar = $("#bar");
       const sess = $("#clockSession");
-      const inWritten = drawnKey === "written";
-      const span = inWritten ? CFG.writtenMinutes * 60 : CFG.secondsPerQuestion;
+      const inMotivation = drawnKey === "motivation";
+      const span = (inMotivation ? CFG.motivationMinutes : CFG.estimationMinutes) * 60;
+      const lowThreshold = inMotivation ? 30 : 60;   // more warning on the longer question
 
       if (main) {
-        main.textContent = inWritten ? mmss(sectionLeft) : Math.ceil(sectionLeft) + "s";
-        main.classList.toggle("is-low", sectionLeft <= (inWritten ? 30 : 10));
+        main.textContent = mmss(sectionLeft);
+        main.classList.toggle("is-low", sectionLeft <= lowThreshold);
       }
       if (bar) {
         bar.style.width = Math.max(0, Math.min(100, (sectionLeft / span) * 100)) + "%";
-        bar.classList.toggle("is-low", sectionLeft <= (inWritten ? 30 : 10));
+        bar.classList.toggle("is-low", sectionLeft <= lowThreshold);
       }
       if (sess) sess.textContent = mmss(sessionLeft);
 
       if (sectionLeft <= 0 && autoFiredKey !== drawnKey) {
         autoFiredKey = drawnKey;
-        if (inWritten) submitWritten(true); else submitAnswer();
+        submitWritten(true);
       }
     }, 250);
   }
@@ -794,8 +829,8 @@
       case "oa_ready": return "gate";
       case "oa_active": {
         const oa = state.oa || {};
-        if (oa.section === "written") return "written";
-        if (oa.section === "numerical" && oa.question) return "q" + oa.question.index;
+        if (oa.section === "motivation") return "motivation";
+        if (oa.section === "estimation") return "estimation";
         return "oa";
       }
       default: {
@@ -811,12 +846,12 @@
   function render(state) {
     if (reapplying) return;   // mid "Apply again" — nothing server-side has moved yet
     const key = keyFor(state);
-    const isLive = key === "written" || key.charAt(0) === "q";
+    const isLive = key === "motivation" || key === "estimation";
 
     if (isLive) {
       // These two draw themselves and then tick their own clocks in place.
       const oa = state.oa || {};
-      if (oa.section === "written") renderWritten(oa); else renderNumerical(oa);
+      if (oa.section === "motivation") renderMotivation(oa); else renderEstimation(oa);
       return;
     }
 

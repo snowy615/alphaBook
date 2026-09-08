@@ -66,13 +66,23 @@ BOOTCAMP_MEMBERSHIPS = {M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP}
 CV_BOOK_ELIGIBLE = ANALYST_MEMBERSHIPS
 
 # ── Applications (see app/applications.py) ────────────────────────────────────
-# The two programmes anyone can apply to, and the memberships they can apply
-# from. The password route into these tiers stays as it was for members who
-# were given a code; the application is the route for everybody else.
-# A Quant Bootcamp member can still apply on to Quant Analyst — Bootcamp isn't
-# a ceiling — but Quant Analyst itself is: there is nowhere further to apply.
-APPLY_PROGRAMMES: List[str] = [M_QUANT_BOOTCAMP, M_QUANT_ANALYST]
-APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER, M_QUANT_BOOTCAMP}
+# The programmes anyone can apply to, and the memberships they can apply from.
+# The password route into these tiers stays as it was for members who were
+# given a code; the application is the route for everybody else.
+#
+# A Bootcamp applicant can pick a single track or both at once — "both" has
+# no membership of its own (a person only ever holds one `membership` value),
+# so accepting it does not auto-grant anything; an admin sets the actual
+# membership by hand, same as any programme string outside MEMBERSHIPS.
+# A Bootcamp member (either track) can still apply on to the matching
+# Analyst track — Bootcamp isn't a ceiling — but Analyst itself is: there is
+# nowhere further to apply from either Analyst track.
+PROGRAMME_BOTH_BOOTCAMP = "Fundamental & Quant Bootcamp"
+APPLY_PROGRAMMES: List[str] = [
+    M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP, PROGRAMME_BOTH_BOOTCAMP,
+    M_FUND_ANALYST, M_QUANT_ANALYST,
+]
+APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER, M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP}
 
 # ── Clubs ─────────────────────────────────────────────────────────────────────
 CLUB_ALPHA_FUND = "Alpha Fund"
@@ -118,12 +128,12 @@ def can_host(data: Dict[str, Any]) -> bool:
 
 
 def can_apply(data: Dict[str, Any]) -> bool:
-    """Whether this account may apply to a quant programme.
+    """Whether this account may apply to a Bootcamp or Analyst programme.
 
-    General public, general Alpha Fund members and Quant Bootcamp members can
-    (Bootcamp members applying on to Analyst); a Quant Analyst has reached
-    the ceiling and has nothing left to apply for, and recruiters and hosts
-    are on the other side of the table.
+    General public, general Alpha Fund members and Bootcamp members (either
+    track) can — Bootcamp members applying on to the matching Analyst track.
+    An Analyst has reached the ceiling and has nothing left to apply for, and
+    recruiters and hosts are on the other side of the table.
     """
     if role_of(data) != ROLE_GENERAL:
         return False
@@ -134,12 +144,14 @@ def apply_programmes_for(membership: str) -> List[str]:
     """
     Which programmes this membership may choose from.
 
-    A Quant Bootcamp member can only apply on to Quant Analyst — Bootcamp
-    itself is off the table, since they're already in it. Everyone else
-    eligible sees the full list.
+    A Bootcamp member can only apply on to the matching Analyst track —
+    Bootcamp itself (and the other track's Bootcamp) is off the table, since
+    they're already on this one. Everyone else eligible sees the full list.
     """
     if membership == M_QUANT_BOOTCAMP:
         return [M_QUANT_ANALYST]
+    if membership == M_FUND_BOOTCAMP:
+        return [M_FUND_ANALYST]
     return list(APPLY_PROGRAMMES)
 
 

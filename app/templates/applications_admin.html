@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Applications — {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/contrib/auto-render.min.js"></script>
   <script src="/static/theme.js"></script>
   <style>
     .apa-summary { margin-bottom: 28px; }
@@ -174,14 +177,14 @@
     <div class="card msp-panel apa-summary">
       <div class="head">
         <h3>Applicants</h3>
-        <span class="msp-muted">{{ scored }} of {{ total }} assessed · ranked by the numerical section</span>
+        <span class="msp-muted">{{ scored }} of {{ total }} scored by a reviewer · ranked by average score</span>
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         <table class="msp-table">
           <thead>
             <tr>
               <th>#</th><th>Applicant</th><th>Programme</th>
-              <th>Numerical</th><th>CV score</th><th>Written score</th><th>Status</th>
+              <th>CV score</th><th>Written score</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -193,14 +196,6 @@
                 <div class="msp-muted" style="font-size:12px;">{{ r.username }}</div>
               </td>
               <td>{{ r.programme }}</td>
-              <td>
-                {% if r.correct is not none %}
-                  <span class="apa-score">{{ r.correct }}<small>/{{ r.total }}</small></span>
-                  <span class="apa-bar"><span style="width: {{ (100 * r.correct / r.total) if r.total else 0 }}%"></span></span>
-                {% else %}
-                  <span class="msp-muted">not sat</span>
-                {% endif %}
-              </td>
               <td>
                 {% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="msp-muted">/{{ score_max }}</span>
                 {% else %}<span class="msp-muted">—</span>{% endif %}
@@ -271,16 +266,12 @@
       <div class="msp-panel-body">
         <div class="apa-grid">
           <div class="apa-cell">
-            <span class="apa-k">Numerical</span>
-            <span class="apa-v">
-              {% if r.correct is not none %}{{ r.correct }}/{{ r.total }}
-                <small class="msp-muted">({{ r.score.pct }}%)</small>
-              {% else %}—{% endif %}
-            </span>
+            <span class="apa-k">Motivation, written in</span>
+            <span class="apa-v">{% if r.motivation_seconds %}{{ (r.motivation_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
           </div>
           <div class="apa-cell">
-            <span class="apa-k">Written in</span>
-            <span class="apa-v">{% if r.written_seconds %}{{ (r.written_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
+            <span class="apa-k">Estimation, written in</span>
+            <span class="apa-v">{% if r.estimation_seconds %}{{ (r.estimation_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
           </div>
           <div class="apa-cell">
             <span class="apa-k">Oxford student</span>
@@ -307,36 +298,18 @@
           <p class="msp-muted" style="margin:0 0 18px;">No CV on file.</p>
         {% endif %}
 
-        <p class="apa-h">Written response — {{ written_prompt }}</p>
-        {% if r.written_text %}
-          <div class="apa-essay">{{ r.written_text }}</div>
+        <p class="apa-h">Part one — {{ motivation_prompt }}</p>
+        {% if r.motivation_text %}
+          <div class="apa-essay apa-math">{{ r.motivation_text }}</div>
         {% else %}
           <div class="apa-essay is-empty">Nothing written.</div>
         {% endif %}
 
-        {% if r.answers %}
-        <details class="apa-detail">
-          <summary>Every numerical answer ({{ r.answers | length }})</summary>
-          <div style="overflow-x:auto;">
-          <table class="msp-table">
-            <thead>
-              <tr><th>#</th><th>Question</th><th>Answered</th><th>Key</th><th>Result</th><th>Time</th></tr>
-            </thead>
-            <tbody>
-              {% for a in r.answers %}
-              <tr>
-                <td>{{ loop.index }}</td>
-                <td>{{ a.prompt }}</td>
-                <td>{% if a.raw %}{{ a.raw }}{% else %}<span class="msp-muted">—</span>{% endif %}{% if a.timed_out %} <span class="msp-muted">(timed out)</span>{% endif %}</td>
-                <td>{{ a.answer_key }} <span class="msp-muted">— {{ a.note }}</span></td>
-                <td>{% if a.correct %}<span class="apa-ok">correct</span>{% else %}<span class="apa-no">wrong</span>{% endif %}</td>
-                <td>{{ a.time_taken_s }}s</td>
-              </tr>
-              {% endfor %}
-            </tbody>
-          </table>
-          </div>
-        </details>
+        <p class="apa-h">Part two — {{ estimation_prompt }}</p>
+        {% if r.estimation_text %}
+          <div class="apa-essay apa-math">{{ r.estimation_text }}</div>
+        {% else %}
+          <div class="apa-essay is-empty">Nothing written.</div>
         {% endif %}
 
         <!-- Reviewer scoring: open to every Quant Analyst, not just admins.
@@ -488,6 +461,23 @@
   </div>
 
   <script>
+    // Applicants may have typed LaTeX in their written responses (see the
+    // apply page's Preview) — render it here too, on every essay block at
+    // once, so a reviewer sees it the same way rather than raw $...$ text.
+    document.querySelectorAll(".apa-math").forEach((el) => {
+      if (window.renderMathInElement) {
+        try {
+          renderMathInElement(el, {
+            delimiters: [
+              { left: "$$", right: "$$", display: true },
+              { left: "$", right: "$", display: false },
+            ],
+            throwOnError: false,
+          });
+        } catch { /* a malformed formula just shows as typed */ }
+      }
+    });
+
     function flash(text, bad) {
       const box = document.getElementById("msg");
       box.textContent = text;

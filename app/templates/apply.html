@@ -6,6 +6,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Apply — {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/contrib/auto-render.min.js"></script>
   <script src="/static/theme.js"></script>
   <style>
     /* ── Application flow ────────────────────────────────────────────────── */
@@ -111,21 +114,19 @@
     }
     .apl-essay:focus { outline: none; border-color: var(--brand); }
     .apl-essay-meta {
-      display: flex; justify-content: space-between; gap: 12px;
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
       font-size: 12px; color: var(--muted); margin-top: 8px;
     }
+    .apl-preview-btn { font-size: 12px; padding: 5px 10px; }
+    .apl-preview {
+      margin-top: 10px; padding: 14px; border: 1px dashed var(--border);
+      background: var(--bg); font-size: 15px; line-height: 1.6; white-space: pre-wrap;
+    }
+    .apl-preview code, .apl-hint code {
+      font-size: 12px; background: var(--card); padding: 1px 5px; border: 1px solid var(--border);
+    }
 
-    .apl-q-kind {
-      display: inline-block; font-size: 11px; letter-spacing: 0.08em;
-      text-transform: uppercase; color: var(--muted); margin-bottom: 8px;
-    }
     .apl-q-prompt { font-size: 18px; line-height: 1.5; margin: 0 0 18px; }
-    .apl-answer {
-      width: 100%; padding: 14px; font-size: 22px; font-variant-numeric: tabular-nums;
-      border: 1px solid var(--border); background: var(--bg); color: var(--text);
-      box-sizing: border-box;
-    }
-    .apl-answer:focus { outline: none; border-color: var(--brand); }
     .apl-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
 
     .field-group label {
@@ -169,9 +170,8 @@
 
   <script>
     window.APPLY = {
-      writtenMinutes: {{ written_minutes }},
-      numericalQuestions: {{ numerical_questions }},
-      secondsPerQuestion: {{ seconds_per_question }},
+      motivationMinutes: {{ motivation_minutes }},
+      estimationMinutes: {{ estimation_minutes }},
       sessionMinutes: {{ session_minutes }},
     };
   </script>

@@ -1,17 +1,17 @@
 """Tests for app.applications — the programme application and its 15-minute OA.
 
-Pinned here: whole-number answer parsing, the paper's fixed mix of question
-kinds, and the clock machinery that runs a sitting — the 5-minute written
-section expiring into the numerical one, per-question timeouts rolling forward
-honestly across a closed tab, and the 15-minute hard stop. All pure functions
-over plain dicts, same approach as test_interview_oa.py — no Firestore
-involved.
+Pinned here: the clock machinery that runs a sitting — the 5-minute
+motivation question expiring into the 10-minute estimation one, and the
+15-minute hard stop, including the case where the estimation clock runs out
+on its own before the session clock would (motivation finished early). Also
+Bootcamp/Analyst/Fundamental/Quant eligibility, the Oxford email and student
+checks, reviewer scoring, interview scheduling and the admin escape hatches
+(redo, delete). All pure functions over plain dicts, same approach as
+test_interview_oa.py — no Firestore involved.
 """
 
 import asyncio
 import datetime as dt
-import random
-from collections import Counter
 
 import pytest
 from fastapi import HTTPException
@@ -80,294 +80,121 @@ def ago(seconds: float) -> dt.datetime:
 
 def make_app(
     *,
-    section="written",
+    section="motivation",
     started_seconds_ago=0.0,
-    question_seconds_ago=0.0,
-    question_ids=None,
-    index=0,
-    answers=None,
-    written_text="",
+    estimation_seconds_ago=0.0,
+    motivation_text="",
+    estimation_text="",
     status=ap.S_OA_ACTIVE,
 ):
     """An application mid-assessment, with both clocks set explicitly."""
-    qids = question_ids or ["e_rolls_to_six", "n_squares", "p_dice_sum7"]
     oa = {
         "started_at": ago(started_seconds_ago),
         "section": section,
-        "written": {"prompt": ap.WRITTEN_PROMPT, "text": written_text},
-        "question_ids": qids,
-        "current_index": index,
-        "answers": list(answers or []),
+        "motivation": {"prompt": ap.MOTIVATION_PROMPT, "text": motivation_text},
+        "estimation": {"prompt": ap.ESTIMATION_PROMPT, "text": estimation_text},
     }
-    if section == "numerical":
-        oa["question_started_at"] = ago(question_seconds_ago)
-        oa["numerical_started_at"] = ago(question_seconds_ago)
+    if section == "estimation":
+        oa["estimation_started_at"] = ago(estimation_seconds_ago)
     return {
         "user_id": "u1", "username": "cand", "programme": mb.M_QUANT_ANALYST,
         "status": status, "oa": oa, "flags": {"paste": 0, "left_page": 0},
     }
 
 
-class TestParseAnswer:
-    def test_plain_integer(self):
-        assert ap.parse_answer("42") == 42
-
-    def test_negative(self):
-        assert ap.parse_answer("-7") == -7
-
-    def test_leading_plus_and_spaces(self):
-        assert ap.parse_answer("  +12 ") == 12
-
-    def test_commas_are_typing_habits(self):
-        assert ap.parse_answer("1,024") == 1024
-
-    def test_decimal_is_not_an_answer(self):
-        # Every answer in the bank is whole, so "3.5" is a different claim
-        # rather than something to round into 3 or 4.
-        assert ap.parse_answer("3.5") is None
-        assert ap.parse_answer("6.0") is None
-
-    def test_fraction_is_not_an_answer(self):
-        assert ap.parse_answer("3/8") is None
-
-    def test_blank_is_none(self):
-        assert ap.parse_answer("") is None
-        assert ap.parse_answer(None) is None
-        assert ap.parse_answer("   ") is None
-
-    def test_words_are_none(self):
-        assert ap.parse_answer("six") is None
-        assert ap.parse_answer("6 rolls") is None
-
-
-class TestQuestionBank:
-    def test_every_answer_is_a_whole_number(self):
-        assert all(isinstance(q["answer"], int) for q in ap.QUESTION_BANK)
-
-    def test_ids_are_unique(self):
-        assert len({q["id"] for q in ap.QUESTION_BANK}) == len(ap.QUESTION_BANK)
-
-    def test_every_question_has_a_recognised_difficulty(self):
-        assert all(q["difficulty"] in ap.DIFFICULTIES for q in ap.QUESTION_BANK)
-
-    def test_every_topic_carries_an_even_four_per_difficulty(self):
-        by_topic_difficulty = Counter((q["kind"], q["difficulty"]) for q in ap.QUESTION_BANK)
-        topics = {q["kind"] for q in ap.QUESTION_BANK}
-        for topic in topics:
-            for difficulty in ap.DIFFICULTIES:
-                assert by_topic_difficulty[(topic, difficulty)] == 4, (topic, difficulty)
-
-    def test_each_programmes_mix_adds_up_to_the_paper(self):
-        for programme, mix in ap.PAPER_MIX.items():
-            assert sum(mix.values()) == ap.NUMERICAL_QUESTIONS, programme
-
-    def test_the_bank_can_fill_every_programmes_slots(self):
-        by_topic = Counter(q["kind"] for q in ap.QUESTION_BANK)
-        for mix in ap.PAPER_MIX.values():
-            for kind, needed in mix.items():
-                assert by_topic[kind] >= needed
-
-    def test_the_two_sections_fill_the_sitting_exactly(self):
-        assert (ap.WRITTEN_SECONDS
-                + ap.NUMERICAL_QUESTIONS * ap.SECONDS_PER_QUESTION) == ap.SESSION_SECONDS
-
-
-class TestEvenSplit:
-    def test_splits_as_equally_as_possible(self):
-        assert ap._even_split(6) == [2, 2, 2]
-        assert ap._even_split(7) == [3, 2, 2]
-        assert ap._even_split(4) == [2, 1, 1]
-        assert ap._even_split(3) == [1, 1, 1]
-
-    def test_always_sums_back_to_n(self):
-        for n in range(0, 30):
-            assert sum(ap._even_split(n)) == n
-
-
-class TestBuildPaper:
-    def test_quant_bootcamp_keeps_the_original_three_topics(self):
-        paper = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(7))
-        assert len(paper) == ap.NUMERICAL_QUESTIONS
-        assert len(set(paper)) == ap.NUMERICAL_QUESTIONS   # no repeats
-        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
-        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_BOOTCAMP])
-        assert "quant concepts" not in kinds
-
-    def test_quant_analyst_includes_quant_concepts(self):
-        paper = ap.build_paper(mb.M_QUANT_ANALYST, random.Random(7))
-        assert len(paper) == ap.NUMERICAL_QUESTIONS
-        assert len(set(paper)) == ap.NUMERICAL_QUESTIONS
-        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
-        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_ANALYST])
-        assert kinds["quant concepts"] == 4
-
-    def test_difficulty_spread_is_the_same_every_time_within_a_programme(self):
-        # The specific questions vary, but how many of each difficulty land
-        # in the paper is deterministic — that's the whole point of the
-        # even split, so a paper never happens to be all-hard by chance.
-        for seed in range(10):
-            paper = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(seed))
-            difficulties = Counter(ap.QUESTION_BY_ID[q]["difficulty"] for q in paper)
-            assert difficulties == Counter({"easy": 8, "medium": 6, "hard": 6})
-
-    def test_different_seeds_draw_different_questions(self):
-        paper_a = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(1))
-        paper_b = ap.build_paper(mb.M_QUANT_BOOTCAMP, random.Random(2))
-        assert paper_a != paper_b
-
-    def test_unknown_programme_falls_back_to_bootcamp(self):
-        paper = ap.build_paper("Some Other Programme", random.Random(7))
-        kinds = Counter(ap.QUESTION_BY_ID[q]["kind"] for q in paper)
-        assert kinds == Counter(ap.PAPER_MIX[mb.M_QUANT_BOOTCAMP])
-
-
-class TestQuantConcepts:
-    def test_every_quant_concepts_answer_is_still_a_whole_number(self):
-        qc = [q for q in ap.QUESTION_BANK if q["kind"] == "quant concepts"]
-        assert len(qc) == 12
-        assert all(isinstance(q["answer"], int) for q in qc)
-
-    def test_multiple_choice_answers_are_a_small_option_number(self):
-        # A handful are genuinely multiple choice — those answers should read
-        # as an option index (1-4), not a computed quantity, so a stray
-        # off-by-one in the bank stands out immediately.
-        mc_ids = {"qc_delta_def", "qc_long_profit", "qc_gamma_def", "qc_putcall", "qc_replication"}
-        for q in ap.QUESTION_BANK:
-            if q["id"] in mc_ids:
-                assert 1 <= q["answer"] <= 4, q["id"]
-
-
-class TestGrading:
-    def test_exact_match_only(self):
-        q = ap.QUESTION_BY_ID["e_rolls_to_six"]      # answer 6
-        assert ap.grade(q, 6) is True
-        assert ap.grade(q, 5) is False
-        assert ap.grade(q, None) is False
-
-
-class TestWrittenSection:
+class TestMotivationSection:
     def test_stays_put_while_the_clock_runs(self):
         application = make_app(started_seconds_ago=60)
         assert ap.resolve(application) is False
-        assert application["oa"]["section"] == "written"
+        assert application["oa"]["section"] == "motivation"
 
-    def test_expires_into_the_numerical_section(self):
-        application = make_app(started_seconds_ago=ap.WRITTEN_SECONDS + 1,
-                               written_text="half an answer")
+    def test_expires_into_the_estimation_section(self):
+        application = make_app(started_seconds_ago=ap.MOTIVATION_SECONDS + 1,
+                               motivation_text="half an answer")
         assert ap.resolve(application) is True
         oa = application["oa"]
-        assert oa["section"] == "numerical"
+        assert oa["section"] == "estimation"
         # Whatever was autosaved is banked, not discarded.
-        assert oa["written"]["text"] == "half an answer"
-        assert oa["written"]["submitted_at"] is not None
-        assert oa["current_index"] == 0
+        assert oa["motivation"]["text"] == "half an answer"
+        assert oa["motivation"]["submitted_at"] is not None
+        assert oa["estimation_started_at"] is not None
 
-    def test_closing_early_opens_the_numerical_section(self):
-        application = make_app(started_seconds_ago=90, written_text="done early")
-        ap._close_written(application["oa"])
+    def test_closing_early_opens_the_estimation_section(self):
+        application = make_app(started_seconds_ago=90, motivation_text="done early")
+        ap._close_motivation(application["oa"])
         oa = application["oa"]
-        assert oa["section"] == "numerical"
-        assert oa["written"]["word_count"] == 2
-        # Finishing the essay early buys no extra time on part two — the first
-        # question simply starts now, with its own 30 seconds.
-        assert round(ap._left(oa["question_started_at"], ap.SECONDS_PER_QUESTION)) == \
-            ap.SECONDS_PER_QUESTION
+        assert oa["section"] == "estimation"
+        assert oa["motivation"]["word_count"] == 2
+        # Finishing the first answer early buys no extra time on the second —
+        # its own clock simply starts now, with the full ten minutes on it.
+        assert round(ap._left(oa["estimation_started_at"], ap.ESTIMATION_SECONDS)) == \
+            ap.ESTIMATION_SECONDS
 
 
-class TestNumericalSection:
-    def test_answer_is_graded_and_advances(self):
-        application = make_app(section="numerical", started_seconds_ago=310,
-                               question_seconds_ago=5)
-        ap._record_answer(application["oa"], raw="6", timed_out=False)
-        oa = application["oa"]
-        assert oa["current_index"] == 1
-        assert oa["answers"][0]["correct"] is True
-        assert oa["answers"][0]["parsed"] == 6
-        assert 4 <= oa["answers"][0]["time_taken_s"] <= 7
-
-    def test_wrong_answer_is_recorded_not_dropped(self):
-        application = make_app(section="numerical", started_seconds_ago=310,
-                               question_seconds_ago=2)
-        ap._record_answer(application["oa"], raw="5", timed_out=False)
-        answer = application["oa"]["answers"][0]
-        assert answer["correct"] is False
-        assert answer["raw"] == "5"
-
-    def test_live_question_is_left_alone(self):
-        application = make_app(section="numerical", started_seconds_ago=310,
-                               question_seconds_ago=10)
+class TestEstimationSection:
+    def test_stays_put_while_the_clock_runs(self):
+        application = make_app(section="estimation", started_seconds_ago=310,
+                               estimation_seconds_ago=60)
         assert ap.resolve(application) is False
-        assert application["oa"]["current_index"] == 0
+        assert application["oa"]["section"] == "estimation"
 
-    def test_grace_buffer_protects_a_submission_at_the_buzzer(self):
-        # Just past zero but inside the grace window: an /answer call already in
-        # flight should still count, so nothing is timed out yet.
-        application = make_app(section="numerical", started_seconds_ago=340,
-                               question_seconds_ago=ap.SECONDS_PER_QUESTION + 1)
+    def test_live_section_is_left_alone(self):
+        application = make_app(section="estimation", started_seconds_ago=310,
+                               estimation_seconds_ago=10)
         assert ap.resolve(application) is False
-        assert application["oa"]["current_index"] == 0
+        assert application["status"] == ap.S_OA_ACTIVE
 
-    def test_expired_question_times_out(self):
+    def test_running_out_finishes_the_whole_sitting_before_the_session_clock_would(self):
+        # Motivation was finished early (used only 60s of its 300), so
+        # estimation opened early too. Its own 10-minute clock can then run
+        # out well before the 15-minute session clock would — proving the
+        # estimation timeout is a real, independently-reachable branch, not
+        # just the session hard stop under another name.
         application = make_app(
-            section="numerical", started_seconds_ago=340,
-            question_seconds_ago=ap.SECONDS_PER_QUESTION + ap.ANSWER_GRACE + 1)
-        assert ap.resolve(application) is True
-        oa = application["oa"]
-        assert oa["current_index"] == 1
-        assert oa["answers"][0]["timed_out"] is True
-        assert oa["answers"][0]["correct"] is False
-        assert oa["answers"][0]["time_taken_s"] == ap.SECONDS_PER_QUESTION
+            section="estimation", started_seconds_ago=700, estimation_seconds_ago=640,
+            estimation_text="got most of the way there")
+        assert ap._left(application["oa"]["started_at"], ap.SESSION_SECONDS) > 0  # session not over
 
-    def test_a_closed_tab_rolls_forward_without_handing_back_time(self):
-        # Away for 70 seconds: that is two whole questions gone, and the third
-        # should be part-used — not waiting with a fresh 30 seconds on it.
-        application = make_app(section="numerical", started_seconds_ago=380,
-                               question_seconds_ago=70)
         assert ap.resolve(application) is True
-        oa = application["oa"]
-        assert oa["current_index"] == 2
-        assert all(a["timed_out"] for a in oa["answers"])
-        left = ap._left(oa["question_started_at"], ap.SECONDS_PER_QUESTION)
-        assert 19 <= left <= 21          # 30 - (70 - 60)
 
-    def test_last_answer_finishes_the_sitting(self):
-        application = make_app(section="numerical", started_seconds_ago=800,
-                               question_seconds_ago=5, index=2,
-                               answers=[{"question_id": "e_rolls_to_six", "raw": "6",
-                                         "parsed": 6, "correct": True, "timed_out": False,
-                                         "time_taken_s": 5.0},
-                                        {"question_id": "n_squares", "raw": "36",
-                                         "parsed": 36, "correct": True, "timed_out": False,
-                                         "time_taken_s": 5.0}])
-        ap._record_answer(application["oa"], raw="6", timed_out=False)
-        ap._finish(application, "completed")
+        oa = application["oa"]
         assert application["status"] == ap.S_SUBMITTED
-        assert application["oa"]["section"] == "done"
-        assert application["oa"]["score"] == {"correct": 3, "total": 3, "pct": 100.0}
+        assert oa["section"] == "done"
+        assert oa["estimation"]["text"] == "got most of the way there"
+        assert oa["finish_reason"] == "completed"
+
+    def test_finish_banks_the_estimation_answer(self):
+        application = make_app(section="estimation", started_seconds_ago=800,
+                               estimation_seconds_ago=30, estimation_text="my reasoning")
+        ap._finish(application, "completed")
+        oa = application["oa"]
+        assert application["status"] == ap.S_SUBMITTED
+        assert oa["section"] == "done"
+        assert oa["estimation"]["text"] == "my reasoning"
+        assert oa["estimation"]["word_count"] == 2
+        assert oa["estimation"]["submitted_at"] is not None
 
 
 class TestSessionDeadline:
     def test_the_fifteen_minutes_is_a_hard_stop(self):
-        application = make_app(section="numerical",
+        application = make_app(section="estimation",
                                started_seconds_ago=ap.SESSION_SECONDS + 1,
-                               question_seconds_ago=5, index=1,
-                               answers=[{"question_id": "e_rolls_to_six", "raw": "6",
-                                         "parsed": 6, "correct": True, "timed_out": False,
-                                         "time_taken_s": 5.0}])
+                               estimation_seconds_ago=5, estimation_text="in progress")
         assert ap.resolve(application) is True
         assert application["status"] == ap.S_SUBMITTED
         assert application["oa"]["finish_reason"] == "session_expired"
-        # Every question is accounted for, answered or not.
-        assert len(application["oa"]["answers"]) == 3
-        assert application["oa"]["score"]["correct"] == 1
+        assert application["oa"]["estimation"]["text"] == "in progress"
 
-    def test_an_expired_sitting_left_in_the_written_section_still_closes(self):
+    def test_an_expired_sitting_left_in_the_motivation_section_still_closes(self):
         application = make_app(started_seconds_ago=ap.SESSION_SECONDS + 30,
-                               written_text="only ever wrote this")
+                               motivation_text="only ever wrote this")
         assert ap.resolve(application) is True
         assert application["status"] == ap.S_SUBMITTED
-        assert application["oa"]["written"]["text"] == "only ever wrote this"
-        assert application["oa"]["score"]["correct"] == 0
+        oa = application["oa"]
+        assert oa["motivation"]["text"] == "only ever wrote this"
+        # Both sections are banked even though estimation was never opened.
+        assert oa["estimation"]["text"] == ""
+        assert oa["estimation"]["submitted_at"] is not None
 
     def test_a_finished_application_is_never_reopened(self):
         application = make_app(section="done", status=ap.S_SUBMITTED)
@@ -385,24 +212,34 @@ class TestEligibility:
     def test_an_account_with_no_membership_set_may_apply(self):
         assert mb.can_apply({}) is True
 
-    def test_quant_analyst_is_the_ceiling(self):
+    def test_analyst_is_the_ceiling_for_both_tracks(self):
         assert mb.can_apply({"membership": mb.M_QUANT_ANALYST}) is False
+        assert mb.can_apply({"membership": mb.M_FUND_ANALYST}) is False
 
-    def test_quant_bootcamp_can_still_apply_on_to_analyst(self):
+    def test_quant_bootcamp_can_still_apply_on_to_quant_analyst(self):
         assert mb.can_apply({"membership": mb.M_QUANT_BOOTCAMP}) is True
         assert mb.apply_programmes_for(mb.M_QUANT_BOOTCAMP) == [mb.M_QUANT_ANALYST]
 
-    def test_fundamental_track_membership_is_a_separate_system(self):
-        assert mb.can_apply({"membership": mb.M_FUND_ANALYST}) is False
-        assert mb.can_apply({"membership": mb.M_FUND_BOOTCAMP}) is False
+    def test_fundamental_bootcamp_can_still_apply_on_to_fundamental_analyst(self):
+        assert mb.can_apply({"membership": mb.M_FUND_BOOTCAMP}) is True
+        assert mb.apply_programmes_for(mb.M_FUND_BOOTCAMP) == [mb.M_FUND_ANALYST]
 
     def test_recruiters_and_hosts_are_on_the_other_side_of_the_table(self):
         assert mb.can_apply({"membership": mb.M_PUBLIC, "role": mb.ROLE_RECRUITER}) is False
         assert mb.can_apply({"membership": mb.M_PUBLIC, "role": mb.ROLE_HOST}) is False
         assert mb.can_apply({"membership": mb.M_PUBLIC, "is_admin": True}) is False
 
-    def test_the_programmes_on_offer_are_the_quant_ones(self):
-        assert mb.APPLY_PROGRAMMES == [mb.M_QUANT_BOOTCAMP, mb.M_QUANT_ANALYST]
+    def test_new_applicants_see_both_tracks_and_the_both_bootcamp_option(self):
+        programmes = mb.apply_programmes_for(mb.M_PUBLIC)
+        assert set(programmes) == {
+            mb.M_FUND_BOOTCAMP, mb.M_QUANT_BOOTCAMP, mb.PROGRAMME_BOTH_BOOTCAMP,
+            mb.M_FUND_ANALYST, mb.M_QUANT_ANALYST,
+        }
+
+    def test_both_bootcamp_is_not_a_real_membership(self):
+        # It's a request for two tracks at once, not a single membership
+        # value — accepting it never auto-grants, an admin sets it by hand.
+        assert mb.PROGRAMME_BOTH_BOOTCAMP not in mb.MEMBERSHIPS
 
 
 class TestOxfordEmail:
@@ -465,10 +302,8 @@ class TestSubmissionEmail:
     def test_resolve_and_notify_sends_once_across_repeated_polls(self, monkeypatch):
         saved, sent = self._patch_io(monkeypatch)
         application = make_app(
-            section="numerical", started_seconds_ago=ap.SESSION_SECONDS + 1,
-            question_seconds_ago=5, index=1,
-            answers=[{"question_id": "e_rolls_to_six", "raw": "6", "parsed": 6,
-                      "correct": True, "timed_out": False, "time_taken_s": 5.0}])
+            section="estimation", started_seconds_ago=ap.SESSION_SECONDS + 1,
+            estimation_seconds_ago=5, estimation_text="in progress")
         application["oxford_email"] = "jo@merton.ox.ac.uk"
 
         assert asyncio.run(ap._resolve_and_notify("u1", application)) is True
@@ -485,10 +320,8 @@ class TestSubmissionEmail:
 
     def test_finish_and_persist_sends_once_even_if_called_twice(self, monkeypatch):
         saved, sent = self._patch_io(monkeypatch)
-        application = make_app(
-            section="numerical", started_seconds_ago=800, question_seconds_ago=5, index=3,
-            answers=[{"question_id": "e_rolls_to_six", "raw": "6", "parsed": 6,
-                      "correct": True, "timed_out": False, "time_taken_s": 5.0}] * 3)
+        application = make_app(section="estimation", started_seconds_ago=800,
+                               estimation_seconds_ago=30, estimation_text="my reasoning")
         application["oxford_email"] = "jo@merton.ox.ac.uk"
 
         asyncio.run(ap._finish_and_persist("u1", application, "completed"))
@@ -501,10 +334,8 @@ class TestSubmissionEmail:
 
     def test_falls_back_to_the_account_email_with_no_oxford_email_on_file(self, monkeypatch):
         saved, sent = self._patch_io(monkeypatch)
-        application = make_app(
-            section="numerical", started_seconds_ago=800, question_seconds_ago=5, index=3,
-            answers=[{"question_id": "e_rolls_to_six", "raw": "6", "parsed": 6,
-                      "correct": True, "timed_out": False, "time_taken_s": 5.0}] * 3)
+        application = make_app(section="estimation", started_seconds_ago=800,
+                               estimation_seconds_ago=30, estimation_text="my reasoning")
         application["email"] = "jo@merton.ox.ac.uk"   # no oxford_email key at all
 
         asyncio.run(ap._finish_and_persist("u1", application, "completed"))
@@ -512,10 +343,8 @@ class TestSubmissionEmail:
 
     def test_no_address_on_file_sends_nothing_and_does_not_raise(self, monkeypatch):
         saved, sent = self._patch_io(monkeypatch)
-        application = make_app(
-            section="numerical", started_seconds_ago=800, question_seconds_ago=5, index=3,
-            answers=[{"question_id": "e_rolls_to_six", "raw": "6", "parsed": 6,
-                      "correct": True, "timed_out": False, "time_taken_s": 5.0}] * 3)
+        application = make_app(section="estimation", started_seconds_ago=800,
+                               estimation_seconds_ago=30, estimation_text="my reasoning")
 
         asyncio.run(ap._finish_and_persist("u1", application, "completed"))
         assert sent == []

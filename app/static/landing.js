@@ -334,7 +334,9 @@
     if (!link && !badge) return;
     try {
       const state = await fetchJSON("/apply/state");
-      const hasApplication = state && state.status && state.status !== "none";
+      // "analyst" means there's nothing to track — their membership chip
+      // elsewhere already says which track, so the badge just stays hidden.
+      const hasApplication = state && state.status && state.status !== "none" && state.status !== "analyst";
 
       if (link) link.style.display = (state && state.eligible && !hasApplication) ? "" : "none";
       if (badge) {

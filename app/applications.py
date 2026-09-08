@@ -1,10 +1,12 @@
 """
-Applications to the Quant Bootcamp and Quant Analyst programmes.
-================================================================
+Applications to the Bootcamp and Analyst programmes (Fundamental or Quant).
+===========================================================================
 
-A general-public or general-member account applies to one of the two quant
-programmes, puts an up-to-date CV on their profile, and then sits a 15-minute
-assessment. An admin reads the results ranked by the numerical score.
+A general-public or general-member account applies to a programme, puts an
+up-to-date CV on their profile, and then sits a 15-minute written assessment.
+Every reviewer (an admin, or any Analyst member) reads and scores the CV and
+the writing by hand — nothing here is auto-graded, so the ranking on the
+review page is the average of those human scores, not a computed one.
 
 The shape of the assessment:
 
@@ -13,39 +15,29 @@ The shape of the assessment:
   reloading, or signing in on another device does not buy more time. There is
   no pause and no second attempt — the point of "one sitting" is that the
   window is the same for everyone regardless of what they do with it.
-* **Five minutes of writing, then ten minutes of numbers.** The written
-  question comes first, on its own 5-minute clock; submitting it early moves
-  straight on to the numerical section rather than banking the leftover time,
-  so nobody is rewarded for rushing the essay. The numerical section is 20
-  questions at 30 seconds each, which is exactly the remaining ten minutes.
-* **Whole-number answers only.** Every numerical question is written so the
-  answer is a plain integer — a count of outcomes, an expected value that
-  comes out whole, a "1 in N" probability, the next term of a sequence, or
-  (for a multiple-choice quant-concepts question) the option number. That
-  makes grading exact instead of tolerance-based, and it means a candidate
-  never loses a mark to rounding or to how they chose to write a fraction.
-* **A random draw, not a fixed set.** Each topic carries an even four easy,
-  four medium and four hard questions (see :data:`QUESTION_BANK`); a paper
-  draws its slots randomly within each difficulty tier and shuffles the
-  result, so the difficulty spread is the same for every candidate but the
-  actual questions differ. The mix of topics itself depends on the
-  programme applied for — see :data:`PAPER_MIX`. Quant Bootcamp keeps the
-  original probability/expectation/pattern set; Quant Analyst trims
-  pattern-finding to make room for basic quant-concept questions.
+* **Two written questions, back to back.** Five minutes on "why do you want
+  to join, and why you", then ten minutes on an estimation question — pick
+  something large and hard to count exactly (the classic example: how many
+  bicycles are in Oxford) and reason your way to a number. Submitting the
+  first one early moves straight on to the second rather than banking the
+  leftover time, so nobody is rewarded for rushing either answer.
+* **Plain text or light LaTeX.** Both boxes accept ordinary prose; anyone who
+  wants to show a formula can type it in LaTeX (``$x^2$`` or ``$$\\sum...$$``)
+  and preview how it will render, on the same page rather than a separate
+  tool. The reviewer's copy renders it the same way.
 * **No AI.** Said plainly on the gate, acknowledged with a tick before the
-  clock starts, and backed by the clocks themselves: 30 seconds is enough to
-  think through one of these questions and not enough to consult a chatbot.
-  Paste into the written box is blocked and leaving the page is counted, both
-  surfaced to the reviewer as signals — never as an automatic disqualification,
-  because a dropped connection looks the same as a second monitor.
+  clock starts, and backed by the clock itself: pasting into either answer is
+  blocked, and leaving the page is counted — both surfaced to the reviewer as
+  signals, never as an automatic disqualification, because a dropped
+  connection looks the same as a second monitor.
 
 Everything is resolved on read, the same approach ``interview_oa`` uses: the
-state endpoint expires the written section, times out an unanswered question,
-and force-finishes a session past its deadline. A candidate who closes the tab
-at the buzzer still gets an honest, un-strandable result.
+state endpoint expires the current section and force-finishes a session past
+its deadline. A candidate who closes the tab at the buzzer still gets an
+honest, un-strandable result.
 
 Results are admin-only. A candidate sees a plain "submitted" screen, never a
-score, so applicants can't compare notes on which questions they nailed.
+score, so applicants can't compare notes on how they were rated.
 """
 from __future__ import annotations
 
@@ -54,7 +46,6 @@ import datetime as dt
 import io
 import logging
 import os
-import random
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -108,11 +99,11 @@ def _valid_oxford_email(addr: Optional[str]) -> bool:
 async def require_reviewer(user: User = Depends(current_user)) -> User:
     """
     Anyone who can read the review page and score applicants: admins, and
-    every Quant Analyst member.
+    every Analyst member (Fundamental or Quant).
 
     Deliberately wider than the accept/shortlist/reject decision itself
     (still :func:`app.admin.require_admin`) — reading CVs and scoring them is
-    exactly what Quant Analyst members are there to do, several of them
+    exactly what Analyst members are there to do, several of them
     independently, so the average means something. Making the actual call is
     still a smaller, named decision.
     """
@@ -120,21 +111,26 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
         return user
     doc = await db_module.db.collection("users").document(str(user.id)).get()
     data = doc.to_dict() if doc.exists else {}
-    if mb.membership_of(data) == mb.M_QUANT_ANALYST:
+    if mb.membership_of(data) in mb.ANALYST_MEMBERSHIPS:
         return user
-    raise HTTPException(403, "The application review page is open to Quant Analyst members and admins")
+    raise HTTPException(403, "The application review page is open to Analyst members and admins")
 
 
 # ── Clocks (seconds) ─────────────────────────────────────────────────────────
-WRITTEN_SECONDS = 5 * 60          # the essay's own limit
-SECONDS_PER_QUESTION = 30         # each numerical question
-NUMERICAL_QUESTIONS = 20          # 20 x 30s = the remaining ten minutes
-SESSION_SECONDS = WRITTEN_SECONDS + NUMERICAL_QUESTIONS * SECONDS_PER_QUESTION  # 900
-ANSWER_GRACE = 3                  # network slack before a late /answer is ignored
+MOTIVATION_SECONDS = 5 * 60         # "why do you want to join, and why you"
+ESTIMATION_SECONDS = 10 * 60        # the estimation question
+SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 900 — 15 minutes total
 
-WRITTEN_PROMPT = (
+MOTIVATION_PROMPT = (
     "Why do you want to join Alpha Fund, and why you? "
     "Tell us what draws you to the programme and what you would bring to it."
+)
+
+ESTIMATION_PROMPT = (
+    "Pick something large and hard to count exactly, and estimate it — for example, "
+    "the number of bicycles in Oxford. Show your reasoning: break the problem into "
+    "smaller pieces you can actually estimate, and combine them. You're welcome to "
+    "use your own example instead."
 )
 
 # Statuses an application moves through, in order.
@@ -164,214 +160,6 @@ INTERVIEW_DECLINED = "declined"
 INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 
 
-# ── Question bank ─────────────────────────────────────────────────────────────
-# Every answer is a whole number, so grading is an exact match. Probability
-# questions are framed as a count of outcomes or as "1 in N" precisely so the
-# answer stays an integer; a multiple-choice question's answer is the option
-# number. "note" is the one-line justification shown only to the reviewer.
-#
-# Each topic carries exactly four "easy", four "medium" and four "hard"
-# questions — the even split is what lets a paper draw randomly within a
-# topic and still land on a predictable difficulty spread every time (see
-# build_paper). The easy tier is deliberately not the easiest imaginable
-# version of each topic: a plain complement or a memorised card count reads
-# as "recall" rather than "reasoning", so easy here still means one genuine
-# step of combinatorics or expectation, just the shortest one in the topic.
-DIFFICULTIES: List[str] = ["easy", "medium", "hard"]
-
-QUESTION_BANK: List[Dict[str, Any]] = [
-    # ── Probability ──────────────────────────────────────────────────────────
-    {"id": "p_heart", "kind": "probability", "difficulty": "easy",
-     "prompt": "You draw one card from a standard 52-card deck. The probability it is a heart is 1 in N. What is N?",
-     "answer": 4, "note": "13/52 = 1/4"},
-    {"id": "p_dice_doubles", "kind": "probability", "difficulty": "easy",
-     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many show the same number on both dice?",
-     "answer": 6, "note": "(1,1)…(6,6)"},
-    {"id": "p_coin3_2h", "kind": "probability", "difficulty": "easy",
-     "prompt": "A fair coin is flipped 3 times. Of the 8 equally likely outcomes, how many have exactly 2 heads?",
-     "answer": 3, "note": "C(3,2) = 3"},
-    {"id": "p_two_coin_atleast1", "kind": "probability", "difficulty": "easy",
-     "prompt": "Two fair coins are flipped. Of the 4 equally likely outcomes, how many have at least one head?",
-     "answer": 3, "note": "4 - 1 all-tails"},
-
-    {"id": "p_dice_sum7", "kind": "probability", "difficulty": "medium",
-     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum of 7?",
-     "answer": 6, "note": "(1,6)…(6,1)"},
-    {"id": "p_two_red", "kind": "probability", "difficulty": "medium",
-     "prompt": "A jar holds 3 red and 2 blue balls. You draw 2 without replacement. Of the 10 possible pairs, how many are both red?",
-     "answer": 3, "note": "C(3,2) = 3"},
-    {"id": "p_two_kings", "kind": "probability", "difficulty": "medium",
-     "prompt": "How many different 2-card hands from a standard deck consist of two kings? (Order does not matter.)",
-     "answer": 6, "note": "C(4,2) = 6"},
-    {"id": "p_coin3_atleast1", "kind": "probability", "difficulty": "medium",
-     "prompt": "A fair coin is flipped 3 times. In how many of the 8 equally likely outcomes is there at least one head?",
-     "answer": 7, "note": "8 - 1 all-tails"},
-
-    {"id": "p_dice_over9", "kind": "probability", "difficulty": "hard",
-     "prompt": "Two fair six-sided dice are rolled. Of the 36 equally likely outcomes, how many give a sum greater than 9?",
-     "answer": 6, "note": "sums 10, 11, 12 → 3 + 2 + 1"},
-    {"id": "p_coin5_3h", "kind": "probability", "difficulty": "hard",
-     "prompt": "A fair coin is flipped 5 times. In how many of the 32 equally likely outcomes are there exactly 3 heads?",
-     "answer": 10, "note": "C(5,3) = 10"},
-    {"id": "p_alphabetical", "kind": "probability", "difficulty": "hard",
-     "prompt": "Four distinct letters are shuffled into a random order. The probability they land in alphabetical order is 1 in N. What is N?",
-     "answer": 24, "note": "4! = 24 orderings, 1 of them sorted"},
-    {"id": "p_coin4_more_heads", "kind": "probability", "difficulty": "hard",
-     "prompt": "A fair coin is flipped 4 times. In how many of the 16 equally likely outcomes do heads outnumber tails?",
-     "answer": 5, "note": "C(4,3) + C(4,4) = 4 + 1"},
-
-    # ── Expectation ──────────────────────────────────────────────────────────
-    {"id": "e_two_dice_sum", "kind": "expectation", "difficulty": "easy",
-     "prompt": "You roll two fair six-sided dice. What is the expected value of their sum?",
-     "answer": 7, "note": "2 x 3.5"},
-    {"id": "e_eight_coins", "kind": "expectation", "difficulty": "easy",
-     "prompt": "You flip 8 fair coins. What is the expected number of heads?",
-     "answer": 4, "note": "np = 8 x 0.5"},
-    {"id": "e_die_thirty", "kind": "expectation", "difficulty": "easy",
-     "prompt": "A fair six-sided die is rolled once. You win £30 if it shows a 6 and nothing otherwise. What are your expected winnings, in pounds?",
-     "answer": 5, "note": "30 x 1/6"},
-    {"id": "e_card_ace_52", "kind": "expectation", "difficulty": "easy",
-     "prompt": "You draw one card from a standard 52-card deck. You win £52 if it's an ace, and nothing otherwise. What are your expected winnings, in pounds?",
-     "answer": 4, "note": "P(ace) = 4/52, 52 x 4/52 = 4"},
-
-    {"id": "e_flips_to_heads", "kind": "expectation", "difficulty": "medium",
-     "prompt": "You flip a fair coin repeatedly until it lands heads. What is the expected number of flips?",
-     "answer": 2, "note": "1/p with p = 1/2"},
-    {"id": "e_rolls_to_six", "kind": "expectation", "difficulty": "medium",
-     "prompt": "You roll a fair six-sided die repeatedly until you see a 6. What is the expected number of rolls?",
-     "answer": 6, "note": "1/p with p = 1/6"},
-    {"id": "e_biased_twelve", "kind": "expectation", "difficulty": "medium",
-     "prompt": "A biased coin lands heads 1/4 of the time. You flip it 12 times. What is the expected number of heads?",
-     "answer": 3, "note": "np = 12 x 1/4"},
-    {"id": "e_lottery", "kind": "expectation", "difficulty": "medium",
-     "prompt": "A lottery ticket pays £1000 with probability 1/500 and nothing otherwise. What is its expected value, in pounds?",
-     "answer": 2, "note": "1000/500"},
-
-    {"id": "e_second_heads", "kind": "expectation", "difficulty": "hard",
-     "prompt": "You flip a fair coin repeatedly until it has landed heads twice. What is the expected number of flips?",
-     "answer": 4, "note": "r/p with r = 2, p = 1/2"},
-    {"id": "e_hypergeometric", "kind": "expectation", "difficulty": "hard",
-     "prompt": "A box holds 10 balls, 4 of them white. You draw 5 without replacement. What is the expected number of white balls drawn?",
-     "answer": 2, "note": "nK/N = 5 x 4/10"},
-    {"id": "e_draws_to_ace", "kind": "expectation", "difficulty": "hard",
-     "prompt": "You draw a card from a full deck, note it, and replace it, repeating until you draw an ace. What is the expected number of draws?",
-     "answer": 13, "note": "1/p with p = 4/52"},
-    {"id": "e_rolls_over_four", "kind": "expectation", "difficulty": "hard",
-     "prompt": "You roll a fair six-sided die repeatedly until it shows a number greater than 4. What is the expected number of rolls?",
-     "answer": 3, "note": "1/p with p = 2/6"},
-
-    # ── Pattern finding ──────────────────────────────────────────────────────
-    {"id": "n_squares", "kind": "pattern", "difficulty": "easy",
-     "prompt": "What comes next?   1, 4, 9, 16, 25, ?",
-     "answer": 36, "note": "square numbers"},
-    {"id": "n_doubling", "kind": "pattern", "difficulty": "easy",
-     "prompt": "What comes next?   3, 6, 12, 24, 48, ?",
-     "answer": 96, "note": "x2 each step"},
-    {"id": "n_triangular", "kind": "pattern", "difficulty": "easy",
-     "prompt": "What comes next?   1, 3, 6, 10, 15, ?",
-     "answer": 21, "note": "triangular numbers"},
-    {"id": "n_powers_of_three", "kind": "pattern", "difficulty": "easy",
-     "prompt": "What comes next?   81, 27, 9, 3, ?",
-     "answer": 1, "note": "divide by 3"},
-
-    {"id": "n_oblong", "kind": "pattern", "difficulty": "medium",
-     "prompt": "What comes next?   2, 6, 12, 20, 30, ?",
-     "answer": 42, "note": "n(n+1)"},
-    {"id": "n_fib", "kind": "pattern", "difficulty": "medium",
-     "prompt": "What comes next?   1, 1, 2, 3, 5, 8, ?",
-     "answer": 13, "note": "Fibonacci"},
-    {"id": "n_primes", "kind": "pattern", "difficulty": "medium",
-     "prompt": "What comes next?   2, 3, 5, 7, 11, 13, ?",
-     "answer": 17, "note": "primes"},
-    {"id": "n_cubes", "kind": "pattern", "difficulty": "medium",
-     "prompt": "What comes next?   1, 8, 27, 64, 125, ?",
-     "answer": 216, "note": "cubes"},
-
-    {"id": "n_factorial", "kind": "pattern", "difficulty": "hard",
-     "prompt": "What comes next?   1, 2, 6, 24, 120, ?",
-     "answer": 720, "note": "n!"},
-    {"id": "n_2n_plus_1", "kind": "pattern", "difficulty": "hard",
-     "prompt": "What comes next?   2, 5, 11, 23, 47, ?",
-     "answer": 95, "note": "double then add 1"},
-    {"id": "n_lazy_caterer", "kind": "pattern", "difficulty": "hard",
-     "prompt": "What comes next?   1, 2, 4, 7, 11, 16, ?",
-     "answer": 22, "note": "gaps grow by 1"},
-    {"id": "n_zigzag", "kind": "pattern", "difficulty": "hard",
-     "prompt": "What comes next?   9, 7, 10, 8, 11, 9, ?",
-     "answer": 12, "note": "-2 then +3, alternating"},
-
-    # ── Quant concepts (Quant Analyst only) ────────────────────────────────────
-    # Basic finance/quant vocabulary and one-step calculations — multiple
-    # choice (answer = option number) or a plain arithmetic answer, nothing
-    # requiring a calculator or prior modelling experience.
-    {"id": "qc_delta_def", "kind": "quant concepts", "difficulty": "easy",
-     "prompt": ("Which of these best describes an option's delta? "
-                "1) Its time decay per day  2) Its price sensitivity to a $1 move in the underlying  "
-                "3) Its sensitivity to volatility  4) Its sensitivity to interest rates "
-                "— enter the option number."),
-     "answer": 2, "note": "delta = d(option price)/d(underlying price)"},
-    {"id": "qc_long_profit", "kind": "quant concepts", "difficulty": "easy",
-     "prompt": ("A trader is 'long' a stock. They profit when the price does what? "
-                "1) Falls  2) Rises  3) Stays perfectly flat  4) Becomes illiquid "
-                "— enter the option number."),
-     "answer": 2, "note": "long = owns the asset, wants it to rise"},
-    {"id": "qc_position_value", "kind": "quant concepts", "difficulty": "easy",
-     "prompt": "A stock is priced at £50. You buy 100 shares. What is your total position value, in pounds?",
-     "answer": 5000, "note": "50 x 100"},
-    {"id": "qc_pct_return", "kind": "quant concepts", "difficulty": "easy",
-     "prompt": "You buy a stock at £20 and sell it at £26. What is your percentage return, to the nearest whole percent?",
-     "answer": 30, "note": "6/20 = 30%"},
-
-    {"id": "qc_delta_calc", "kind": "quant concepts", "difficulty": "medium",
-     "prompt": "A call option has delta 0.5. If the underlying stock rises by £4, what is the approximate change in the option's price, in pounds?",
-     "answer": 2, "note": "0.5 x 4"},
-    {"id": "qc_gamma_def", "kind": "quant concepts", "difficulty": "medium",
-     "prompt": ("Which Greek measures the sensitivity of an option's delta to a $1 move in the underlying? "
-                "1) Vega  2) Gamma  3) Theta  4) Rho — enter the option number."),
-     "answer": 2, "note": "gamma = d(delta)/d(underlying price)"},
-    {"id": "qc_short_pnl", "kind": "quant concepts", "difficulty": "medium",
-     "prompt": "You short-sell a stock at £30 and buy it back at £22. What is your profit per share, in pounds?",
-     "answer": 8, "note": "30 - 22"},
-    {"id": "qc_delta_calc2", "kind": "quant concepts", "difficulty": "medium",
-     "prompt": "A call option has delta 0.4. The stock rises by £5. What is the approximate change in the option's price, in pounds, to the nearest whole pound?",
-     "answer": 2, "note": "0.4 x 5 = 2"},
-
-    {"id": "qc_sharpe", "kind": "quant concepts", "difficulty": "hard",
-     "prompt": ("A portfolio has a Sharpe ratio of 1.5 and an annual standard deviation of 20%. "
-                "If the risk-free rate is 2%, what is the portfolio's expected annual return, "
-                "to the nearest whole percent?"),
-     "answer": 32, "note": "R = Sharpe x sigma + Rf = 1.5x20 + 2"},
-    {"id": "qc_putcall", "kind": "quant concepts", "difficulty": "hard",
-     "prompt": ("Under put-call parity, if the strike and expiry are the same and the underlying pays no "
-                "dividends, what happens to a call's price relative to a put's as the stock price rises, "
-                "all else equal? 1) Call rises, put falls  2) Both rise  3) Both fall  "
-                "4) Call falls, put rises — enter the option number."),
-     "answer": 1, "note": "call gains intrinsic value, put loses it"},
-    {"id": "qc_duration", "kind": "quant concepts", "difficulty": "hard",
-     "prompt": ("A bond has a modified duration of 5. If interest rates rise by 1 percentage point, "
-                "what is the approximate percentage fall in the bond's price, to the nearest whole percent?"),
-     "answer": 5, "note": "-duration x rate change"},
-    {"id": "qc_replication", "kind": "quant concepts", "difficulty": "hard",
-     "prompt": ("A stock and a risk-free bond are combined to exactly replicate an option's payoff. "
-                "This is an example of which concept? 1) Put-call parity  2) Risk-neutral valuation  "
-                "3) Delta hedging / replication  4) Arbitrage-free bootstrapping — enter the option number."),
-     "answer": 3, "note": "replicating portfolio argument"},
-]
-QUESTION_BY_ID = {q["id"]: q for q in QUESTION_BANK}
-
-# How many questions of each topic go into a paper, by programme. Both sum to
-# NUMERICAL_QUESTIONS, so the sitting is the same length either way. Quant
-# Bootcamp keeps the original probability/expectation/pattern mix untouched.
-# Quant Analyst keeps that same probability/expectation weight — the harder
-# math is exactly as present as it is for Bootcamp — and takes the room for
-# quant concepts entirely out of pattern-finding, which is the least
-# job-relevant of the three for that programme.
-PAPER_MIX: Dict[str, Dict[str, int]] = {
-    mb.M_QUANT_BOOTCAMP: {"probability": 7, "expectation": 6, "pattern": 7},
-    mb.M_QUANT_ANALYST: {"probability": 7, "expectation": 6, "pattern": 3, "quant concepts": 4},
-}
-
-
 class StartApplication(BaseModel):
     programme: str
     # Only required when the account's own email isn't already an Oxford
@@ -395,11 +183,6 @@ class RemindRequest(BaseModel):
 class WrittenSubmit(BaseModel):
     text: str = ""
     final: bool = False
-
-
-class AnswerRequest(BaseModel):
-    index: int
-    value: str = ""
 
 
 class FlagEvent(BaseModel):
@@ -456,61 +239,6 @@ def _overdue(since: Any, limit_s: float) -> float:
     return max(0.0, (_now() - started).total_seconds() - limit_s)
 
 
-# ── Answer parsing and grading ────────────────────────────────────────────────
-
-def parse_answer(raw: Optional[str]) -> Optional[int]:
-    """
-    Read a candidate's typed answer as a whole number, or None.
-
-    Every question in the bank has an integer answer and the input box says so,
-    so anything that is not a plain integer is a non-answer rather than
-    something to round: "3.5" on a question whose answer is 3 is a different
-    claim, not a near miss. Commas and a leading + are tolerated because they
-    are typing habits, not answers.
-    """
-    s = (raw or "").strip().replace(",", "").replace(" ", "")
-    if s.startswith("+"):
-        s = s[1:]
-    if not s:
-        return None
-    negative = s.startswith("-")
-    digits = s[1:] if negative else s
-    if not digits.isdigit():
-        return None
-    value = int(digits)
-    return -value if negative else value
-
-
-def grade(question: Dict[str, Any], parsed: Optional[int]) -> bool:
-    return parsed is not None and parsed == question["answer"]
-
-
-def _even_split(n: int, parts: int = len(DIFFICULTIES)) -> List[int]:
-    """n as `parts` whole-number shares, as equal as possible (extras go first)."""
-    base, extra = divmod(n, parts)
-    return [base + (1 if i < extra else 0) for i in range(parts)]
-
-
-def build_paper(programme: str, rng: Optional[random.Random] = None) -> List[str]:
-    """
-    Pick one paper for this programme: each topic's slots are split as evenly
-    as possible across easy/medium/hard, a question is drawn at random within
-    each slice, and the whole thing is shuffled together — so every sitting
-    has a predictable difficulty spread but a different set of questions.
-    """
-    rng = rng or random
-    mix = PAPER_MIX.get(programme, PAPER_MIX[mb.M_QUANT_BOOTCAMP])
-    chosen: List[str] = []
-    for kind, count in mix.items():
-        for difficulty, want in zip(DIFFICULTIES, _even_split(count)):
-            pool = [q["id"] for q in QUESTION_BANK
-                    if q["kind"] == kind and q["difficulty"] == difficulty]
-            rng.shuffle(pool)
-            chosen.extend(pool[:want])
-    rng.shuffle(chosen)
-    return chosen
-
-
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 async def _load(user_id: str) -> Optional[dict]:
@@ -529,115 +257,76 @@ async def _user_data(user_id: str) -> Dict[str, Any]:
 
 # ── The assessment state machine ─────────────────────────────────────────────
 
-def _score(oa: dict) -> Dict[str, Any]:
-    correct = sum(1 for a in oa.get("answers", []) if a["correct"])
-    total = len(oa.get("question_ids", [])) or NUMERICAL_QUESTIONS
-    return {"correct": correct, "total": total,
-            "pct": round(100 * correct / total, 1) if total else 0.0}
+def _close_section(oa: dict, key: str, started: Any, limit_s: float) -> None:
+    """Bank whatever is in a written box — used for both questions."""
+    section = oa.setdefault(key, {})
+    section.setdefault("text", "")
+    section["submitted_at"] = _now()
+    section["seconds_used"] = round(min(limit_s - _left(started, limit_s), limit_s), 1)
+    section["word_count"] = len(section["text"].split())
 
 
-def _record_answer(oa: dict, raw: Optional[str], timed_out: bool) -> None:
-    index = oa["current_index"]
-    qid = oa["question_ids"][index]
-    question = QUESTION_BY_ID[qid]
-    parsed = parse_answer(raw) if raw is not None else None
-    served_at = _as_utc(oa.get("question_started_at"))
+def _close_motivation(oa: dict) -> None:
+    """Bank the motivation answer and open the estimation question."""
+    _close_section(oa, "motivation", oa.get("started_at"), MOTIVATION_SECONDS)
+    oa["section"] = "estimation"
+    oa["estimation_started_at"] = _now()
 
-    if timed_out:
-        used = float(SECONDS_PER_QUESTION)
-        # The next question's clock starts the moment this one ran out, not
-        # whenever the server got round to noticing. Otherwise a candidate who
-        # closes the tab across several questions comes back to find each of
-        # them waiting with a full 30 seconds on it.
-        next_started = (served_at + dt.timedelta(seconds=SECONDS_PER_QUESTION)
-                        if served_at else _now())
-    else:
-        used = SECONDS_PER_QUESTION - _left(served_at, SECONDS_PER_QUESTION)
-        next_started = _now()
 
-    oa["answers"].append({
-        "question_id": qid,
-        "raw": (raw or "")[:40],
-        "parsed": parsed,
-        "correct": grade(question, parsed),
-        "timed_out": timed_out,
-        "time_taken_s": round(min(max(used, 0.0), SECONDS_PER_QUESTION), 1),
-    })
-    oa["current_index"] = index + 1
-    if oa["current_index"] < len(oa["question_ids"]):
-        oa["question_started_at"] = next_started
+def _close_estimation(oa: dict) -> None:
+    _close_section(oa, "estimation", oa.get("estimation_started_at"), ESTIMATION_SECONDS)
 
 
 def _finish(application: dict, reason: str) -> None:
-    """Close the assessment out, filling any unreached questions as timeouts."""
+    """Close the assessment out, banking whichever question was still open."""
     oa = application["oa"]
-    if oa.get("section") == "written":
-        _close_written(oa)
-    while oa["section"] == "numerical" and oa["current_index"] < len(oa["question_ids"]):
-        _record_answer(oa, raw=None, timed_out=True)
+    if oa.get("section") == "motivation":
+        _close_motivation(oa)
+    if oa.get("section") == "estimation":
+        _close_estimation(oa)
     oa["section"] = "done"
-    oa["score"] = _score(oa)
     oa["finished_at"] = _now()
     oa["finish_reason"] = reason
     application["status"] = S_SUBMITTED
     application["submitted_at"] = _now()
 
 
-def _close_written(oa: dict) -> None:
-    """Bank whatever is in the written box and open the numerical section."""
-    written = oa.setdefault("written", {})
-    written.setdefault("text", "")
-    written["submitted_at"] = _now()
-    written["seconds_used"] = round(
-        min(WRITTEN_SECONDS - _left(oa.get("started_at"), WRITTEN_SECONDS), WRITTEN_SECONDS), 1)
-    written["word_count"] = len(written["text"].split())
-    oa["section"] = "numerical"
-    oa["numerical_started_at"] = _now()
-    oa["question_started_at"] = _now()
-
-
 def resolve(application: dict) -> bool:
     """
     Bring a stored application up to date with the wall clock.
 
-    Called on every read. It expires the written section, times out an
-    unanswered question, and force-finishes a session past its 15 minutes —
-    so a candidate who closes the tab at the buzzer still gets an honest
-    result, and one who leaves it open all afternoon does not get an
-    afternoon's worth of thinking time.
+    Called on every read. It expires the motivation question into the
+    estimation one, and force-finishes a session past its 15 minutes — so a
+    candidate who closes the tab at the buzzer still gets an honest result,
+    and one who leaves it open all afternoon does not get an afternoon's
+    worth of thinking time.
 
     Returns True if anything changed and the document needs writing back.
     """
     if application.get("status") != S_OA_ACTIVE:
         return False
     oa = application.get("oa") or {}
-    changed = False
 
     # The hard stop. Nothing below it can extend the sitting.
     if _left(oa.get("started_at"), SESSION_SECONDS) <= 0:
         _finish(application, "session_expired")
         return True
 
-    if oa.get("section") == "written":
-        if _left(oa.get("started_at"), WRITTEN_SECONDS) <= 0:
-            _close_written(oa)
-            changed = True
-        else:
-            return False
+    if oa.get("section") == "motivation":
+        if _left(oa.get("started_at"), MOTIVATION_SECONDS) <= 0:
+            _close_motivation(oa)
+            return True
+        return False
 
-    if oa.get("section") == "numerical":
-        # A question can expire while the tab is closed, and the next read may
-        # land several questions later; roll forward until the clock catches up.
-        while (oa["current_index"] < len(oa["question_ids"])
-               and _left(oa.get("question_started_at"), SECONDS_PER_QUESTION) <= 0
-               and _overdue(oa.get("question_started_at"), SECONDS_PER_QUESTION) >= ANSWER_GRACE):
-            _record_answer(oa, raw=None, timed_out=True)
-            changed = True
-        if oa["current_index"] >= len(oa["question_ids"]):
+    if oa.get("section") == "estimation":
+        # Estimation is the last question — running out on it is the same as
+        # running out on the sitting as a whole.
+        if _left(oa.get("estimation_started_at"), ESTIMATION_SECONDS) <= 0:
             _finish(application, "completed")
             return True
+        return False
 
-    return changed
+    return False
 
 
 async def _send_submission_confirmation(application: dict) -> None:
@@ -693,21 +382,6 @@ async def _finish_and_persist(uid: str, application: dict, reason: str) -> None:
     await _save(uid, application)
 
 
-def _question_view(oa: dict) -> Optional[Dict[str, Any]]:
-    index = oa["current_index"]
-    if index >= len(oa["question_ids"]):
-        return None
-    q = QUESTION_BY_ID[oa["question_ids"][index]]
-    return {
-        "index": index,
-        "total": len(oa["question_ids"]),
-        "kind": q["kind"],
-        "prompt": q["prompt"],
-        "seconds_left": round(_left(oa.get("question_started_at"), SECONDS_PER_QUESTION), 1),
-        "seconds_per_question": SECONDS_PER_QUESTION,
-    }
-
-
 def _oa_view(application: dict) -> Dict[str, Any]:
     oa = application["oa"]
     out: Dict[str, Any] = {
@@ -715,15 +389,20 @@ def _oa_view(application: dict) -> Dict[str, Any]:
         "session_seconds_left": round(_left(oa.get("started_at"), SESSION_SECONDS), 1),
         "session_seconds": SESSION_SECONDS,
     }
-    if oa["section"] == "written":
-        out["written"] = {
-            "prompt": WRITTEN_PROMPT,
-            "text": (oa.get("written") or {}).get("text", ""),
-            "seconds_left": round(_left(oa.get("started_at"), WRITTEN_SECONDS), 1),
-            "seconds_total": WRITTEN_SECONDS,
+    if oa["section"] == "motivation":
+        out["motivation"] = {
+            "prompt": MOTIVATION_PROMPT,
+            "text": (oa.get("motivation") or {}).get("text", ""),
+            "seconds_left": round(_left(oa.get("started_at"), MOTIVATION_SECONDS), 1),
+            "seconds_total": MOTIVATION_SECONDS,
         }
-    elif oa["section"] == "numerical":
-        out["question"] = _question_view(oa)
+    elif oa["section"] == "estimation":
+        out["estimation"] = {
+            "prompt": ESTIMATION_PROMPT,
+            "text": (oa.get("estimation") or {}).get("text", ""),
+            "seconds_left": round(_left(oa.get("estimation_started_at"), ESTIMATION_SECONDS), 1),
+            "seconds_total": ESTIMATION_SECONDS,
+        }
     return out
 
 
@@ -734,9 +413,8 @@ async def apply_page(request: Request):
     return templates.TemplateResponse("apply.html", {
         "request": request,
         "app_name": "AlphaBook",
-        "written_minutes": WRITTEN_SECONDS // 60,
-        "numerical_questions": NUMERICAL_QUESTIONS,
-        "seconds_per_question": SECONDS_PER_QUESTION,
+        "motivation_minutes": MOTIVATION_SECONDS // 60,
+        "estimation_minutes": ESTIMATION_SECONDS // 60,
         "session_minutes": SESSION_SECONDS // 60,
     })
 
@@ -749,7 +427,7 @@ async def state(user: User = Depends(current_user)):
     uid = str(user.id)
     data = await _user_data(uid)
     membership = mb.membership_of(data)
-    is_reviewer = bool(user.is_admin) or membership == mb.M_QUANT_ANALYST
+    is_reviewer = bool(user.is_admin) or membership in mb.ANALYST_MEMBERSHIPS
 
     account_email = data.get("email") or ""
     out: Dict[str, Any] = {
@@ -759,23 +437,23 @@ async def state(user: User = Depends(current_user)):
         "cv_uploaded": bool(data.get("cv_blob_path")),
         "full_name": data.get("full_name") or "",
         "graduation_year": data.get("graduation_year"),
-        "written_prompt": WRITTEN_PROMPT,
+        "motivation_prompt": MOTIVATION_PROMPT,
+        "estimation_prompt": ESTIMATION_PROMPT,
         "account_email": account_email,
         # Whether the choose-programme step needs to ask for an Oxford email:
         # false when the account itself signed up with one.
         "needs_oxford_email": not is_oxford_email(account_email),
-        # Quant Analyst is the ceiling — someone already there has nothing
-        # left to apply for, so the page points them at reviewing instead.
+        # Analyst (either track) is the ceiling — someone already there has
+        # nothing left to apply for, so the page points them at reviewing.
         "is_reviewer": is_reviewer,
         "rules": {
             "session_seconds": SESSION_SECONDS,
-            "written_seconds": WRITTEN_SECONDS,
-            "seconds_per_question": SECONDS_PER_QUESTION,
-            "numerical_questions": NUMERICAL_QUESTIONS,
+            "motivation_seconds": MOTIVATION_SECONDS,
+            "estimation_seconds": ESTIMATION_SECONDS,
         },
     }
 
-    if membership == mb.M_QUANT_ANALYST:
+    if membership in mb.ANALYST_MEMBERSHIPS:
         # Nothing below matters once someone has reached the ceiling — not
         # even an old application record, which the review-page link
         # replaces entirely rather than showing a stale "accepted" screen.
@@ -850,7 +528,7 @@ def _resolve_oxford_email(account_email: str, provided: Optional[str]) -> str:
 @router.post("/start")
 async def start_application(req: StartApplication, user: User = Depends(current_user)):
     """
-    Open an application to one of the quant programmes.
+    Open an application to a Bootcamp or Analyst programme.
 
     Also how a Bootcamp member applies on to Analyst, and how anyone whose
     last application was decided (accepted into Bootcamp, or rejected) opens
@@ -861,7 +539,7 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     if not mb.can_apply({**data, "is_admin": user.is_admin}):
         raise HTTPException(
             403,
-            "Applications are open to general accounts below Quant Analyst. "
+            "Applications are open to general accounts below Analyst. "
             "You are already at the top of the programme, or hold a recruiter "
             "or host role.",
         )
@@ -975,11 +653,9 @@ async def start_oa(user: User = Depends(current_user)):
     application["status"] = S_OA_ACTIVE
     application["oa"] = {
         "started_at": now,
-        "section": "written",
-        "written": {"prompt": WRITTEN_PROMPT, "text": ""},
-        "question_ids": build_paper(application.get("programme", "")),
-        "current_index": 0,
-        "answers": [],
+        "section": "motivation",
+        "motivation": {"prompt": MOTIVATION_PROMPT, "text": ""},
+        "estimation": {"prompt": ESTIMATION_PROMPT, "text": ""},
     }
     await _save(uid, application)
     return {"ok": True, "status": S_OA_ACTIVE}
@@ -1001,10 +677,13 @@ async def oa_state(user: User = Depends(current_user)):
 @router.post("/oa/written")
 async def submit_written(req: WrittenSubmit, user: User = Depends(current_user)):
     """
-    Save the written answer — as a draft while they type, or as final.
+    Save whichever question is currently open — as a draft while they type,
+    or as final. Submitting the motivation question early moves straight on
+    to the estimation one; submitting the estimation question finishes the
+    sitting.
 
     Drafts matter: the 15 minutes run whether the tab is open or not, so a
-    crash three minutes in should not cost the whole essay.
+    crash mid-answer should not cost the whole thing.
     """
     uid = str(user.id)
     application = await _load(uid)
@@ -1017,41 +696,24 @@ async def submit_written(req: WrittenSubmit, user: User = Depends(current_user))
                 "section": (application.get("oa") or {}).get("section")}
 
     oa = application["oa"]
-    if oa["section"] != "written":
+    section = oa["section"]
+    if section not in ("motivation", "estimation"):
+        return {"ok": True, "status": application["status"], "section": section}
+
+    part = oa.setdefault(section, {})
+    part["prompt"] = MOTIVATION_PROMPT if section == "motivation" else ESTIMATION_PROMPT
+    part["text"] = (req.text or "")[:20000]
+
+    if req.final:
+        if section == "motivation":
+            _close_motivation(oa)
+            await _save(uid, application)
+        else:
+            await _finish_and_persist(uid, application, "completed")
         return {"ok": True, "status": application["status"], "section": oa["section"]}
 
-    oa.setdefault("written", {})["prompt"] = WRITTEN_PROMPT
-    oa["written"]["text"] = (req.text or "")[:20000]
-    if req.final:
-        _close_written(oa)
     await _save(uid, application)
     return {"ok": True, "status": application["status"], "section": oa["section"]}
-
-
-@router.post("/oa/answer")
-async def answer(req: AnswerRequest, user: User = Depends(current_user)):
-    uid = str(user.id)
-    application = await _load(uid)
-    if application is None or application.get("status") != S_OA_ACTIVE:
-        raise HTTPException(400, "No assessment in progress")
-
-    if await _resolve_and_notify(uid, application):
-        # Already recorded as a timeout — this stale POST is a no-op rather
-        # than a double answer.
-        return {"ok": True, "status": application["status"]}
-
-    oa = application["oa"]
-    if oa["section"] != "numerical":
-        return {"ok": True, "status": application["status"]}
-    if req.index != oa["current_index"]:
-        return {"ok": True, "status": application["status"]}   # already moved on
-
-    _record_answer(oa, raw=req.value, timed_out=False)
-    if oa["current_index"] >= len(oa["question_ids"]):
-        await _finish_and_persist(uid, application, "completed")
-    else:
-        await _save(uid, application)
-    return {"ok": True, "status": application["status"]}
 
 
 @router.post("/oa/flag")
@@ -1115,16 +777,8 @@ def _admin_interview_view(interview: Optional[Dict[str, Any]]) -> Optional[Dict[
 
 def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
     oa = application.get("oa") or {}
-    written = oa.get("written") or {}
-    answers = [{
-        **a,
-        "prompt": QUESTION_BY_ID[a["question_id"]]["prompt"],
-        "kind": QUESTION_BY_ID[a["question_id"]]["kind"],
-        "answer_key": QUESTION_BY_ID[a["question_id"]]["answer"],
-        "note": QUESTION_BY_ID[a["question_id"]]["note"],
-    } for a in oa.get("answers", []) if a.get("question_id") in QUESTION_BY_ID]
-
-    score = oa.get("score") or {}
+    motivation = oa.get("motivation") or {}
+    estimation = oa.get("estimation") or {}
     return {
         "user_id": uid,
         "username": application.get("username", "?"),
@@ -1139,13 +793,12 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "submitted_at": _as_utc(application.get("submitted_at")),
         "last_reminded_at": _as_utc(application.get("last_reminded_at")),
         "cv_uploaded": bool(application.get("cv_blob_path")),
-        "written_text": written.get("text", ""),
-        "written_words": written.get("word_count") or len((written.get("text") or "").split()),
-        "written_seconds": written.get("seconds_used"),
-        "score": score,
-        "correct": score.get("correct"),
-        "total": score.get("total", NUMERICAL_QUESTIONS),
-        "answers": answers,
+        "motivation_text": motivation.get("text", ""),
+        "motivation_words": motivation.get("word_count") or len((motivation.get("text") or "").split()),
+        "motivation_seconds": motivation.get("seconds_used"),
+        "estimation_text": estimation.get("text", ""),
+        "estimation_words": estimation.get("word_count") or len((estimation.get("text") or "").split()),
+        "estimation_seconds": estimation.get("seconds_used"),
         "flags": application.get("flags") or {},
         "finish_reason": oa.get("finish_reason"),
         "decision_note": application.get("decision_note") or "",
@@ -1161,8 +814,8 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
 
 async def _list_reviewers() -> List[Dict[str, str]]:
     """Everyone who could plausibly be assigned to interview a candidate:
-    admins and Quant Analyst members, provided they have an email on file —
-    without one there's nothing to put in the invite."""
+    admins and Analyst members (Fundamental or Quant), provided they have an
+    email on file — without one there's nothing to put in the invite."""
     docs = await db_module.db.collection("users").get()
     out: List[Dict[str, str]] = []
     for d in docs:
@@ -1170,7 +823,7 @@ async def _list_reviewers() -> List[Dict[str, str]]:
         email = data.get("email") or ""
         if not email:
             continue
-        if data.get("is_admin") or mb.membership_of(data) == mb.M_QUANT_ANALYST:
+        if data.get("is_admin") or mb.membership_of(data) in mb.ANALYST_MEMBERSHIPS:
             out.append({
                 "id": d.id,
                 "name": data.get("full_name") or data.get("username") or d.id,
@@ -1182,30 +835,37 @@ async def _list_reviewers() -> List[Dict[str, str]]:
 
 @router.get("/admin", include_in_schema=False)
 async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
-    """Every applicant, strongest numerical score first."""
+    """Every applicant, strongest reviewer-scored average first."""
     docs = await db_module.db.collection(COLLECTION).get()
     rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=str(reviewer.id)) for d in docs]
 
-    # Ranked by the numerical score, as asked. Applications with no score yet
-    # (still on the CV step, or mid-assessment) sort to the bottom rather than
-    # being read as a zero, since they have not had their turn.
+    # Ranked by the average of the CV and written reviewer scores — there is
+    # no auto-graded component any more, so this average *is* the ranking.
+    # An application nobody has scored yet sorts to the bottom rather than
+    # being read as a zero, since it hasn't had its turn.
+    def _combined(r: Dict[str, Any]) -> Optional[float]:
+        parts = [v for v in (r["review"]["cv_avg"], r["review"]["written_avg"]) if v is not None]
+        return round(sum(parts) / len(parts), 2) if parts else None
+
+    for r in rows:
+        r["combined_score"] = _combined(r)
     rows.sort(key=lambda r: (
-        r["correct"] is None,
-        -(r["correct"] or 0),
+        r["combined_score"] is None,
+        -(r["combined_score"] or 0),
         (r["username"] or "").lower(),
     ))
     for i, r in enumerate(rows, start=1):
-        r["rank"] = i if r["correct"] is not None else None
+        r["rank"] = i if r["combined_score"] is not None else None
 
-    scored = [r for r in rows if r["correct"] is not None]
+    scored = [r for r in rows if r["review"]["count"] > 0]
     return templates.TemplateResponse("applications_admin.html", {
         "request": request,
         "app_name": "AlphaBook",
         "rows": rows,
         "total": len(rows),
         "scored": len(scored),
-        "questions_total": NUMERICAL_QUESTIONS,
-        "written_prompt": WRITTEN_PROMPT,
+        "motivation_prompt": MOTIVATION_PROMPT,
+        "estimation_prompt": ESTIMATION_PROMPT,
         "is_admin": reviewer.is_admin,
         "score_min": SCORE_MIN,
         "score_max": SCORE_MAX,

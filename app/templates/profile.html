@@ -201,13 +201,13 @@
       <div id="roleBox"></div>
     </div>
 
-    <!-- Every Quant Analyst can read and score applications, not just admins —
-         this is the only route there for someone who isn't one. -->
+    <!-- Every Analyst (Fundamental or Quant) can read and score applications,
+         not just admins — this is the only route there for someone who isn't one. -->
     <div id="reviewSection" style="display:none;">
       <hr class="divider">
       <h3 style="margin:0 0 6px;">Application review</h3>
       <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
-        As a Quant Analyst you can read applicants' CVs and written responses and
+        As an Analyst you can read applicants' CVs and written responses and
         score them — your score is averaged with everyone else who reviews the
         same applicant.
       </p>
@@ -613,9 +613,11 @@
           : '<a href="/competitions">Run a competition →</a>'}</p>`;
     }
 
+    const ANALYST_MEMBERSHIPS = ['Fundamental Analyst', 'Quant Analyst'];
+
     function renderReviewAccess(d) {
       document.getElementById('reviewSection').style.display =
-        d.membership === 'Quant Analyst' ? '' : 'none';
+        ANALYST_MEMBERSHIPS.includes(d.membership) ? '' : 'none';
     }
 
     /* Applying to a quant programme: open to general public and general Alpha
@@ -641,6 +643,9 @@
         state = await res.json();
       } catch { section.style.display = 'none'; return; }
 
+      // An Analyst has nothing to apply for — the review-access section
+      // above is where they belong instead, so this one stays hidden.
+      if (state.status === 'analyst') { section.style.display = 'none'; return; }
       // Nothing to show someone who is neither eligible nor already applying.
       if (!state.eligible && state.status === 'none') { section.style.display = 'none'; return; }
       section.style.display = '';
@@ -648,9 +653,9 @@
       if (state.status === 'none') {
         box.innerHTML = `
           <p style="color:var(--muted);font-size:13px;margin:0 0 14px;">
-            Applications are open for the <strong>Quant Bootcamp</strong> and
-            <strong>Quant Analyst</strong> programmes. You will upload your
-            up-to-date CV and sit a 15-minute assessment, whenever suits you.
+            Applications are open for the Bootcamp and Analyst programmes,
+            Fundamental or Quant. You will upload your up-to-date CV and sit a
+            15-minute written assessment, whenever suits you.
           </p>
           <a class="btn primary" href="/apply">Apply to a programme</a>`;
         return;
