@@ -142,6 +142,29 @@
     .apl-done-tick {
       font-size: 34px; color: var(--green); line-height: 1; margin-bottom: 10px;
     }
+
+    /* ── Interview availability grid ─────────────────────────────────────── */
+    .aval-wrap { overflow-x: auto; margin: 4px 0 10px; }
+    .aval-grid { border-collapse: collapse; font-size: 12px; }
+    .aval-grid th, .aval-grid td { border: 1px solid var(--border); padding: 0; text-align: center; }
+    .aval-grid th {
+      padding: 6px 4px; font-weight: 600; color: var(--muted);
+      white-space: nowrap; background: var(--bg);
+    }
+    .aval-daylabel {
+      padding: 6px 10px !important; text-align: left !important;
+      white-space: nowrap; font-weight: 600; background: var(--bg);
+    }
+    .aval-cell-btn {
+      width: 34px; height: 28px; border: none; background: var(--card);
+      cursor: pointer; display: block; padding: 0;
+    }
+    .aval-cell-btn:hover { background: var(--brand-wash); }
+    .aval-cell-btn.is-selected { background: var(--green); }
+    .aval-locked-note {
+      font-size: 13px; color: var(--muted); border: 1px dashed var(--border);
+      padding: 12px 14px; margin: 4px 0 10px;
+    }
   </style>
 </head>
 
@@ -175,6 +198,7 @@
       sessionMinutes: {{ session_minutes }},
     };
   </script>
+  <script src="/static/availability.js"></script>
   <script src="/static/apply.js?v=1"></script>
 </body>
 

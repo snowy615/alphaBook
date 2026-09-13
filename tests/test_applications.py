@@ -1074,3 +1074,257 @@ class TestReapplyAfterDecision:
         with pytest.raises(HTTPException):
             asyncio.run(ap.start_application(
                 ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+
+
+class TestAvailabilityHelpers:
+    """The pure grid math: anchoring to the shortlist moment, and filtering
+    a submitted slot list down to whole-hour UTC slots inside the window."""
+
+    def test_anchor_is_midnight_utc_on_the_shortlist_date(self):
+        application = {"shortlisted_at": dt.datetime(2026, 9, 16, 14, 37, tzinfo=dt.timezone.utc)}
+        anchor = ap._availability_anchor(application)
+        assert anchor == dt.datetime(2026, 9, 16, 0, 0, tzinfo=dt.timezone.utc)
+
+    def test_anchor_falls_back_to_now_when_never_shortlisted(self):
+        anchor = ap._availability_anchor({})
+        assert anchor.hour == 0 and anchor.minute == 0
+
+    def _anchor(self):
+        return dt.datetime(2026, 9, 16, 0, 0, tzinfo=dt.timezone.utc)
+
+    def test_keeps_a_well_formed_whole_hour_slot(self):
+        anchor = self._anchor()
+        out = ap._valid_availability_slots(["2026-09-16T09:00:00+00:00"], anchor)
+        assert out == ["2026-09-16T09:00:00+00:00"]
+
+    def test_drops_a_slot_not_on_the_hour(self):
+        anchor = self._anchor()
+        out = ap._valid_availability_slots(["2026-09-16T09:30:00+00:00"], anchor)
+        assert out == []
+
+    def test_drops_a_slot_outside_the_start_end_hour_window(self):
+        anchor = self._anchor()
+        out = ap._valid_availability_slots(
+            ["2026-09-16T07:00:00+00:00", "2026-09-16T21:00:00+00:00"], anchor)
+        assert out == []
+
+    def test_drops_a_slot_before_the_anchor_or_past_the_two_week_window(self):
+        anchor = self._anchor()
+        too_early = "2026-09-15T09:00:00+00:00"
+        too_late = (anchor + dt.timedelta(days=ap.AVAILABILITY_DAYS)).isoformat()
+        in_window = "2026-09-20T09:00:00+00:00"
+        out = ap._valid_availability_slots([too_early, too_late, in_window], anchor)
+        assert out == [in_window]
+
+    def test_deduplicates_and_sorts(self):
+        anchor = self._anchor()
+        out = ap._valid_availability_slots(
+            ["2026-09-17T10:00:00+00:00", "2026-09-16T09:00:00+00:00", "2026-09-16T09:00:00+00:00"],
+            anchor)
+        assert out == ["2026-09-16T09:00:00+00:00", "2026-09-17T10:00:00+00:00"]
+
+    def test_ignores_garbage_values_instead_of_raising(self):
+        anchor = self._anchor()
+        out = ap._valid_availability_slots(["not-a-date", "", "2026-09-16T09:00:00+00:00"], anchor)
+        assert out == ["2026-09-16T09:00:00+00:00"]
+
+    def test_caps_at_the_maximum_slot_count(self, monkeypatch):
+        anchor = self._anchor()
+        monkeypatch.setattr(ap, "AVAILABILITY_MAX_SLOTS", 3)
+        raw = [(anchor + dt.timedelta(days=d, hours=9)).isoformat() for d in range(10)]
+        out = ap._valid_availability_slots(raw, anchor)
+        assert len(out) == 3
+
+
+class TestAvailabilityEndpoint:
+    """POST /apply/availability — only while shortlisted, locked once the
+    interview itself is confirmed."""
+
+    def _patch(self, monkeypatch, application):
+        store = {"u1": application}
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        return store
+
+    def _shortlisted(self, **extra):
+        base = {
+            "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED,
+            "shortlisted_at": dt.datetime(2026, 9, 16, 12, 0, tzinfo=dt.timezone.utc),
+        }
+        base.update(extra)
+        return base
+
+    def test_requires_an_application_on_file(self, monkeypatch):
+        self._patch(monkeypatch, None)
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), user))
+
+    def test_requires_shortlisted_status(self, monkeypatch):
+        self._patch(monkeypatch, self._shortlisted(status=ap.S_SUBMITTED))
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), user))
+
+    def test_locked_once_the_interview_is_confirmed(self, monkeypatch):
+        application = self._shortlisted(interview={"status": ap.INTERVIEW_CONFIRMED})
+        self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), user))
+
+    def test_still_editable_while_an_interview_is_only_proposed(self, monkeypatch):
+        application = self._shortlisted(interview={"status": ap.INTERVIEW_PROPOSED})
+        store = self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+        slots = ["2026-09-16T09:00:00+00:00"]
+
+        result = asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=slots), user))
+
+        assert result["availability"] == slots
+        assert store["u1"]["availability"] == slots
+
+    def test_saves_and_filters_out_of_window_slots(self, monkeypatch):
+        application = self._shortlisted()
+        store = self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+        slots = ["2026-09-16T09:00:00+00:00", "2026-09-16T09:30:00+00:00", "not-a-date"]
+
+        result = asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=slots), user))
+
+        assert result["availability"] == ["2026-09-16T09:00:00+00:00"]
+        assert "availability_updated_at" in store["u1"]
+
+
+class TestAvailabilityInState:
+    """/apply/state surfaces the anchor and the candidate's own picks once
+    shortlisted, and locks them out once the interview is confirmed."""
+
+    def _patch(self, monkeypatch, application):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {"u1": {"username": "jo", "membership": mb.M_PUBLIC}}
+        fake_db.collections[ap.COLLECTION] = {"u1": application}
+
+        async def fake_load(uid):
+            return fake_db.collections[ap.COLLECTION].get(uid)
+
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def test_shortlisted_state_carries_anchor_and_availability(self, monkeypatch):
+        shortlisted_at = dt.datetime(2026, 9, 16, 12, 0, tzinfo=dt.timezone.utc)
+        application = {
+            "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_ANALYST,
+            "shortlisted_at": shortlisted_at, "availability": ["2026-09-16T09:00:00+00:00"],
+        }
+        self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["shortlisted_at"] == shortlisted_at
+        assert result["availability"] == ["2026-09-16T09:00:00+00:00"]
+        assert result["availability_locked"] is False
+
+    def test_locked_once_confirmed(self, monkeypatch):
+        application = {
+            "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_ANALYST,
+            "shortlisted_at": dt.datetime.now(dt.timezone.utc),
+            "interview": {"status": ap.INTERVIEW_CONFIRMED},
+        }
+        self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert result["availability_locked"] is True
+
+    def test_not_carried_for_other_statuses(self, monkeypatch):
+        application = {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST}
+        self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+
+        result = asyncio.run(ap.state(user))
+
+        assert "availability" not in result
+        assert "shortlisted_at" not in result
+
+
+class TestExportApplications:
+    """GET /apply/admin/export.xlsx — the same ranked rows as the admin page,
+    flattened into one spreadsheet."""
+
+    def _patch(self, monkeypatch, applications):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = applications
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def _application(self, **extra):
+        base = {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "applicant_category": mb.M_PUBLIC, "programme": mb.M_QUANT_ANALYST,
+            "status": ap.S_SHORTLISTED,
+            "shortlisted_at": dt.datetime(2026, 9, 16, 12, 0, tzinfo=dt.timezone.utc),
+            "availability": ["2026-09-16T09:00:00+00:00"],
+            "oa": {
+                "motivation": {"text": "Because quant finance.", "word_count": 3, "seconds_used": 120},
+                "estimation": {"text": "Roughly a million.", "word_count": 3, "seconds_used": 300},
+            },
+            "reviews": {"r1": {"reviewer_name": "Priya", "cv_score": 8, "written_score": 7, "note": "Strong"}},
+        }
+        base.update(extra)
+        return base
+
+    def test_export_produces_a_workbook_with_one_row_per_applicant(self, monkeypatch):
+        from openpyxl import load_workbook
+        self._patch(monkeypatch, {"u1": self._application()})
+        reviewer = User(id="admin1", username="root", is_admin=True)
+
+        response = asyncio.run(ap.export_applications(reviewer))
+        wb = load_workbook(_read_streaming(response))
+
+        ws = wb.active
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        assert "Motivation text" in headers
+        assert "Availability submitted" in headers
+        assert ws.max_row == 2   # header + one applicant
+
+        row = {headers[i]: c.value for i, c in enumerate(next(ws.iter_rows(min_row=2, max_row=2)))}
+        assert row["Username"] == "jo"
+        assert row["Motivation text"] == "Because quant finance."
+        assert row["CV avg"] == 8
+        assert "16 Sep 2026" in row["Availability submitted"]
+
+    def test_export_handles_an_applicant_with_no_availability(self, monkeypatch):
+        from openpyxl import load_workbook
+        self._patch(monkeypatch, {"u1": self._application(availability=[], reviews={})})
+        reviewer = User(id="admin1", username="root", is_admin=True)
+
+        response = asyncio.run(ap.export_applications(reviewer))
+        wb = load_workbook(_read_streaming(response))
+
+        ws = wb.active
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        row = {headers[i]: c.value for i, c in enumerate(next(ws.iter_rows(min_row=2, max_row=2)))}
+        assert row["Availability submitted"] == "None submitted"
+
+
+def _read_streaming(response):
+    """Drain a StreamingResponse's async body iterator into a seekable buffer."""
+    async def _drain():
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk)
+        return b"".join(chunks)
+    import io as _io
+    return _io.BytesIO(asyncio.run(_drain()))

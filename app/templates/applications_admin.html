@@ -10,6 +10,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/contrib/auto-render.min.js"></script>
   <script src="/static/theme.js"></script>
+  <script src="/static/availability.js"></script>
   <style>
     .apa-summary { margin-bottom: 28px; }
     .apa-rank {
@@ -145,6 +146,34 @@
     .apa-danger-btn:hover { background: rgba(255,107,107,0.1); }
 
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
+
+    /* ── Interview availability grid (admin side) ────────────────────────── */
+    .aval-wrap { overflow-x: auto; margin: 4px 0 12px; }
+    .aval-grid { border-collapse: collapse; font-size: 12px; }
+    .aval-grid th, .aval-grid td { border: 1px solid var(--border); padding: 0; text-align: center; }
+    .aval-grid th {
+      padding: 6px 4px; font-weight: 600; color: var(--muted);
+      white-space: nowrap; background: var(--bg);
+    }
+    .aval-daylabel {
+      padding: 6px 10px !important; text-align: left !important;
+      white-space: nowrap; font-weight: 600; background: var(--bg);
+    }
+    .aval-cell-btn {
+      width: 34px; height: 28px; border: none; background: var(--card);
+      cursor: pointer; display: block; padding: 0;
+    }
+    .aval-cell-btn:hover { background: var(--brand-wash); }
+    .aval-cell-btn.is-candidate-free { background: rgba(53, 201, 139, 0.35); }
+    .aval-cell-btn.is-picked { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .aval-legend {
+      display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px;
+      color: var(--muted); margin: 0 0 8px;
+    }
+    .aval-legend-swatch {
+      display: inline-block; width: 12px; height: 12px; margin-right: 5px;
+      vertical-align: -1px; border: 1px solid var(--border);
+    }
   </style>
 </head>
 
@@ -178,6 +207,7 @@
       <div class="head">
         <h3>Applicants</h3>
         <span class="msp-muted">{{ scored }} of {{ total }} scored by a reviewer · ranked by average score</span>
+        <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         <table class="msp-table">
@@ -391,6 +421,22 @@
           </div>
           {% endif %}
 
+          <p class="apa-h" style="margin-top:16px;">Candidate availability</p>
+          {% if r.availability %}
+          <div class="aval-legend">
+            <span><span class="aval-legend-swatch" style="background:rgba(53,201,139,0.35);"></span>They're free</span>
+            <span><span class="aval-legend-swatch" style="border-color:var(--brand);outline:2px solid var(--brand);outline-offset:-2px;"></span>Selected below</span>
+          </div>
+          <div id="availAdminGrid-{{ r.user_id }}"></div>
+          <script type="application/json" id="avail-data-{{ r.user_id }}"
+                  data-anchor="{{ r.shortlisted_at.isoformat() if r.shortlisted_at else '' }}">{{ r.availability | tojson }}</script>
+          <p class="msp-muted" style="font-size:12.5px;margin:0 0 14px;">
+            Click a highlighted hour to fill in the time below — times shown are your local time.
+          </p>
+          {% else %}
+          <p class="msp-muted" style="margin:0 0 14px;">They haven't submitted their availability yet.</p>
+          {% endif %}
+
           {% if reviewers %}
           <form class="apa-score-form" style="margin-top:12px;" onsubmit="return scheduleInterview(event, '{{ r.user_id }}')">
             <div class="apa-score-field">
@@ -477,6 +523,52 @@
         } catch { /* a malformed formula just shows as typed */ }
       }
     });
+
+    // Renders each shortlisted applicant's availability grid and wires a
+    // click on any highlighted hour to fill in the schedule form's date/time
+    // field below it — the analyst still picks the interviewer and hits
+    // Propose, this just saves retyping the time by hand.
+    document.querySelectorAll('[id^="avail-data-"]').forEach((el) => {
+      const userId = el.id.slice("avail-data-".length);
+      let slots = [];
+      try { slots = JSON.parse(el.textContent || "[]"); } catch { /* leave empty */ }
+      renderAdminAvailability(userId, el.dataset.anchor || "", slots);
+    });
+
+    function renderAdminAvailability(userId, anchorIso, slots) {
+      const container = document.getElementById("availAdminGrid-" + userId);
+      if (!container || !window.AlphaAvailability) return;
+      const freeTs = new Set(slots.map((iso) => new Date(iso).getTime()));
+      const days = window.AlphaAvailability.buildDays(anchorIso);
+
+      let html = '<div class="aval-wrap"><table class="aval-grid"><thead><tr><th class="aval-daylabel">Day</th>';
+      days[0].slots.forEach((s) => { html += `<th>${s.label}</th>`; });
+      html += "</tr></thead><tbody>";
+      days.forEach((day) => {
+        html += `<tr><td class="aval-daylabel">${day.label}</td>`;
+        day.slots.forEach((slot) => {
+          const free = freeTs.has(slot.ts) ? " is-candidate-free" : "";
+          html += `<td><button type="button" class="aval-cell-btn${free}" data-ts="${slot.ts}"
+                      title="${day.label}, ${slot.label}"></button></td>`;
+        });
+        html += "</tr>";
+      });
+      html += "</tbody></table></div>";
+      container.innerHTML = html;
+
+      container.querySelectorAll(".aval-cell-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          container.querySelectorAll(".is-picked").forEach((b) => b.classList.remove("is-picked"));
+          btn.classList.add("is-picked");
+          const whenEl = document.getElementById("when-" + userId);
+          if (!whenEl) return;
+          // datetime-local wants a bare local wall-clock string, no timezone.
+          const d = new Date(Number(btn.dataset.ts));
+          const pad = (n) => String(n).padStart(2, "0");
+          whenEl.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        });
+      });
+    }
 
     function flash(text, bad) {
       const box = document.getElementById("msg");

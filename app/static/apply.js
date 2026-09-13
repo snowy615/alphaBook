@@ -551,10 +551,67 @@
     });
   }
 
+  // ── Interview availability (candidate side) ───────────────────────────────
+  // A shortlisted candidate clicks every hour, over a fixed two-week window,
+  // when they could do a 30-minute interview. An analyst picks one of those
+  // slots on the admin page to actually schedule it — see availability.js
+  // for how both sides compute the same grid.
+  let availabilitySelected = null;   // Set of epoch-ms, live while this screen is up
+  let availabilitySaveTimer = null;
+
+  function renderAvailabilityGrid(anchorIso, selectedSet) {
+    const days = window.AlphaAvailability.buildDays(anchorIso);
+    let html = '<div class="aval-wrap"><table class="aval-grid"><thead><tr><th class="aval-daylabel">Day</th>';
+    days[0].slots.forEach((s) => { html += `<th>${esc(s.label)}</th>`; });
+    html += "</tr></thead><tbody>";
+    days.forEach((day) => {
+      html += `<tr><td class="aval-daylabel">${esc(day.label)}</td>`;
+      day.slots.forEach((slot) => {
+        const sel = selectedSet.has(slot.ts) ? " is-selected" : "";
+        html += `<td><button type="button" class="aval-cell-btn${sel}" data-ts="${slot.ts}"
+                    title="${esc(day.label)}, ${esc(slot.label)}" aria-label="${esc(day.label)}, ${esc(slot.label)}"></button></td>`;
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table></div>";
+    return html;
+  }
+
+  function wireAvailabilityGrid(container, selectedSet) {
+    container.querySelectorAll(".aval-cell-btn").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const ts = Number(btn.dataset.ts);
+        if (selectedSet.has(ts)) selectedSet.delete(ts); else selectedSet.add(ts);
+        btn.classList.toggle("is-selected");
+        saveAvailability(selectedSet);
+      });
+    });
+  }
+
+  function saveAvailability(selectedSet) {
+    const note = $("#availSavedNote");
+    if (note) note.textContent = "Saving…";
+    clearTimeout(availabilitySaveTimer);
+    availabilitySaveTimer = setTimeout(async () => {
+      const slots = Array.from(selectedSet).sort((a, b) => a - b).map((ts) => new Date(ts).toISOString());
+      try {
+        await api("/apply/availability", { slots });
+        const n = $("#availSavedNote");
+        if (n) n.textContent = "Saved.";
+      } catch (err) {
+        flash(err.message, true);
+        const n = $("#availSavedNote");
+        if (n) n.textContent = "Couldn't save — try again.";
+      }
+    }, 500);
+  }
+
   function renderDone(state) {
     stopTicking();
     const decided = state.status === "accepted" || state.status === "rejected";
     const shortlisted = state.status === "shortlisted";
+    const availabilityLocked = !!state.availability_locked;
+    const showAvailability = shortlisted && !availabilityLocked;
 
     let body;
     if (state.status === "accepted") {
@@ -569,6 +626,21 @@
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> has been
              <strong style="color:var(--brand);">shortlisted for interview</strong>.</p>
              ${renderInterviewBlock(state.interview)}`;
+      if (showAvailability) {
+        availabilitySelected = new Set((state.availability || []).map((iso) => new Date(iso).getTime()));
+        body += `
+          <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px;">
+            <p class="apl-hint" style="margin:0 0 10px;font-size:13px;">
+              <strong style="color:var(--text);">Your availability</strong> — click every hour
+              over the next two weeks when you could do a 30-minute interview. An analyst will
+              pick one of these and confirm it with you.
+            </p>
+            <div id="availGrid">${renderAvailabilityGrid(state.shortlisted_at, availabilitySelected)}</div>
+            <p class="apl-hint" id="availSavedNote">Times shown are your local time. Saved automatically.</p>
+          </div>`;
+      } else if (state.interview && state.interview.status === "confirmed") {
+        body += `<p class="aval-locked-note">Your interview time is confirmed, so availability is locked.</p>`;
+      }
     } else {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
            assessment has been submitted. The committee reads your CV, your written answer
@@ -594,6 +666,9 @@
 
     if (shortlisted && state.interview && state.interview.status === "proposed") {
       wireInterviewActions();
+    }
+    if (showAvailability) {
+      wireAvailabilityGrid($("#availGrid"), availabilitySelected);
     }
     if (canApplyAgain) {
       $("#applyAgainBtn").addEventListener("click", () => {

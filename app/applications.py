@@ -53,6 +53,8 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
 from app import db as db_module
@@ -159,6 +161,17 @@ INTERVIEW_CONFIRMED = "confirmed"
 INTERVIEW_DECLINED = "declined"
 INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 
+# The availability grid a shortlisted candidate fills in: a fixed two-week
+# window in whole UTC hours, anchored to the moment they were shortlisted so
+# every viewer (the candidate, and every analyst looking at the admin page)
+# computes exactly the same set of slots regardless of when each of them
+# happens to load the page. 08:00-21:00 UTC covers a normal working day
+# across the timezones Alpha Fund members are actually in.
+AVAILABILITY_DAYS = 14
+AVAILABILITY_START_HOUR = 8    # UTC, inclusive
+AVAILABILITY_END_HOUR = 20     # UTC, inclusive — last slot runs 20:00-21:00
+AVAILABILITY_MAX_SLOTS = 300   # generous ceiling against a malformed payload
+
 
 class StartApplication(BaseModel):
     programme: str
@@ -204,6 +217,10 @@ class InterviewDecline(BaseModel):
     note: Optional[str] = None
 
 
+class AvailabilitySubmit(BaseModel):
+    slots: List[str] = []
+
+
 # ── Time helpers ──────────────────────────────────────────────────────────────
 
 def _now() -> dt.datetime:
@@ -237,6 +254,65 @@ def _overdue(since: Any, limit_s: float) -> float:
     if started is None:
         return 0.0
     return max(0.0, (_now() - started).total_seconds() - limit_s)
+
+
+def _availability_anchor(application: dict) -> dt.datetime:
+    """
+    Midnight UTC on the day an application was shortlisted — the fixed start
+    of its availability window. Anchoring to the shortlist moment (rather
+    than "today") means the candidate's grid and every analyst's grid line up
+    on the exact same slots no matter which day each of them opens the page.
+    """
+    anchor = _as_utc(application.get("shortlisted_at")) or _now()
+    return anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _parse_slot(value: str) -> Optional[dt.datetime]:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return _as_utc(parsed)
+
+
+def _valid_availability_slots(raw: List[str], anchor: dt.datetime) -> List[str]:
+    """
+    Keep only whole-hour UTC slots inside the fixed availability window,
+    deduplicated and sorted. Silently drops anything malformed or
+    out-of-window rather than rejecting the whole submission — the grid on
+    the frontend only ever generates well-formed slots, so this is a backstop
+    against a stale or tampered client, not the primary validation.
+    """
+    window_end = anchor + dt.timedelta(days=AVAILABILITY_DAYS)
+    seen = set()
+    out: List[str] = []
+    for value in raw:
+        slot = _parse_slot(value)
+        if slot is None:
+            continue
+        if slot.minute or slot.second or slot.microsecond:
+            continue
+        if not (AVAILABILITY_START_HOUR <= slot.hour <= AVAILABILITY_END_HOUR):
+            continue
+        if not (anchor <= slot < window_end):
+            continue
+        key = slot.isoformat()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(key)
+        if len(out) >= AVAILABILITY_MAX_SLOTS:
+            break
+    out.sort()
+    return out
+
+
+def _fmt_slot(value: Any) -> str:
+    slot = _as_utc(value)
+    if slot is None:
+        return str(value)
+    end = slot + dt.timedelta(hours=1)
+    return f"{slot.strftime('%a %d %b %Y, %H:%M')}–{end.strftime('%H:%M')} UTC"
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -479,8 +555,16 @@ async def state(user: User = Depends(current_user)):
         # Lets the pipeline view show whether a decided application passed
         # through the interview stage or was decided straight from submitted.
         out["was_shortlisted"] = bool(application.get("shortlisted_at"))
-        if application.get("interview"):
-            out["interview"] = _interview_view(application["interview"])
+        interview = application.get("interview")
+        if interview:
+            out["interview"] = _interview_view(interview)
+        if application["status"] == S_SHORTLISTED:
+            # The availability grid anchors on the shortlist moment so the
+            # candidate's picker and every analyst's copy of it line up on
+            # the same slots — see _availability_anchor.
+            out["shortlisted_at"] = application.get("shortlisted_at")
+            out["availability"] = application.get("availability") or []
+            out["availability_locked"] = bool(interview and interview.get("status") == INTERVIEW_CONFIRMED)
         if application["status"] in DECIDED:
             # A decided application doesn't disappear — the candidate keeps
             # seeing the outcome — but if they're still eligible (accepted
@@ -736,6 +820,34 @@ async def flag(req: FlagEvent, user: User = Depends(current_user)):
     return {"ok": True}
 
 
+@router.post("/availability")
+async def submit_availability(req: AvailabilitySubmit, user: User = Depends(current_user)):
+    """
+    Save which hours a shortlisted candidate is free for an interview.
+
+    Whole-hour clicks on a two-week grid, not free text — an analyst picks
+    one of these slots to actually schedule the interview, so the shape has
+    to match exactly what the admin page renders. Locked once the interview
+    itself is confirmed, since changing availability after a time is fixed
+    has nothing left to do.
+    """
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None:
+        raise HTTPException(404, "No application on file")
+    if application.get("status") != S_SHORTLISTED:
+        raise HTTPException(400, "Availability can only be set once you've been shortlisted for interview")
+    interview = application.get("interview")
+    if interview and interview.get("status") == INTERVIEW_CONFIRMED:
+        raise HTTPException(400, "Your interview is already confirmed — there's nothing left to set")
+
+    anchor = _availability_anchor(application)
+    application["availability"] = _valid_availability_slots(req.slots, anchor)
+    application["availability_updated_at"] = _now()
+    await _save(uid, application)
+    return {"ok": True, "availability": application["availability"]}
+
+
 # ── Admin / reviewer ─────────────────────────────────────────────────────────
 
 def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
@@ -792,6 +904,8 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "created_at": _as_utc(application.get("created_at")),
         "submitted_at": _as_utc(application.get("submitted_at")),
         "last_reminded_at": _as_utc(application.get("last_reminded_at")),
+        "decided_at": _as_utc(application.get("decided_at")),
+        "decided_by": application.get("decided_by") or "",
         "cv_uploaded": bool(application.get("cv_blob_path")),
         "motivation_text": motivation.get("text", ""),
         "motivation_words": motivation.get("word_count") or len((motivation.get("text") or "").split()),
@@ -804,6 +918,9 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "decision_note": application.get("decision_note") or "",
         "review": _review_summary(application, viewer_id),
         "interview": _admin_interview_view(application.get("interview")),
+        "shortlisted_at": _as_utc(application.get("shortlisted_at")),
+        "availability": application.get("availability") or [],
+        "availability_updated_at": _as_utc(application.get("availability_updated_at")),
         "previous_application": (
             {**application["previous_application"],
              "decided_at": _as_utc(application["previous_application"].get("decided_at"))}
@@ -833,11 +950,11 @@ async def _list_reviewers() -> List[Dict[str, str]]:
     return out
 
 
-@router.get("/admin", include_in_schema=False)
-async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
-    """Every applicant, strongest reviewer-scored average first."""
+async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
+    """Every applicant, strongest reviewer-scored average first — shared by
+    the admin page and the Excel export so the two never disagree."""
     docs = await db_module.db.collection(COLLECTION).get()
-    rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=str(reviewer.id)) for d in docs]
+    rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=viewer_id) for d in docs]
 
     # Ranked by the average of the CV and written reviewer scores — there is
     # no auto-graded component any more, so this average *is* the ranking.
@@ -856,7 +973,12 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
     ))
     for i, r in enumerate(rows, start=1):
         r["rank"] = i if r["combined_score"] is not None else None
+    return rows
 
+
+@router.get("/admin", include_in_schema=False)
+async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
+    rows = await _ranked_rows(str(reviewer.id))
     scored = [r for r in rows if r["review"]["count"] > 0]
     return templates.TemplateResponse("applications_admin.html", {
         "request": request,
@@ -873,6 +995,80 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
     })
+
+
+@router.get("/admin/export.xlsx", include_in_schema=False)
+async def export_applications(reviewer: User = Depends(require_reviewer)):
+    """
+    Every applicant as one spreadsheet row: contact details, the combined
+    and per-category reviewer scores, both written answers, every reviewer's
+    individual note, interview status, and the availability they submitted.
+    Open to the same audience as the admin page itself — anyone who can read
+    this on screen can already see everything that ends up in the file.
+    """
+    rows = await _ranked_rows(str(reviewer.id))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Applicants"
+    headers = [
+        "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
+        "Programme", "Status", "Combined score", "CV avg", "Written avg",
+        "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
+        "Shortlisted at", "Decided at", "Decided by", "Decision note",
+        "CV on file", "Motivation minutes", "Motivation text",
+        "Estimation minutes", "Estimation text", "Paste flags", "Left-page flags",
+        "Interview status", "Interview when", "Interviewer", "Interview message",
+        "Availability submitted",
+    ]
+    ws.append(headers)
+
+    def _dt(value: Any) -> str:
+        v = _as_utc(value)
+        return v.strftime("%Y-%m-%d %H:%M UTC") if v else ""
+
+    for r in rows:
+        reviewer_notes = "; ".join(
+            f"{e['reviewer_name']}: CV {e.get('cv_score', '—')}, written {e.get('written_score', '—')}"
+            + (f' ("{e["note"]}")' if e.get("note") else "")
+            for e in r["review"]["entries"]
+        )
+        interview = r.get("interview") or {}
+        availability = "; ".join(_fmt_slot(v) for v in r.get("availability") or [])
+        ws.append([
+            r["rank"] or "", r["username"], r["full_name"], r["email"], r["oxford_email"],
+            r["applicant_category"], r["programme"], r["status"],
+            r["combined_score"] if r["combined_score"] is not None else "",
+            r["review"]["cv_avg"] if r["review"]["cv_avg"] is not None else "",
+            r["review"]["written_avg"] if r["review"]["written_avg"] is not None else "",
+            r["review"]["count"], reviewer_notes,
+            _dt(r["created_at"]), _dt(r["submitted_at"]), _dt(r["shortlisted_at"]),
+            _dt(r["decided_at"]), r["decided_by"], r["decision_note"],
+            "Yes" if r["cv_uploaded"] else "No",
+            round(r["motivation_seconds"] / 60, 1) if r["motivation_seconds"] else "",
+            r["motivation_text"],
+            round(r["estimation_seconds"] / 60, 1) if r["estimation_seconds"] else "",
+            r["estimation_text"],
+            r["flags"].get("paste", 0), r["flags"].get("left_page", 0),
+            interview.get("status") or "", _dt(interview.get("when")),
+            interview.get("interviewer_name") or "", interview.get("message") or "",
+            availability or "None submitted",
+        ])
+
+    widths = [6, 14, 18, 24, 24, 16, 16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
+              10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
+    for i, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"alpha_fund_applicants_{_now().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/admin/{user_id}/cv", include_in_schema=False)
@@ -1282,7 +1478,7 @@ async def decide(user_id: str, payload: Decision, admin: User = Depends(require_
 _OA_PRODUCED_FIELDS = (
     "oa", "flags", "reviews", "submitted_at", "confirmation_sent_at",
     "shortlisted_at", "shortlisted_by", "decided_at", "decided_by", "decision_note",
-    "interview",
+    "interview", "availability", "availability_updated_at",
 )
 
 
