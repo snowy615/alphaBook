@@ -84,6 +84,16 @@ APPLY_PROGRAMMES: List[str] = [
 ]
 APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER, M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP}
 
+# The Fundamental side isn't taking candidates yet — kept in APPLY_PROGRAMMES
+# (not removed) so the apply page can show it as coming next term rather
+# than hiding it outright. "Both" rides along since it's half-Fundamental.
+# Toggle this set, not the page, once Fundamental applications open.
+DISABLED_PROGRAMMES = {M_FUND_BOOTCAMP, PROGRAMME_BOTH_BOOTCAMP, M_FUND_ANALYST}
+
+
+def is_programme_open(programme: str) -> bool:
+    return programme not in DISABLED_PROGRAMMES
+
 # ── Clubs ─────────────────────────────────────────────────────────────────────
 CLUB_ALPHA_FUND = "Alpha Fund"
 CLUBS: List[str] = [CLUB_ALPHA_FUND]

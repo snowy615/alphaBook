@@ -1,13 +1,15 @@
-"""Tests for app.applications — the programme application and its 15-minute OA.
+"""Tests for app.applications — the programme application and its OA.
 
-Pinned here: the clock machinery that runs a sitting — the 5-minute
-motivation question expiring into the 10-minute estimation one, and the
-15-minute hard stop, including the case where the estimation clock runs out
-on its own before the session clock would (motivation finished early). Also
-Bootcamp/Analyst/Fundamental/Quant eligibility, the Oxford email and student
-checks, reviewer scoring, interview scheduling and the admin escape hatches
-(redo, delete). All pure functions over plain dicts, same approach as
-test_interview_oa.py — no Firestore involved.
+Pinned here: the clock machinery that runs a sitting — the motivation
+question (MOTIVATION_SECONDS) expiring into the estimation one
+(ESTIMATION_SECONDS), and the overall session hard stop (SESSION_SECONDS),
+including the case where the estimation clock runs out on its own before the
+session clock would (motivation finished early). Also Bootcamp/Analyst/
+Fundamental/Quant eligibility (including which programmes are currently
+disabled), the Oxford email and student checks, reviewer scoring, interview
+scheduling and the admin escape hatches (redo, delete). All pure functions
+over plain dicts, same approach as test_interview_oa.py — no Firestore
+involved.
 """
 
 import asyncio
@@ -145,11 +147,11 @@ class TestEstimationSection:
         assert application["status"] == ap.S_OA_ACTIVE
 
     def test_running_out_finishes_the_whole_sitting_before_the_session_clock_would(self):
-        # Motivation was finished early (used only 60s of its 300), so
-        # estimation opened early too. Its own 10-minute clock can then run
-        # out well before the 15-minute session clock would — proving the
-        # estimation timeout is a real, independently-reachable branch, not
-        # just the session hard stop under another name.
+        # Motivation was finished early (used only 60s of its allotment), so
+        # estimation opened early too. Its own clock can then run out well
+        # before the overall session clock would — proving the estimation
+        # timeout is a real, independently-reachable branch, not just the
+        # session hard stop under another name.
         application = make_app(
             section="estimation", started_seconds_ago=700, estimation_seconds_ago=640,
             estimation_text="got most of the way there")
@@ -176,7 +178,7 @@ class TestEstimationSection:
 
 
 class TestSessionDeadline:
-    def test_the_fifteen_minutes_is_a_hard_stop(self):
+    def test_the_session_length_is_a_hard_stop(self):
         application = make_app(section="estimation",
                                started_seconds_ago=ap.SESSION_SECONDS + 1,
                                estimation_seconds_ago=5, estimation_text="in progress")
@@ -585,6 +587,50 @@ class TestOxfordStudentConfirmation:
         assert store["u1"]["applicant_category"] == mb.M_MEMBER
 
 
+class TestDisabledProgrammeRejection:
+    """The Fundamental side (and the combined "Both" option) is listed as a
+    choice but not actually open yet — /apply/start has to refuse it even
+    though apply_programmes_for() still includes it, so a form submitted
+    around the disabled UI (or a stale page) can't sneak one through."""
+
+    def _patch(self, monkeypatch, user_data):
+        store: dict = {}
+
+        async def fake_user_data(uid):
+            return user_data
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        monkeypatch.setattr(ap, "_user_data", fake_user_data)
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        return store
+
+    def test_fundamental_bootcamp_is_refused(self, monkeypatch):
+        self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_FUND_BOOTCAMP), user))
+
+    def test_both_bootcamp_is_refused(self, monkeypatch):
+        self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
+        user = User(id="u1", username="jo")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.start_application(
+                ap.StartApplication(programme=mb.PROGRAMME_BOTH_BOOTCAMP), user))
+
+    def test_quant_bootcamp_still_works(self, monkeypatch):
+        store = self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP), user))
+        assert result["ok"] is True
+        assert store["u1"]["programme"] == mb.M_QUANT_BOOTCAMP
+
+
 class TestNewApplicationAlwaysStartsAtCv:
     """
     Regression coverage for a real bug: a brand-new application used to jump
@@ -843,6 +889,10 @@ class TestInterviewScheduling:
         assert stored["message"] == "Looking forward to it"
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        # The candidate gets a calendar invite (and the interviewer's email
+        # address, in the body) as soon as a time is proposed, not just once
+        # they confirm — so they can hold the slot while they decide.
+        assert sent[0]["has_ics"] is True
         assert result["interview"]["status"] == ap.INTERVIEW_PROPOSED
 
     def _proposed_application(self):
@@ -959,6 +1009,7 @@ class TestStateEndpoint:
 
         assert result["status"] == "none"
         assert result["programmes"] == mb.APPLY_PROGRAMMES
+        assert set(result["disabled_programmes"]) == mb.DISABLED_PROGRAMMES
 
     def test_bootcamp_member_only_sees_analyst_as_a_choice(self, monkeypatch):
         self._patch(monkeypatch, users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP}})

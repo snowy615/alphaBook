@@ -77,7 +77,7 @@
   let pollTimer = null;
   let tickTimer = null;
   let drawnKey = "";          // what the DOM currently shows
-  let sessionLeft = 0;        // local mirror of the 15-minute clock
+  let sessionLeft = 0;        // local mirror of the session clock
   let sectionLeft = 0;        // local mirror of the motivation / estimation clock
   let autoFiredKey = "";      // guards against firing the same auto-submit twice
   let busy = false;
@@ -154,12 +154,17 @@
 
   function renderChoose(state) {
     cvScreen = null;   // a fresh application starts the CV step with a clean decision
-    const options = (state.programmes || []).map((p) => `
-      <label class="apl-choice" data-programme="${esc(p)}">
-        <input type="radio" name="programme" value="${esc(p)}">
+    const disabled = new Set(state.disabled_programmes || []);
+    const options = (state.programmes || []).map((p) => {
+      const isDisabled = disabled.has(p);
+      return `
+      <label class="apl-choice${isDisabled ? " is-disabled" : ""}" data-programme="${esc(p)}">
+        <input type="radio" name="programme" value="${esc(p)}" ${isDisabled ? "disabled" : ""}>
         <strong>${esc(p)}</strong>
         <span class="apl-blurb">${esc(PROGRAMME_BLURB[p] || "")}</span>
-      </label>`).join("");
+        ${isDisabled ? '<span class="apl-soon">Not available right now — will become available next term.</span>' : ""}
+      </label>`;
+    }).join("");
 
     const isGeneralPublic = state.membership === GENERAL_PUBLIC;
     const categoryBanner = `
@@ -211,6 +216,7 @@
     }
 
     $("#app").querySelectorAll(".apl-choice").forEach((el) => {
+      if (el.classList.contains("is-disabled")) return;
       el.addEventListener("click", () => {
         pickedProgramme = el.dataset.programme;
         $("#app").querySelectorAll(".apl-choice").forEach((o) => o.classList.remove("is-picked"));
@@ -408,10 +414,10 @@
       </p>
 
       <ul class="apl-rules">
-        <li><strong>${Math.round((r.session_seconds || 900) / 60)} minutes in total</strong>, in one sitting. One attempt, two questions.</li>
-        <li><strong>Part one — ${Math.round((r.motivation_seconds || 300) / 60)} minutes.</strong>
+        <li><strong>${Math.round((r.session_seconds || CFG.sessionMinutes * 60) / 60)} minutes in total</strong>, in one sitting. One attempt, two questions.</li>
+        <li><strong>Part one — ${Math.round((r.motivation_seconds || CFG.motivationMinutes * 60) / 60)} minutes.</strong>
             Why do you want to join Alpha Fund, and why you?</li>
-        <li><strong>Part two — ${Math.round((r.estimation_seconds || 600) / 60)} minutes.</strong>
+        <li><strong>Part two — ${Math.round((r.estimation_seconds || CFG.estimationMinutes * 60) / 60)} minutes.</strong>
             Pick something large and hard to count exactly — the number of bicycles in
             Oxford, say — and estimate it. Show your reasoning, or use your own example.</li>
         <li>Both questions take plain text, and LaTeX if you want to show a formula —

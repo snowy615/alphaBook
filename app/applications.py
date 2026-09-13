@@ -3,24 +3,30 @@ Applications to the Bootcamp and Analyst programmes (Fundamental or Quant).
 ===========================================================================
 
 A general-public or general-member account applies to a programme, puts an
-up-to-date CV on their profile, and then sits a 15-minute written assessment.
-Every reviewer (an admin, or any Analyst member) reads and scores the CV and
-the writing by hand — nothing here is auto-graded, so the ranking on the
-review page is the average of those human scores, not a computed one.
+up-to-date CV on their profile, and then sits a written assessment. Every
+reviewer (an admin, or any Analyst member) reads and scores the CV and the
+writing by hand — nothing here is auto-graded, so the ranking on the review
+page is the average of those human scores, not a computed one.
+
+Only the Quant track is currently taking applicants — the Fundamental side
+(and the combined "Both" Bootcamp option) is shown on the apply page as
+coming next term rather than removed outright; see
+:data:`app.membership.DISABLED_PROGRAMMES`.
 
 The shape of the assessment:
 
-* **One sitting, 15 minutes, on the server's clock.** ``started_at`` is
-  stamped once and the deadline is derived from it, so closing the tab,
-  reloading, or signing in on another device does not buy more time. There is
-  no pause and no second attempt — the point of "one sitting" is that the
-  window is the same for everyone regardless of what they do with it.
-* **Two written questions, back to back.** Five minutes on "why do you want
-  to join, and why you", then ten minutes on an estimation question — pick
-  something large and hard to count exactly (the classic example: how many
-  bicycles are in Oxford) and reason your way to a number. Submitting the
-  first one early moves straight on to the second rather than banking the
-  leftover time, so nobody is rewarded for rushing either answer.
+* **One sitting, on the server's clock.** ``started_at`` is stamped once and
+  the deadline is derived from it, so closing the tab, reloading, or signing
+  in on another device does not buy more time. There is no pause and no
+  second attempt — the point of "one sitting" is that the window is the same
+  for everyone regardless of what they do with it.
+* **Two written questions, back to back.** ``MOTIVATION_SECONDS`` on "why do
+  you want to join, and why you", then ``ESTIMATION_SECONDS`` on an
+  estimation question — pick something large and hard to count exactly (the
+  classic example: how many bicycles are in Oxford) and reason your way to a
+  number. Submitting the first one early moves straight on to the second
+  rather than banking the leftover time, so nobody is rewarded for rushing
+  either answer.
 * **Plain text or light LaTeX.** Both boxes accept ordinary prose; anyone who
   wants to show a formula can type it in LaTeX (``$x^2$`` or ``$$\\sum...$$``)
   and preview how it will render, on the same page rather than a separate
@@ -33,8 +39,8 @@ The shape of the assessment:
 
 Everything is resolved on read, the same approach ``interview_oa`` uses: the
 state endpoint expires the current section and force-finishes a session past
-its deadline. A candidate who closes the tab at the buzzer still gets an
-honest, un-strandable result.
+its deadline (``SESSION_SECONDS``). A candidate who closes the tab at the
+buzzer still gets an honest, un-strandable result.
 
 Results are admin-only. A candidate sees a plain "submitted" screen, never a
 score, so applicants can't compare notes on how they were rated.
@@ -119,9 +125,9 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
 
 
 # ── Clocks (seconds) ─────────────────────────────────────────────────────────
-MOTIVATION_SECONDS = 5 * 60         # "why do you want to join, and why you"
+MOTIVATION_SECONDS = 8 * 60         # "why do you want to join, and why you"
 ESTIMATION_SECONDS = 10 * 60        # the estimation question
-SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 900 — 15 minutes total
+SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 1080 — 18 minutes total
 
 MOTIVATION_PROMPT = (
     "Why do you want to join Alpha Fund, and why you? "
@@ -372,7 +378,7 @@ def resolve(application: dict) -> bool:
     Bring a stored application up to date with the wall clock.
 
     Called on every read. It expires the motivation question into the
-    estimation one, and force-finishes a session past its 15 minutes — so a
+    estimation one, and force-finishes a session past SESSION_SECONDS — so a
     candidate who closes the tab at the buzzer still gets an honest result,
     and one who leaves it open all afternoon does not get an afternoon's
     worth of thinking time.
@@ -510,6 +516,9 @@ async def state(user: User = Depends(current_user)):
         "eligible": mb.can_apply({**data, "is_admin": user.is_admin}),
         "membership": membership,
         "programmes": mb.apply_programmes_for(membership),
+        # Shown on the choose-programme step as "not available right now —
+        # will become available next term" rather than removed outright.
+        "disabled_programmes": sorted(mb.DISABLED_PROGRAMMES),
         "cv_uploaded": bool(data.get("cv_blob_path")),
         "full_name": data.get("full_name") or "",
         "graduation_year": data.get("graduation_year"),
@@ -631,6 +640,12 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     allowed_programmes = mb.apply_programmes_for(membership)
     if req.programme not in allowed_programmes:
         raise HTTPException(400, f"Choose one of: {', '.join(allowed_programmes)}")
+    if not mb.is_programme_open(req.programme):
+        raise HTTPException(
+            400,
+            f"{req.programme} isn't taking applications right now — it will become "
+            "available next term.",
+        )
 
     # General public applicants aren't Alpha Fund members yet, so nothing else
     # on the account vouches for them being current Oxford students — ask
@@ -766,7 +781,7 @@ async def submit_written(req: WrittenSubmit, user: User = Depends(current_user))
     to the estimation one; submitting the estimation question finishes the
     sitting.
 
-    Drafts matter: the 15 minutes run whether the tab is open or not, so a
+    Drafts matter: the clock runs whether the tab is open or not, so a
     crash mid-answer should not cost the whole thing.
     """
     uid = str(user.id)
@@ -1186,9 +1201,9 @@ _REMINDER_COPY: Dict[str, Dict[str, str]] = {
     },
     S_OA_READY: {
         "subject": "Alpha Fund — your assessment is ready when you are",
-        "body": ("<p>Your CV is in for <strong>{programme}</strong>, and your 15-minute "
+        "body": ("<p>Your CV is in for <strong>{programme}</strong>, and your {minutes}-minute "
                  "assessment is ready. There's no deadline on starting it, but once you do "
-                 "it runs straight through in one sitting, so pick a quiet 15 minutes.</p>"),
+                 "it runs straight through in one sitting, so pick a quiet {minutes} minutes.</p>"),
         "cta": "Start the assessment",
     },
 }
@@ -1216,7 +1231,7 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
 
     name = application.get("full_name") or application.get("username") or "there"
     programme = application.get("programme") or "the programme"
-    body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme)
+    body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme, minutes=SESSION_SECONDS // 60)
     if payload.note:
         body += f'<p style="color:#555;">A note from the committee: {payload.note.strip()[:400]}</p>'
 
@@ -1282,6 +1297,31 @@ def _fmt_when(when: dt.datetime) -> str:
     return when.astimezone(dt.timezone.utc).strftime("%a %d %b %Y, %H:%M") + " UTC"
 
 
+def _build_interview_ics(application: dict, interview: dict) -> bytes:
+    """The one calendar invite both the proposal and the confirmation emails
+    attach — built fresh each time so a re-proposed time (a different slot
+    overwriting a pending one) produces its own invite rather than reusing a
+    stale one, and SEQUENCE:0 is fine either way since each carries a UID
+    derived from the actual start time."""
+    candidate_name = application.get("full_name") or application.get("username") or "Candidate"
+    interviewer_name = interview.get("interviewer_name") or "Interviewer"
+    interviewer_email = interview.get("interviewer_email") or ""
+    candidate_to = application.get("oxford_email") or application.get("email") or ""
+    programme = application.get("programme") or "the programme"
+    when = interview["when"]
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=dt.timezone.utc)
+    end = when + dt.timedelta(minutes=INTERVIEW_MINUTES)
+    return mailer.build_ics_invite(
+        uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
+        summary=f"Alpha Fund interview — {candidate_name}",
+        description=f"{programme} interview with {interviewer_name}.",
+        start=when, end=end,
+        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.SMTP_FROM,
+        attendee_name=candidate_name, attendee_email=candidate_to,
+    )
+
+
 async def _send_interview_proposal_email(application: dict, interview: dict) -> None:
     to = application.get("oxford_email") or application.get("email")
     if not to:
@@ -1299,6 +1339,7 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
         f"<strong>Interviewer:</strong> {interview['interviewer_name']} "
         f"(<a href=\"mailto:{interview['interviewer_email']}\">{interview['interviewer_email']}</a>)</p>"
         f"{note_block}"
+        f"<p>A calendar invite for this slot is attached, so you can hold it while you decide.</p>"
         f"<p>Sign in and open your application to confirm this time. If it doesn't work, "
         f"you can say so there too, and {interview['interviewer_name']} will be in touch "
         f"directly to find another.</p>"
@@ -1307,6 +1348,7 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
         to=to, subject=f"Alpha Fund — interview proposed: {_fmt_when(interview['when'])}",
         title="Interview time proposed", body_html=body,
         cta_label="Review and confirm", cta_url=f"{BASE_URL}/apply",
+        ics=_build_interview_ics(application, interview),
     )
 
 
@@ -1319,18 +1361,7 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
     interviewer_email = interview.get("interviewer_email") or ""
     programme = application.get("programme") or "the programme"
     when = interview["when"]
-    if when.tzinfo is None:
-        when = when.replace(tzinfo=dt.timezone.utc)
-    end = when + dt.timedelta(minutes=INTERVIEW_MINUTES)
-
-    ics = mailer.build_ics_invite(
-        uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
-        summary=f"Alpha Fund interview — {candidate_name}",
-        description=f"{programme} interview with {interviewer_name}.",
-        start=when, end=end,
-        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.SMTP_FROM,
-        attendee_name=candidate_name, attendee_email=candidate_to or "",
-    )
+    ics = _build_interview_ics(application, interview)
 
     if candidate_to:
         await mailer.send_email(
