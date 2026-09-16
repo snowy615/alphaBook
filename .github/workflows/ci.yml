@@ -13,6 +13,12 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The whole suite runs in a few seconds locally — this job has been
+    # silently hanging for hours (once even the full 6h default) on most
+    # pushes, almost certainly from a flaky network wait during dependency
+    # install, and burning Actions minutes the whole time. Capping it here
+    # means a future hang costs minutes, not hours, no matter the cause.
+    timeout-minutes: 10
 
     strategy:
       matrix:
@@ -26,6 +32,10 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
 
       - name: Install dependencies
         run: |

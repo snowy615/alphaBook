@@ -7,6 +7,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Every real run has completed in ~4 minutes; capped generously so a
+    # hung Cloud Build or Firebase deploy can't silently run up minutes the
+    # way the CI job's dependency install has been doing (see ci.yml).
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
