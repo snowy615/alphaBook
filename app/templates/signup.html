@@ -49,7 +49,7 @@
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
       import {
-        getAuth, createUserWithEmailAndPassword, sendEmailVerification,
+        getAuth, createUserWithEmailAndPassword,
         GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
 
@@ -111,10 +111,10 @@
               const userCredential = await createUserWithEmailAndPassword(auth, email, password);
               const user = userCredential.user;
 
-              // A verification email — sent by Firebase itself, not this
-              // server — before the sync so a slow backend never delays it.
-              sendEmailVerification(user).catch((err) => console.warn("verification email failed", err));
-
+              // The verification email itself is sent server-side, from
+              // /auth/firebase below, once the account actually exists —
+              // branded like every other AlphaBook email rather than
+              // Firebase's generic default template.
               await syncBackend(user, username);
 
               info.textContent = "Account created — check your inbox to verify " + email + ". Taking you in…";

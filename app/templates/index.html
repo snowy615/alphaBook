@@ -22,6 +22,8 @@
       </div>
     </div>
     <div class="actions">
+      <a href="/apply" id="applyLink" class="btn primary">Apply to Alpha Fund</a>
+      <a href="/apply" id="applyBadge" class="ident-chip ident-role" style="display:none;" title="Your active application"></a>
       <a href="/competitions" class="btn ghost">Competitions</a>
       <a href="/leaderboard" class="btn ghost">Leaderboard</a>
       <a href="/about" class="btn ghost">About</a>
@@ -31,8 +33,6 @@
       </div>
       <div id="userBox" class="hidden">
         <a href="/admin" id="adminLink" class="btn ghost" style="display:none;">Admin</a>
-        <a href="/apply" id="applyBadge" class="ident-chip ident-role" style="display:none;" title="Your active application"></a>
-        <a href="/apply" id="applyLink" class="btn ghost" style="display:none;">Apply</a>
         <a href="/profile" class="btn ghost">Profile</a>
         <span id="userName">user</span>
         <form method="post" action="/logout" style="display:inline">
@@ -122,7 +122,10 @@
     </section>
   </div>
 
-  <div class="footer"></div>
+  <div class="footer">
+    AlphaBook is run by <a href="https://www.oxfordalphafund.com/" target="_blank" rel="noopener">Oxford Alpha Fund ↗</a>
+    &middot; <a href="/apply">Apply to Alpha Fund</a>
+  </div>
 
   <script>
     window.SYMBOLS = {{ symbols_json|safe }};

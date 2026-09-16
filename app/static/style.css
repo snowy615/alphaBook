@@ -1719,6 +1719,13 @@ body {
   font-size: 12px;
   text-align: center;
 }
+.footer a {
+  color: var(--brand);
+  text-decoration: none;
+}
+.footer a:hover {
+  text-decoration: underline;
+}
 
 /* Responsive */
 @media (max-width: 1024px) {

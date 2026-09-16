@@ -1,53 +1,91 @@
 /* Shared grid math for the interview-availability picker.
  *
- * Both the candidate's apply page and the admin review page need to agree on
- * exactly the same set of hour slots for a given applicant, regardless of
- * which timezone each viewer's browser is in or which day each of them
- * happens to load the page. So the grid is anchored to a fixed instant (the
- * moment the applicant was shortlisted, in UTC) and built in UTC throughout;
- * only the on-screen labels are localised to whoever is looking at them.
+ * The window is fixed to this admissions cycle's dates and fixed to London
+ * hours (7am-7pm) — not the viewer's own browser timezone — so a candidate
+ * and every analyst looking at the admin page always agree on exactly the
+ * same set of slots, labelled the same way, regardless of where either of
+ * them happens to be. Keep these two constants in step with
+ * AVAILABILITY_WINDOW_START/END in app/applications.py.
  */
 window.AlphaAvailability = (function () {
   "use strict";
 
-  const DAYS = 14;
-  const START_HOUR = 8;   // UTC, inclusive
-  const END_HOUR = 20;    // UTC, inclusive — last slot runs 20:00-21:00 UTC
+  const TZ = "Europe/London";
+  const WINDOW_START = { y: 2026, m: 10, d: 1 };    // October 1, 2026
+  const WINDOW_END = { y: 2026, m: 10, d: 23 };      // October 23, 2026 (inclusive)
+  const START_HOUR = 7;    // London wall-clock, inclusive
+  const END_HOUR = 18;     // London wall-clock, inclusive — last slot is 18:00-19:00 (7pm)
 
-  function anchorMidnightUtcMs(anchorIso) {
-    const d = anchorIso ? new Date(anchorIso) : new Date();
-    return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  function cmp(a, b) {
+    if (a.y !== b.y) return a.y - b.y;
+    if (a.m !== b.m) return a.m - b.m;
+    return a.d - b.d;
+  }
+
+  function addDays(p, n) {
+    const d = new Date(Date.UTC(p.y, p.m - 1, p.d) + n * 86400000);
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1, d: d.getUTCDate() };
+  }
+
+  // Today's calendar date *in London*, not the viewer's own timezone.
+  function londonToday() {
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const get = (t) => +parts.find((p) => p.type === t).value;
+    return { y: get("year"), m: get("month"), d: get("day") };
+  }
+
+  // The UTC offset London is at for a given instant, in milliseconds —
+  // found by formatting that instant AS London time, then reinterpreting
+  // those same numbers as UTC; the gap between the two is the offset. This
+  // handles the BST/GMT switch correctly with no timezone library.
+  function londonOffsetMsAt(utcMs) {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ, hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(new Date(utcMs));
+    const get = (t) => parts.find((p) => p.type === t).value;
+    const hour = get("hour") === "24" ? 0 : +get("hour");
+    const asUtc = Date.UTC(+get("year"), +get("month") - 1, +get("day"), hour, +get("minute"), +get("second"));
+    return asUtc - utcMs;
+  }
+
+  // A London wall-clock moment (e.g. "9am on 5 October 2026") to its
+  // absolute UTC epoch millisecond.
+  function londonWallClockToUtcMs(p, hour) {
+    const guess = Date.UTC(p.y, p.m - 1, p.d, hour, 0, 0);
+    return guess - londonOffsetMsAt(guess);
   }
 
   function hourLabel(ts) {
-    return new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    return new Date(ts).toLocaleTimeString("en-GB", { timeZone: TZ, hour: "numeric", minute: "2-digit" });
   }
 
-  function dayLabel(ts) {
-    return new Date(ts).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  function dayLabel(p) {
+    // Noon avoids ever landing on the wrong side of a date boundary.
+    const utcMs = Date.UTC(p.y, p.m - 1, p.d, 12);
+    return new Date(utcMs).toLocaleDateString("en-GB", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" });
   }
 
-  // Returns an array of 14 { ts, label, slots: [{ ts, key, label }] } days,
-  // each slot's `ts` a millisecond epoch and `key` its ISO string.
-  function buildDays(anchorIso) {
-    const base = anchorMidnightUtcMs(anchorIso);
+  // Returns an array of days (today, floored at WINDOW_START, through
+  // WINDOW_END) — each { label, slots: [{ ts, key, label }] }.
+  function buildDays() {
+    const start = cmp(londonToday(), WINDOW_START) > 0 ? londonToday() : WINDOW_START;
     const days = [];
-    for (let day = 0; day < DAYS; day++) {
-      const dayStartMs = base + day * 86400000;
+    let cur = start;
+    while (cmp(cur, WINDOW_END) <= 0) {
       const slots = [];
       for (let h = START_HOUR; h <= END_HOUR; h++) {
-        const ts = dayStartMs + h * 3600000;
+        const ts = londonWallClockToUtcMs(cur, h);
         slots.push({ ts, key: new Date(ts).toISOString(), label: hourLabel(ts) });
       }
-      // The row's label is derived from its first slot, not from the UTC
-      // midnight boundary itself: those hour slots (08:00-20:00 UTC) can
-      // localise to a different calendar day than midnight UTC does for a
-      // viewer behind UTC (e.g. the US), which would otherwise show a row
-      // labelled "Mon" whose slots all land on "Tue" in that viewer's clock.
-      days.push({ ts: dayStartMs, label: dayLabel(slots[0].ts), slots });
+      days.push({ label: dayLabel(cur), slots });
+      cur = addDays(cur, 1);
     }
     return days;
   }
 
-  return { buildDays, DAYS, START_HOUR, END_HOUR };
+  return { buildDays };
 })();

@@ -148,24 +148,30 @@
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
 
     /* ── Interview availability grid (admin side) ────────────────────────── */
-    .aval-wrap { overflow-x: auto; margin: 4px 0 12px; }
-    .aval-grid { border-collapse: collapse; font-size: 12px; }
-    .aval-grid th, .aval-grid td { border: 1px solid var(--border); padding: 0; text-align: center; }
-    .aval-grid th {
-      padding: 6px 4px; font-weight: 600; color: var(--muted);
-      white-space: nowrap; background: var(--bg);
+    .aval-wrap {
+      overflow: auto; max-height: 460px; margin: 4px 0 12px;
+      border: 1px solid var(--border); border-radius: 8px;
+    }
+    .aval-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
+    .aval-grid th, .aval-grid td { border: 1px solid var(--border); padding: 0; text-align: center; width: 46px; }
+    .aval-grid thead th {
+      padding: 9px 2px; font-weight: 600; color: var(--muted); font-size: 11px;
+      white-space: nowrap; background: var(--bg); position: sticky; top: 0; z-index: 1;
     }
     .aval-daylabel {
-      padding: 6px 10px !important; text-align: left !important;
-      white-space: nowrap; font-weight: 600; background: var(--bg);
+      width: 100px !important; padding: 0 12px !important; text-align: left !important;
+      white-space: nowrap; font-weight: 600; font-size: 12.5px; background: var(--bg);
+      position: sticky; left: 0; z-index: 2;
     }
     .aval-cell-btn {
-      width: 34px; height: 28px; border: none; background: var(--card);
-      cursor: pointer; display: block; padding: 0;
+      width: 100%; height: 32px; border: none; background: var(--card);
+      cursor: pointer; display: block; padding: 0; margin: 0; box-sizing: border-box;
+      transition: background .12s ease;
     }
     .aval-cell-btn:hover { background: var(--brand-wash); }
     .aval-cell-btn.is-candidate-free { background: rgba(53, 201, 139, 0.35); }
-    .aval-cell-btn.is-picked { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .aval-cell-btn.is-picked { outline: 2px solid var(--brand); outline-offset: -2px; z-index: 1; position: relative; }
+    .aval-cell-btn:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
     .aval-legend {
       display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px;
       color: var(--muted); margin: 0 0 8px;
@@ -407,7 +413,7 @@
             <p style="margin:0 0 6px;">
               <strong>{{ r.interview.interviewer_name }}</strong>
               {% if r.interview.interviewer_email %}({{ r.interview.interviewer_email }}){% endif %}
-              proposed <strong>{{ r.interview.when.strftime("%a %d %b %Y, %H:%M") }} UTC</strong>
+              proposed <strong>{{ r.interview.when_london.strftime("%a %d %b %Y, %H:%M") }} London</strong>
               {% if r.interview.status == "proposed" %}<span class="apa-tag is-warn">awaiting response</span>
               {% elif r.interview.status == "confirmed" %}<span class="apa-tag is-good">confirmed</span>
               {% elif r.interview.status == "declined" %}<span class="apa-tag is-bad">declined</span>{% endif %}
@@ -428,10 +434,9 @@
             <span><span class="aval-legend-swatch" style="border-color:var(--brand);outline:2px solid var(--brand);outline-offset:-2px;"></span>Selected below</span>
           </div>
           <div id="availAdminGrid-{{ r.user_id }}"></div>
-          <script type="application/json" id="avail-data-{{ r.user_id }}"
-                  data-anchor="{{ r.shortlisted_at.isoformat() if r.shortlisted_at else '' }}">{{ r.availability | tojson }}</script>
+          <script type="application/json" id="avail-data-{{ r.user_id }}">{{ r.availability | tojson }}</script>
           <p class="msp-muted" style="font-size:12.5px;margin:0 0 14px;">
-            Click a highlighted hour to fill in the time below — times shown are your local time.
+            Click a highlighted hour to fill in the time below — the grid is shown in London time; the field below fills in with your own local time for that same instant.
           </p>
           {% else %}
           <p class="msp-muted" style="margin:0 0 14px;">They haven't submitted their availability yet.</p>
@@ -532,14 +537,18 @@
       const userId = el.id.slice("avail-data-".length);
       let slots = [];
       try { slots = JSON.parse(el.textContent || "[]"); } catch { /* leave empty */ }
-      renderAdminAvailability(userId, el.dataset.anchor || "", slots);
+      renderAdminAvailability(userId, slots);
     });
 
-    function renderAdminAvailability(userId, anchorIso, slots) {
+    function renderAdminAvailability(userId, slots) {
       const container = document.getElementById("availAdminGrid-" + userId);
       if (!container || !window.AlphaAvailability) return;
       const freeTs = new Set(slots.map((iso) => new Date(iso).getTime()));
-      const days = window.AlphaAvailability.buildDays(anchorIso);
+      const days = window.AlphaAvailability.buildDays();
+      if (!days.length) {
+        container.innerHTML = '<p class="msp-muted">The scheduling window has closed.</p>';
+        return;
+      }
 
       let html = '<div class="aval-wrap"><table class="aval-grid"><thead><tr><th class="aval-daylabel">Day</th>';
       days[0].slots.forEach((s) => { html += `<th>${s.label}</th>`; });

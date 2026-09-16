@@ -44,6 +44,11 @@ SMTP_USE_STARTTLS = os.getenv("SMTP_USE_STARTTLS", "true").lower() not in ("0", 
 
 CONFIGURED = bool(SMTP_HOST and SMTP_FROM)
 
+# Where the logo image is fetched from — must be an absolute URL since email
+# clients render with no page context to resolve a relative one against.
+BASE_URL = os.getenv("APP_BASE_URL", "https://alphabook.uk").rstrip("/")
+LOGO_URL = f"{BASE_URL}/static/alphabook.png"
+
 
 def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: Optional[str] = None) -> str:
     """A minimal, inbox-safe HTML shell — table-free is fine here since this
@@ -60,9 +65,12 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     return f"""
     <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
                 max-width:520px;margin:0 auto;color:#1a1a1a;">
-      <div style="font-weight:700;font-size:13px;letter-spacing:0.04em;
-                  text-transform:uppercase;color:#1B75BC;margin-bottom:18px;">
-        AlphaBook &middot; Alpha Fund
+      <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;">
+        <img src="{LOGO_URL}" alt="AlphaBook" width="28" height="28"
+             style="width:28px;height:28px;display:block;">
+        <span style="font-weight:700;font-size:15px;letter-spacing:0.01em;color:#1a1a1a;">
+          AlphaBook <span style="font-weight:400;color:#888;">&middot; Alpha Fund</span>
+        </span>
       </div>
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>

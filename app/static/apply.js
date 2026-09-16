@@ -558,15 +558,18 @@
   }
 
   // ── Interview availability (candidate side) ───────────────────────────────
-  // A shortlisted candidate clicks every hour, over a fixed two-week window,
-  // when they could do a 30-minute interview. An analyst picks one of those
-  // slots on the admin page to actually schedule it — see availability.js
-  // for how both sides compute the same grid.
+  // A shortlisted candidate clicks every hour, over a fixed window in
+  // October, when they could do a 30-minute interview. An analyst picks one
+  // of those slots on the admin page to actually schedule it — see
+  // availability.js for how both sides compute the same London-time grid.
   let availabilitySelected = null;   // Set of epoch-ms, live while this screen is up
   let availabilitySaveTimer = null;
 
-  function renderAvailabilityGrid(anchorIso, selectedSet) {
-    const days = window.AlphaAvailability.buildDays(anchorIso);
+  function renderAvailabilityGrid(selectedSet) {
+    const days = window.AlphaAvailability.buildDays();
+    if (!days.length) {
+      return `<p class="msp-muted">The scheduling window has closed.</p>`;
+    }
     let html = '<div class="aval-wrap"><table class="aval-grid"><thead><tr><th class="aval-daylabel">Day</th>';
     days[0].slots.forEach((s) => { html += `<th>${esc(s.label)}</th>`; });
     html += "</tr></thead><tbody>";
@@ -637,12 +640,12 @@
         body += `
           <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px;">
             <p class="apl-hint" style="margin:0 0 10px;font-size:13px;">
-              <strong style="color:var(--text);">Your availability</strong> — click every hour
-              over the next two weeks when you could do a 30-minute interview. An analyst will
+              <strong style="color:var(--text);">Your availability</strong> — click every hour,
+              7am-7pm London time, when you could do a 30-minute interview. An analyst will
               pick one of these and confirm it with you.
             </p>
-            <div id="availGrid">${renderAvailabilityGrid(state.shortlisted_at, availabilitySelected)}</div>
-            <p class="apl-hint" id="availSavedNote">Times shown are your local time. Saved automatically.</p>
+            <div id="availGrid">${renderAvailabilityGrid(availabilitySelected)}</div>
+            <p class="apl-hint" id="availSavedNote">Times shown are London time. Saved automatically.</p>
           </div>`;
       } else if (state.interview && state.interview.status === "confirmed") {
         body += `<p class="aval-locked-note">Your interview time is confirmed, so availability is locked.</p>`;
@@ -969,9 +972,42 @@
       render(state);
       repoll(state);
     } catch (err) {
+      // A session that expired mid-visit — genuinely different from a guest
+      // who was never signed in, which the outer bootstrap below handles by
+      // showing the public intro instead of bouncing straight to /login.
       if (err.status === 401) { window.location.href = "/login"; return; }
       flash(err.message, true);
     }
+  }
+
+  // The public-facing landing view for anyone not signed in — this is the
+  // one link worth sharing: it explains the programme and points straight
+  // at signing up, rather than bouncing a visitor to a bare login form
+  // before they know what they'd be signing up for.
+  function renderGuestIntro() {
+    $("#steps").innerHTML = "";
+    $("#profileLink")?.classList.add("hidden");
+    if ($("#userName")) $("#userName").style.display = "none";
+    $("#app").innerHTML = panel("Apply to Alpha Fund", `
+      <p class="msp-muted" style="margin-top:0;">
+        Alpha Fund is Oxford's student-run trading fund. Each year it runs a
+        <strong>Quant Bootcamp</strong> — a term of sessions on probability, market
+        making and systematic trading — and a <strong>Quant Analyst</strong> track, where
+        you run your own ideas and go into the CV book firms read. Both are open to
+        current University of Oxford students; a Fundamental track opens next term.
+      </p>
+      <p class="msp-muted">
+        Applying takes an up-to-date CV and a short written assessment — no prior
+        trading experience required, just how you think.
+      </p>
+      <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
+        <a class="btn primary" href="/signup">Sign up to apply</a>
+        <a class="btn" href="/login">Log in</a>
+      </div>
+      <p class="apl-hint" style="margin-top:18px;">
+        Read more about Alpha Fund at
+        <a href="https://www.oxfordalphafund.com/" target="_blank" rel="noopener">oxfordalphafund.com ↗</a>.
+      </p>`);
   }
 
   // Leaving the page mid-assessment is counted, not punished — a reviewer sees
@@ -988,7 +1024,7 @@
       const el = $("#userName");
       if (el) el.textContent = me.username || "user";
     } catch (err) {
-      if (err.status === 401) { window.location.href = "/login"; return; }
+      if (err.status === 401) { renderGuestIntro(); return; }
     }
     await refresh();   // schedules its own polling from here
   })();

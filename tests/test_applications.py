@@ -1127,63 +1127,78 @@ class TestReapplyAfterDecision:
                 ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
 
 
-class TestAvailabilityHelpers:
-    """The pure grid math: anchoring to the shortlist moment, and filtering
-    a submitted slot list down to whole-hour UTC slots inside the window."""
+class TestAvailabilityWindow:
+    """The pure grid math: a fixed London-time window for this admissions
+    cycle (Oct 1-23), floored at the real 'today' so nobody is ever offered
+    a slot in the past. Oct 2026 is entirely inside British Summer Time
+    (it ends 25 Oct 2026), so London is a stable UTC+1 throughout — every
+    slot below is written as 08:00 UTC = 09:00 London for that reason."""
 
-    def test_anchor_is_midnight_utc_on_the_shortlist_date(self):
-        application = {"shortlisted_at": dt.datetime(2026, 9, 16, 14, 37, tzinfo=dt.timezone.utc)}
-        anchor = ap._availability_anchor(application)
-        assert anchor == dt.datetime(2026, 9, 16, 0, 0, tzinfo=dt.timezone.utc)
+    def _freeze(self, monkeypatch, when: dt.datetime) -> None:
+        monkeypatch.setattr(ap, "_now", lambda: when)
 
-    def test_anchor_falls_back_to_now_when_never_shortlisted(self):
-        anchor = ap._availability_anchor({})
-        assert anchor.hour == 0 and anchor.minute == 0
+    def test_window_start_floors_at_the_configured_start_date(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        start, end = ap._availability_window()
+        assert start == ap.AVAILABILITY_WINDOW_START
+        assert end == ap.AVAILABILITY_WINDOW_END
 
-    def _anchor(self):
-        return dt.datetime(2026, 9, 16, 0, 0, tzinfo=dt.timezone.utc)
+    def test_window_start_advances_with_todays_london_date(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 10, 10, 12, 0, tzinfo=dt.timezone.utc))
+        start, end = ap._availability_window()
+        assert start == dt.date(2026, 10, 10)
+        assert end == ap.AVAILABILITY_WINDOW_END
 
-    def test_keeps_a_well_formed_whole_hour_slot(self):
-        anchor = self._anchor()
-        out = ap._valid_availability_slots(["2026-09-16T09:00:00+00:00"], anchor)
-        assert out == ["2026-09-16T09:00:00+00:00"]
+    def test_keeps_a_well_formed_whole_hour_london_slot(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots(["2026-10-05T08:00:00+00:00"])
+        assert out == ["2026-10-05T08:00:00+00:00"]
 
-    def test_drops_a_slot_not_on_the_hour(self):
-        anchor = self._anchor()
-        out = ap._valid_availability_slots(["2026-09-16T09:30:00+00:00"], anchor)
+    def test_drops_a_slot_not_on_the_hour(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots(["2026-10-05T08:30:00+00:00"])
         assert out == []
 
-    def test_drops_a_slot_outside_the_start_end_hour_window(self):
-        anchor = self._anchor()
-        out = ap._valid_availability_slots(
-            ["2026-09-16T07:00:00+00:00", "2026-09-16T21:00:00+00:00"], anchor)
+    def test_drops_a_slot_outside_7am_7pm_london(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots([
+            "2026-10-05T05:00:00+00:00",   # 06:00 London — before the window opens
+            "2026-10-05T18:00:00+00:00",   # 19:00 London — after it closes
+        ])
         assert out == []
 
-    def test_drops_a_slot_before_the_anchor_or_past_the_two_week_window(self):
-        anchor = self._anchor()
-        too_early = "2026-09-15T09:00:00+00:00"
-        too_late = (anchor + dt.timedelta(days=ap.AVAILABILITY_DAYS)).isoformat()
-        in_window = "2026-09-20T09:00:00+00:00"
-        out = ap._valid_availability_slots([too_early, too_late, in_window], anchor)
+    def test_drops_a_slot_before_october_1_or_after_october_23(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        too_early = "2026-09-30T08:00:00+00:00"
+        too_late = "2026-10-24T08:00:00+00:00"
+        in_window = "2026-10-05T08:00:00+00:00"
+        out = ap._valid_availability_slots([too_early, too_late, in_window])
         assert out == [in_window]
 
-    def test_deduplicates_and_sorts(self):
-        anchor = self._anchor()
-        out = ap._valid_availability_slots(
-            ["2026-09-17T10:00:00+00:00", "2026-09-16T09:00:00+00:00", "2026-09-16T09:00:00+00:00"],
-            anchor)
-        assert out == ["2026-09-16T09:00:00+00:00", "2026-09-17T10:00:00+00:00"]
+    def test_a_slot_today_or_earlier_is_dropped_once_the_window_has_advanced(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 10, 10, 12, 0, tzinfo=dt.timezone.utc))
+        yesterday = "2026-10-09T08:00:00+00:00"
+        today = "2026-10-10T08:00:00+00:00"
+        out = ap._valid_availability_slots([yesterday, today])
+        assert out == [today]
 
-    def test_ignores_garbage_values_instead_of_raising(self):
-        anchor = self._anchor()
-        out = ap._valid_availability_slots(["not-a-date", "", "2026-09-16T09:00:00+00:00"], anchor)
-        assert out == ["2026-09-16T09:00:00+00:00"]
+    def test_deduplicates_and_sorts(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots([
+            "2026-10-06T09:00:00+00:00", "2026-10-05T08:00:00+00:00", "2026-10-05T08:00:00+00:00",
+        ])
+        assert out == ["2026-10-05T08:00:00+00:00", "2026-10-06T09:00:00+00:00"]
+
+    def test_ignores_garbage_values_instead_of_raising(self, monkeypatch):
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots(["not-a-date", "", "2026-10-05T08:00:00+00:00"])
+        assert out == ["2026-10-05T08:00:00+00:00"]
 
     def test_caps_at_the_maximum_slot_count(self, monkeypatch):
-        anchor = self._anchor()
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
         monkeypatch.setattr(ap, "AVAILABILITY_MAX_SLOTS", 3)
-        raw = [(anchor + dt.timedelta(days=d, hours=9)).isoformat() for d in range(10)]
-        out = ap._valid_availability_slots(raw, anchor)
+        raw = [f"2026-10-0{d}T08:00:00+00:00" for d in range(1, 10)]
+        out = ap._valid_availability_slots(raw)
         assert len(out) == 3
 
 
@@ -1232,10 +1247,11 @@ class TestAvailabilityEndpoint:
             asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), user))
 
     def test_still_editable_while_an_interview_is_only_proposed(self, monkeypatch):
+        monkeypatch.setattr(ap, "_now", lambda: dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
         application = self._shortlisted(interview={"status": ap.INTERVIEW_PROPOSED})
         store = self._patch(monkeypatch, application)
         user = User(id="u1", username="jo")
-        slots = ["2026-09-16T09:00:00+00:00"]
+        slots = ["2026-10-05T08:00:00+00:00"]
 
         result = asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=slots), user))
 
@@ -1243,20 +1259,21 @@ class TestAvailabilityEndpoint:
         assert store["u1"]["availability"] == slots
 
     def test_saves_and_filters_out_of_window_slots(self, monkeypatch):
+        monkeypatch.setattr(ap, "_now", lambda: dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
         application = self._shortlisted()
         store = self._patch(monkeypatch, application)
         user = User(id="u1", username="jo")
-        slots = ["2026-09-16T09:00:00+00:00", "2026-09-16T09:30:00+00:00", "not-a-date"]
+        slots = ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00", "not-a-date"]
 
         result = asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=slots), user))
 
-        assert result["availability"] == ["2026-09-16T09:00:00+00:00"]
+        assert result["availability"] == ["2026-10-05T08:00:00+00:00"]
         assert "availability_updated_at" in store["u1"]
 
 
 class TestAvailabilityInState:
-    """/apply/state surfaces the anchor and the candidate's own picks once
-    shortlisted, and locks them out once the interview is confirmed."""
+    """/apply/state surfaces the candidate's own picks once shortlisted, and
+    locks them out once the interview is confirmed."""
 
     def _patch(self, monkeypatch, application):
         fake_db = _FakeDB()
@@ -1270,19 +1287,18 @@ class TestAvailabilityInState:
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         return fake_db
 
-    def test_shortlisted_state_carries_anchor_and_availability(self, monkeypatch):
+    def test_shortlisted_state_carries_availability(self, monkeypatch):
         shortlisted_at = dt.datetime(2026, 9, 16, 12, 0, tzinfo=dt.timezone.utc)
         application = {
             "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_ANALYST,
-            "shortlisted_at": shortlisted_at, "availability": ["2026-09-16T09:00:00+00:00"],
+            "shortlisted_at": shortlisted_at, "availability": ["2026-10-05T08:00:00+00:00"],
         }
         self._patch(monkeypatch, application)
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.state(user))
 
-        assert result["shortlisted_at"] == shortlisted_at
-        assert result["availability"] == ["2026-09-16T09:00:00+00:00"]
+        assert result["availability"] == ["2026-10-05T08:00:00+00:00"]
         assert result["availability_locked"] is False
 
     def test_locked_once_confirmed(self, monkeypatch):
@@ -1355,6 +1371,7 @@ class TestExportApplications:
         assert row["Motivation text"] == "Because quant finance."
         assert row["CV avg"] == 8
         assert "16 Sep 2026" in row["Availability submitted"]
+        assert "London" in row["Availability submitted"]
 
     def test_export_handles_an_applicant_with_no_availability(self, monkeypatch):
         from openpyxl import load_workbook

@@ -54,7 +54,8 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -167,16 +168,19 @@ INTERVIEW_CONFIRMED = "confirmed"
 INTERVIEW_DECLINED = "declined"
 INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 
-# The availability grid a shortlisted candidate fills in: a fixed two-week
-# window in whole UTC hours, anchored to the moment they were shortlisted so
-# every viewer (the candidate, and every analyst looking at the admin page)
-# computes exactly the same set of slots regardless of when each of them
-# happens to load the page. 08:00-21:00 UTC covers a normal working day
-# across the timezones Alpha Fund members are actually in.
-AVAILABILITY_DAYS = 14
-AVAILABILITY_START_HOUR = 8    # UTC, inclusive
-AVAILABILITY_END_HOUR = 20     # UTC, inclusive — last slot runs 20:00-21:00
-AVAILABILITY_MAX_SLOTS = 300   # generous ceiling against a malformed payload
+# The availability grid a shortlisted candidate fills in: a fixed window on
+# the calendar, in whole London hours. Fixed (not anchored to when someone
+# was shortlisted) so every viewer — the candidate, and every analyst on the
+# admin page — computes exactly the same set of slots regardless of when
+# each of them happens to load the page; the only thing that moves it is the
+# real calendar date, which advances the same way for everyone. Update the
+# two dates below for the next admissions cycle.
+AVAILABILITY_WINDOW_START = dt.date(2026, 10, 1)
+AVAILABILITY_WINDOW_END = dt.date(2026, 10, 23)     # inclusive
+AVAILABILITY_START_HOUR = 7     # London wall-clock, inclusive
+AVAILABILITY_END_HOUR = 18      # London wall-clock, inclusive — last slot is 18:00-19:00
+AVAILABILITY_MAX_SLOTS = 300    # generous ceiling against a malformed payload
+LONDON_TZ = ZoneInfo("Europe/London")
 
 
 class StartApplication(BaseModel):
@@ -262,15 +266,19 @@ def _overdue(since: Any, limit_s: float) -> float:
     return max(0.0, (_now() - started).total_seconds() - limit_s)
 
 
-def _availability_anchor(application: dict) -> dt.datetime:
+def _availability_window() -> Tuple[dt.date, dt.date]:
     """
-    Midnight UTC on the day an application was shortlisted — the fixed start
-    of its availability window. Anchoring to the shortlist moment (rather
-    than "today") means the candidate's grid and every analyst's grid line up
-    on the exact same slots no matter which day each of them opens the page.
+    Today's London date through AVAILABILITY_WINDOW_END, floored at
+    AVAILABILITY_WINDOW_START — never offer a slot in the past, and never
+    before the window officially opens. Computed fresh from the real
+    calendar date rather than stored per-application, so the candidate's
+    grid and every analyst's grid always agree: the only thing that can
+    move this window is the date itself, which advances the same way for
+    everyone looking at it.
     """
-    anchor = _as_utc(application.get("shortlisted_at")) or _now()
-    return anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    today = _now().astimezone(LONDON_TZ).date()
+    start = max(today, AVAILABILITY_WINDOW_START)
+    return start, AVAILABILITY_WINDOW_END
 
 
 def _parse_slot(value: str) -> Optional[dt.datetime]:
@@ -281,28 +289,30 @@ def _parse_slot(value: str) -> Optional[dt.datetime]:
     return _as_utc(parsed)
 
 
-def _valid_availability_slots(raw: List[str], anchor: dt.datetime) -> List[str]:
+def _valid_availability_slots(raw: List[str]) -> List[str]:
     """
-    Keep only whole-hour UTC slots inside the fixed availability window,
-    deduplicated and sorted. Silently drops anything malformed or
-    out-of-window rather than rejecting the whole submission — the grid on
-    the frontend only ever generates well-formed slots, so this is a backstop
-    against a stale or tampered client, not the primary validation.
+    Keep only whole-hour slots that land on 7am-7pm London time inside the
+    fixed availability window, deduplicated and sorted. Silently drops
+    anything malformed or out-of-window rather than rejecting the whole
+    submission — the grid on the frontend only ever generates well-formed
+    slots, so this is a backstop against a stale or tampered client, not the
+    primary validation.
     """
-    window_end = anchor + dt.timedelta(days=AVAILABILITY_DAYS)
+    start, end = _availability_window()
     seen = set()
     out: List[str] = []
     for value in raw:
         slot = _parse_slot(value)
         if slot is None:
             continue
-        if slot.minute or slot.second or slot.microsecond:
+        london = slot.astimezone(LONDON_TZ)
+        if london.minute or london.second or london.microsecond:
             continue
-        if not (AVAILABILITY_START_HOUR <= slot.hour <= AVAILABILITY_END_HOUR):
+        if not (AVAILABILITY_START_HOUR <= london.hour <= AVAILABILITY_END_HOUR):
             continue
-        if not (anchor <= slot < window_end):
+        if not (start <= london.date() <= end):
             continue
-        key = slot.isoformat()
+        key = slot.astimezone(dt.timezone.utc).isoformat()
         if key in seen:
             continue
         seen.add(key)
@@ -317,8 +327,9 @@ def _fmt_slot(value: Any) -> str:
     slot = _as_utc(value)
     if slot is None:
         return str(value)
-    end = slot + dt.timedelta(hours=1)
-    return f"{slot.strftime('%a %d %b %Y, %H:%M')}–{end.strftime('%H:%M')} UTC"
+    london = slot.astimezone(LONDON_TZ)
+    end = london + dt.timedelta(hours=1)
+    return f"{london.strftime('%a %d %b %Y, %H:%M')}–{end.strftime('%H:%M')} London"
 
 
 # ── Storage ───────────────────────────────────────────────────────────────────
@@ -568,10 +579,6 @@ async def state(user: User = Depends(current_user)):
         if interview:
             out["interview"] = _interview_view(interview)
         if application["status"] == S_SHORTLISTED:
-            # The availability grid anchors on the shortlist moment so the
-            # candidate's picker and every analyst's copy of it line up on
-            # the same slots — see _availability_anchor.
-            out["shortlisted_at"] = application.get("shortlisted_at")
             out["availability"] = application.get("availability") or []
             out["availability_locked"] = bool(interview and interview.get("status") == INTERVIEW_CONFIRMED)
         if application["status"] in DECIDED:
@@ -856,8 +863,7 @@ async def submit_availability(req: AvailabilitySubmit, user: User = Depends(curr
     if interview and interview.get("status") == INTERVIEW_CONFIRMED:
         raise HTTPException(400, "Your interview is already confirmed — there's nothing left to set")
 
-    anchor = _availability_anchor(application)
-    application["availability"] = _valid_availability_slots(req.slots, anchor)
+    application["availability"] = _valid_availability_slots(req.slots)
     application["availability_updated_at"] = _now()
     await _save(uid, application)
     return {"ok": True, "availability": application["availability"]}
@@ -891,12 +897,16 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
 def _admin_interview_view(interview: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """The interview record with its datetimes normalised to plain aware
     UTC — Firestore can hand back a provider-specific datetime subclass, and
-    the admin template calls .strftime() on `when` directly."""
+    the admin template calls .strftime() on `when` directly. `when_london` is
+    the same instant converted for display, since the template shows it in
+    London time to match the availability grid."""
     if not interview:
         return None
+    when = _as_utc(interview.get("when"))
     return {
         **interview,
-        "when": _as_utc(interview.get("when")),
+        "when": when,
+        "when_london": when.astimezone(LONDON_TZ) if when else None,
         "scheduled_at": _as_utc(interview.get("scheduled_at")),
         "responded_at": _as_utc(interview.get("responded_at")),
     }
@@ -1254,8 +1264,11 @@ _DECISION_COPY: Dict[str, Dict[str, str]] = {
     S_SHORTLISTED: {
         "subject": "Alpha Fund — you've been shortlisted for interview",
         "title": "Shortlisted for interview",
-        "body": ("<p>Your <strong>{programme}</strong> application has been shortlisted. "
-                 "The committee will be in touch separately to arrange an interview.</p>"),
+        "body": ("<p>Your <strong>{programme}</strong> application has been shortlisted.</p>"
+                 "<p>Please enter your availability on the portal so the committee can schedule "
+                 "an interview with you.</p>"),
+        "cta_label": "Enter your availability",
+        "cta_url": "/apply",
     },
     S_ACCEPTED: {
         "subject": "Alpha Fund — you're in",
@@ -1281,20 +1294,25 @@ async def _send_decision_email(application: dict, status: str) -> None:
     name = application.get("full_name") or application.get("username") or "there"
     programme = application.get("programme") or "the programme"
     body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme)
-    await mailer.send_email(to=to, subject=copy["subject"], title=copy["title"], body_html=body)
+    cta_url = copy.get("cta_url")
+    await mailer.send_email(
+        to=to, subject=copy["subject"], title=copy["title"], body_html=body,
+        cta_label=copy.get("cta_label"), cta_url=f"{BASE_URL}{cta_url}" if cta_url else None,
+    )
 
 
 # ── Interview scheduling ─────────────────────────────────────────────────────
-# Times are stored and shown in UTC throughout — consistent with everything
-# else in this module, and it sidesteps depending on the deployment image
-# having IANA timezone data installed. The .ics attachment carries an
-# absolute timestamp, so each recipient's own calendar still localises it
-# correctly regardless of the text in the email.
+# Stored in UTC (an absolute instant), shown in London time in every email —
+# the availability grid candidates and analysts both work from is already in
+# London hours, so a proposal or confirmation email showing a different zone
+# would just be confusing. The .ics attachment always carries the raw UTC
+# timestamp regardless, so each recipient's own calendar still localises it
+# correctly no matter what the email text says.
 
 def _fmt_when(when: dt.datetime) -> str:
     if when.tzinfo is None:
         when = when.replace(tzinfo=dt.timezone.utc)
-    return when.astimezone(dt.timezone.utc).strftime("%a %d %b %Y, %H:%M") + " UTC"
+    return when.astimezone(LONDON_TZ).strftime("%a %d %b %Y, %H:%M") + " London"
 
 
 def _build_interview_ics(application: dict, interview: dict) -> bytes:

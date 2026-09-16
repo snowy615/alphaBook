@@ -1,5 +1,5 @@
 from __future__ import annotations
-import os, datetime as dt, logging
+import asyncio, os, datetime as dt, logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
@@ -11,6 +11,7 @@ from firebase_admin import auth as fb_auth
 
 # Import Firestore module
 from app import db as db_module
+from app import mailer
 from app.models import User
 
 # ----- config -----
@@ -19,6 +20,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "devsecret_change_me")
 ALGORITHM = "HS256"
 COOKIE_NAME = "__session"  # Firebase Hosting ONLY forwards cookies named __session
 COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 days
+BASE_URL = os.getenv("APP_BASE_URL", "https://alphabook.uk").rstrip("/")
 
 # Cookie + Bearer support
 http_bearer = HTTPBearer(auto_error=False)
@@ -40,6 +42,41 @@ def auth_config():
 
 # ----- helpers -----
 # Removed hash_pw / verify_pw as we use Firebase Auth
+
+
+async def _send_branded_verification_email(email: str, username: str) -> None:
+    """
+    A verification email that actually looks like it's from AlphaBook,
+    instead of Firebase's default template (sender "project-<numbers>",
+    a raw firebaseapp.com address) — which is exactly why it was landing
+    in Junk. The link itself is still a Firebase-issued action link (that
+    part isn't ours to restyle), but the email around it now carries our
+    own logo, subject and copy, sent from the same SMTP account as every
+    other AlphaBook email.
+
+    Never raises — a failure here should not block account creation, the
+    same reasoning as every other email in this app.
+    """
+    try:
+        link = await asyncio.to_thread(
+            fb_auth.generate_email_verification_link,
+            email,
+            fb_auth.ActionCodeSettings(url=f"{BASE_URL}/login?verified=1", handle_code_in_app=False),
+        )
+    except Exception:
+        log.exception("auth: failed to generate a verification link for %s", email)
+        return
+    await mailer.send_email(
+        to=email,
+        subject="Verify your AlphaBook email",
+        title="Welcome to AlphaBook",
+        body_html=(
+            f"<p>Hi {username},</p>"
+            f"<p>One last step — confirm this is your email address so we know where to reach you.</p>"
+        ),
+        cta_label="Verify my email",
+        cta_url=link,
+    )
 
 def create_token(user_id: str, max_age: int = COOKIE_MAX_AGE) -> str:
     # user_id is the Firestore Document ID string
@@ -174,7 +211,13 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             await db_module.db.collection("users").document(firebase_uid).set(user_dict)
             log.info(f"Created new user: {username} ({firebase_uid})")
             # User created successfully
-        
+
+            # Only for accounts that actually need it — a Google sign-in
+            # arrives with email_verified already true, so this only fires
+            # for a fresh email/password signup.
+            if email and not decoded_token.get("email_verified"):
+                await _send_branded_verification_email(email, username)
+
         # Create session
         token = create_token(user.id) # user.id is firebase_uid
         
