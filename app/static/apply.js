@@ -29,8 +29,6 @@
     "Quant Bootcamp":
       "The taught track: a term of sessions on probability, market making and " +
       "systematic trading, with the games on this site as the practical half.",
-    "Fundamental & Quant Bootcamp":
-      "Both taught tracks together, if you'd rather not choose one side yet.",
     "Fundamental Analyst":
       "The research track for fundamental investing: you pitch and defend your own " +
       "ideas, and go into the CV book firms read.",
@@ -204,6 +202,9 @@
         Pick the programme you want. You will then put an up-to-date CV on your
         profile and sit a ${CFG.sessionMinutes}-minute assessment — you can start
         it whenever suits you, but once it starts it runs to the end in one sitting.
+        Want both Fundamental and Quant? Apply to them separately, one at a time —
+        there's no combined option, but once this one is decided you can come back
+        and apply for the other.
       </p>
       ${options}
       ${oxfordField}

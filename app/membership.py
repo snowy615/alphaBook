@@ -70,25 +70,24 @@ CV_BOOK_ELIGIBLE = ANALYST_MEMBERSHIPS
 # The password route into these tiers stays as it was for members who were
 # given a code; the application is the route for everybody else.
 #
-# A Bootcamp applicant can pick a single track or both at once — "both" has
-# no membership of its own (a person only ever holds one `membership` value),
-# so accepting it does not auto-grant anything; an admin sets the actual
-# membership by hand, same as any programme string outside MEMBERSHIPS.
+# Exactly four programmes — one application, one track. There is no combined
+# "both tracks at once" option; someone who wants Fundamental and Quant
+# applies to each separately (in practice: one now, and the other once the
+# first has been decided — see the "apply again" flow in applications.py).
 # A Bootcamp member (either track) can still apply on to the matching
 # Analyst track — Bootcamp isn't a ceiling — but Analyst itself is: there is
 # nowhere further to apply from either Analyst track.
-PROGRAMME_BOTH_BOOTCAMP = "Fundamental & Quant Bootcamp"
 APPLY_PROGRAMMES: List[str] = [
-    M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP, PROGRAMME_BOTH_BOOTCAMP,
+    M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP,
     M_FUND_ANALYST, M_QUANT_ANALYST,
 ]
 APPLICANT_MEMBERSHIPS = {M_PUBLIC, M_MEMBER, M_FUND_BOOTCAMP, M_QUANT_BOOTCAMP}
 
 # The Fundamental side isn't taking candidates yet — kept in APPLY_PROGRAMMES
 # (not removed) so the apply page can show it as coming next term rather
-# than hiding it outright. "Both" rides along since it's half-Fundamental.
-# Toggle this set, not the page, once Fundamental applications open.
-DISABLED_PROGRAMMES = {M_FUND_BOOTCAMP, PROGRAMME_BOTH_BOOTCAMP, M_FUND_ANALYST}
+# than hiding it outright. Toggle this set, not the page, once Fundamental
+# applications open.
+DISABLED_PROGRAMMES = {M_FUND_BOOTCAMP, M_FUND_ANALYST}
 
 
 def is_programme_open(programme: str) -> bool:
