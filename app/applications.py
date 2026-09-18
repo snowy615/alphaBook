@@ -126,30 +126,49 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
 
 
 # ── Clocks (seconds) ─────────────────────────────────────────────────────────
-MOTIVATION_SECONDS = 8 * 60         # "why do you want to join, and why you"
-ESTIMATION_SECONDS = 10 * 60        # the estimation question
-SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 1080 — 18 minutes total
+# "Motivation" and "estimation" are the historical field/section names —
+# kept as-is so existing stored applications (oa.motivation / oa.estimation)
+# still read correctly — but the prompts and timings are this cycle's
+# behavioural and estimation questions.
+MOTIVATION_SECONDS = 5 * 60         # the behavioural question
+ESTIMATION_SECONDS = 3 * 60         # the estimation question
+SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 480 — 8 minutes total
 
 MOTIVATION_PROMPT = (
-    "Why do you want to join Alpha Fund, and why you? "
-    "Tell us what draws you to the programme and what you would bring to it."
+    "Tell us about something you have pursued seriously because you were genuinely "
+    "interested in it. What did you contribute, how did you stay committed when it "
+    "became difficult, and how could that experience help you contribute to Oxford "
+    "Alpha Fund? (Aim for around 200 words.)"
 )
 
 ESTIMATION_PROMPT = (
-    "Pick something large and hard to count exactly, and estimate it — for example, "
-    "the number of bicycles in Oxford. Show your reasoning: break the problem into "
-    "smaller pieces you can actually estimate, and combine them. You're welcome to "
-    "use your own example instead."
+    "Estimate how many laptops are currently switched on across the University of Oxford."
 )
 
-# Statuses an application moves through, in order.
+# Statuses an application moves through, in order. A fast-tracked application
+# (see EVENT_TICKET_FAST_TRACK below) skips straight from S_CV to S_SUBMITTED
+# — no oa_ready/oa_active in between, since there's no written assessment to sit.
 S_CV = "cv"                    # applied; waiting on an up-to-date CV
 S_OA_READY = "oa_ready"        # CV on file; assessment not started
 S_OA_ACTIVE = "oa_active"      # clock running
-S_SUBMITTED = "submitted"      # assessment finished, awaiting a decision
+S_SUBMITTED = "submitted"      # assessment finished (or fast-tracked), awaiting a decision
 S_SHORTLISTED = "shortlisted"  # invited to interview; not yet a final decision
 S_ACCEPTED = "accepted"
 S_REJECTED = "rejected"
+
+# The outreach event: two ticket types, chosen once, right after picking a
+# programme and before the CV step. Fast-Track is capacity-limited and skips
+# the written assessment entirely — an analyst reviews the CV instead (at the
+# clinic, or on the admin page) and the normal shortlist/accept/reject
+# decision still applies from there. General Attendance and "not attending"
+# both continue through the ordinary CV -> assessment flow.
+EVENT_TICKET_NONE = "none"
+EVENT_TICKET_GENERAL = "general"
+EVENT_TICKET_FAST_TRACK = "fast_track"
+EVENT_TICKETS = {EVENT_TICKET_NONE, EVENT_TICKET_GENERAL, EVENT_TICKET_FAST_TRACK}
+FAST_TRACK_CAPACITY = 50
+
+YEAR_OF_STUDY_OPTIONS = ["1st year", "2nd year", "3rd year", "4th year", "Master's", "DPhil / PhD"]
 
 DECIDED = {S_ACCEPTED, S_REJECTED}
 # Statuses a reviewer can attach a CV/written score to — once the CV and
@@ -191,6 +210,17 @@ class StartApplication(BaseModel):
     # Only required for a General public applicant — see the eligibility
     # check in the /apply/start handler.
     confirms_oxford_student: bool = False
+
+
+class EventTicketChoice(BaseModel):
+    ticket: str   # "none" | "general" | "fast_track"
+
+
+class ConfirmCv(BaseModel):
+    college: str
+    degree: str
+    year_of_study: str
+    linkedin: Optional[str] = None
 
 
 class ReviewScore(BaseModel):
@@ -348,6 +378,17 @@ async def _user_data(user_id: str) -> Dict[str, Any]:
     return (doc.to_dict() or {}) if doc.exists else {}
 
 
+async def _fast_track_count() -> int:
+    """How many applications currently hold a Fast-Track ticket — the whole
+    collection is small enough (a single admissions cycle, not a live
+    product) that fetching and filtering here is simpler than a separate
+    counter to keep in sync, matching how _ranked_rows() already reads the
+    whole collection. Good enough for a soft ~50-place cap; not meant to
+    defend against a burst of simultaneous submissions down to the person."""
+    docs = await db_module.db.collection(COLLECTION).get()
+    return sum(1 for d in docs if (d.to_dict() or {}).get("event_ticket") == EVENT_TICKET_FAST_TRACK)
+
+
 # ── The assessment state machine ─────────────────────────────────────────────
 
 def _close_section(oa: dict, key: str, started: Any, limit_s: float) -> None:
@@ -438,6 +479,27 @@ async def _send_submission_confirmation(application: dict) -> None:
             f"<p>This confirms your CV and assessment for <strong>{programme}</strong> "
             f"have both been submitted. There is nothing else to do — the committee "
             f"reviews complete applications, and we will be in touch with a decision.</p>"
+        ),
+    )
+
+
+async def _send_fast_track_confirmation(application: dict) -> None:
+    """The Fast-Track counterpart to _send_submission_confirmation: no
+    written assessment to mention, since there wasn't one."""
+    to = application.get("oxford_email") or application.get("email")
+    if not to:
+        return
+    name = application.get("full_name") or application.get("username") or "there"
+    programme = application.get("programme", "the programme")
+    await mailer.send_email(
+        to=to,
+        subject=f"Alpha Fund — your {programme} application is in",
+        title="Application received",
+        body_html=(
+            f"<p>Hi {name},</p>"
+            f"<p>This confirms your CV for <strong>{programme}</strong> has been submitted. "
+            f"As a Fast-Track applicant there's no written assessment — the committee reviews "
+            f"your CV directly, and we will be in touch with a decision.</p>"
         ),
     )
 
@@ -535,6 +597,7 @@ async def state(user: User = Depends(current_user)):
         "graduation_year": data.get("graduation_year"),
         "motivation_prompt": MOTIVATION_PROMPT,
         "estimation_prompt": ESTIMATION_PROMPT,
+        "year_of_study_options": YEAR_OF_STUDY_OPTIONS,
         "account_email": account_email,
         # Whether the choose-programme step needs to ask for an Oxford email:
         # false when the account itself signed up with one.
@@ -567,6 +630,20 @@ async def state(user: User = Depends(current_user)):
     out["programme"] = application.get("programme")
     out["oxford_email"] = application.get("oxford_email") or ""
     out["applied_at"] = application.get("created_at")
+    # Carried at every status, not just "cv" — the submitted/shortlisted/
+    # decided screens all need to know whether this was a Fast-Track
+    # application to explain why there's no written assessment to show.
+    out["event_ticket"] = application.get("event_ticket")
+    out["is_fast_tracked"] = application.get("event_ticket") == EVENT_TICKET_FAST_TRACK
+    if application["status"] == S_CV:
+        remaining = max(0, FAST_TRACK_CAPACITY - await _fast_track_count())
+        out["fast_track_remaining"] = remaining
+        out["fast_track_full"] = remaining <= 0
+        out["fast_track_capacity"] = FAST_TRACK_CAPACITY
+        out["college"] = application.get("college") or ""
+        out["degree"] = application.get("degree") or ""
+        out["year_of_study"] = application.get("year_of_study") or ""
+        out["linkedin"] = application.get("linkedin") or ""
     if application["status"] == S_OA_ACTIVE:
         out["oa"] = _oa_view(application)
     elif application["status"] in (S_SUBMITTED, S_SHORTLISTED, *DECIDED):
@@ -710,9 +787,44 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     return {"ok": True, "status": application["status"], "programme": req.programme}
 
 
+@router.post("/event-ticket")
+async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(current_user)):
+    """
+    Register for the outreach event — General Attendance, Fast-Track CV
+    Clinic, or not attending — as the first step of the application, before
+    the CV step. Only available before a CV has been confirmed: once the
+    application has moved on, the ticket (and what it unlocks) is fixed.
+    """
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None:
+        raise HTTPException(400, "Start an application first")
+    if application["status"] != S_CV:
+        raise HTTPException(400, "Event registration is only available before you confirm your CV")
+    if req.ticket not in EVENT_TICKETS:
+        raise HTTPException(400, "Unknown ticket type")
+
+    if req.ticket == EVENT_TICKET_FAST_TRACK and application.get("event_ticket") != EVENT_TICKET_FAST_TRACK:
+        # Only re-checked when actually claiming a new Fast-Track place —
+        # switching away from one, or re-confirming the one already held,
+        # never needs to compete for a spot.
+        if await _fast_track_count() >= FAST_TRACK_CAPACITY:
+            raise HTTPException(400, "CV Review + Fast-Track is full — choose General Attendance instead")
+
+    application["event_ticket"] = req.ticket
+    application["event_registered_at"] = _now()
+    await _save(uid, application)
+    return {"ok": True, "event_ticket": req.ticket}
+
+
 @router.post("/cv-confirm")
-async def confirm_cv(user: User = Depends(current_user)):
-    """Confirm the CV now on the profile is the one to review."""
+async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
+    """
+    Confirm the CV now on the profile is the one to review, along with the
+    college/degree/year/LinkedIn every applicant gives regardless of event
+    ticket. A Fast-Track applicant skips straight to submitted from here —
+    no written assessment — everyone else moves on to it as usual.
+    """
     uid = str(user.id)
     application = await _load(uid)
     if application is None:
@@ -724,10 +836,31 @@ async def confirm_cv(user: User = Depends(current_user)):
     if not data.get("cv_blob_path"):
         raise HTTPException(400, "Upload your CV before continuing")
 
+    college = (payload.college or "").strip()[:200]
+    degree = (payload.degree or "").strip()[:200]
+    year_of_study = (payload.year_of_study or "").strip()[:50]
+    if not college or not degree or not year_of_study:
+        raise HTTPException(400, "Fill in your college, degree and year of study to continue")
+
     application["cv_blob_path"] = data["cv_blob_path"]
     application["cv_confirmed_at"] = _now()
     application["full_name"] = data.get("full_name") or application.get("full_name", "")
     application["email"] = data.get("email") or application.get("email", "")
+    application["college"] = college
+    application["degree"] = degree
+    application["year_of_study"] = year_of_study
+    application["linkedin"] = (payload.linkedin or "").strip()[:300] or None
+
+    if application.get("event_ticket") == EVENT_TICKET_FAST_TRACK:
+        application["status"] = S_SUBMITTED
+        application["submitted_at"] = _now()
+        await _save(uid, application)
+        if not application.get("confirmation_sent_at"):
+            await _send_fast_track_confirmation(application)
+            application["confirmation_sent_at"] = _now()
+            await _save(uid, application)
+        return {"ok": True, "status": S_SUBMITTED}
+
     application["status"] = S_OA_READY
     await _save(uid, application)
     return {"ok": True, "status": S_OA_READY}
@@ -926,6 +1059,12 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "confirmed_oxford_student": bool(application.get("confirmed_oxford_student")),
         "programme": application.get("programme", ""),
         "status": application.get("status", S_CV),
+        "event_ticket": application.get("event_ticket") or EVENT_TICKET_NONE,
+        "is_fast_tracked": application.get("event_ticket") == EVENT_TICKET_FAST_TRACK,
+        "college": application.get("college") or "",
+        "degree": application.get("degree") or "",
+        "year_of_study": application.get("year_of_study") or "",
+        "linkedin": application.get("linkedin") or "",
         "created_at": _as_utc(application.get("created_at")),
         "submitted_at": _as_utc(application.get("submitted_at")),
         "last_reminded_at": _as_utc(application.get("last_reminded_at")),
@@ -1005,6 +1144,16 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
 async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
     rows = await _ranked_rows(str(reviewer.id))
     scored = [r for r in rows if r["review"]["count"] > 0]
+    # Registration order (not the score ranking) — an event roster reads
+    # naturally as "who signed up", not "who's winning".
+    fast_track_rows = sorted(
+        (r for r in rows if r["event_ticket"] == EVENT_TICKET_FAST_TRACK),
+        key=lambda r: r["created_at"] or _now(),
+    )
+    general_rows = sorted(
+        (r for r in rows if r["event_ticket"] == EVENT_TICKET_GENERAL),
+        key=lambda r: r["created_at"] or _now(),
+    )
     return templates.TemplateResponse("applications_admin.html", {
         "request": request,
         "app_name": "AlphaBook",
@@ -1019,6 +1168,9 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
+        "fast_track_rows": fast_track_rows,
+        "general_rows": general_rows,
+        "fast_track_capacity": FAST_TRACK_CAPACITY,
     })
 
 
@@ -1038,6 +1190,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     ws.title = "Applicants"
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
+        "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
         "Programme", "Status", "Combined score", "CV avg", "Written avg",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
@@ -1060,9 +1213,12 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         )
         interview = r.get("interview") or {}
         availability = "; ".join(_fmt_slot(v) for v in r.get("availability") or [])
+        fast_tracked = r["is_fast_tracked"]
         ws.append([
             r["rank"] or "", r["username"], r["full_name"], r["email"], r["oxford_email"],
-            r["applicant_category"], r["programme"], r["status"],
+            r["applicant_category"],
+            r["event_ticket"], r["college"], r["degree"], r["year_of_study"], r["linkedin"],
+            r["programme"], r["status"],
             r["combined_score"] if r["combined_score"] is not None else "",
             r["review"]["cv_avg"] if r["review"]["cv_avg"] is not None else "",
             r["review"]["written_avg"] if r["review"]["written_avg"] is not None else "",
@@ -1070,17 +1226,18 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             _dt(r["created_at"]), _dt(r["submitted_at"]), _dt(r["shortlisted_at"]),
             _dt(r["decided_at"]), r["decided_by"], r["decision_note"],
             "Yes" if r["cv_uploaded"] else "No",
-            round(r["motivation_seconds"] / 60, 1) if r["motivation_seconds"] else "",
-            r["motivation_text"],
-            round(r["estimation_seconds"] / 60, 1) if r["estimation_seconds"] else "",
-            r["estimation_text"],
+            "Fast-tracked" if fast_tracked else (round(r["motivation_seconds"] / 60, 1) if r["motivation_seconds"] else ""),
+            "Fast-tracked — no written assessment" if fast_tracked else r["motivation_text"],
+            "Fast-tracked" if fast_tracked else (round(r["estimation_seconds"] / 60, 1) if r["estimation_seconds"] else ""),
+            "Fast-tracked — no written assessment" if fast_tracked else r["estimation_text"],
             r["flags"].get("paste", 0), r["flags"].get("left_page", 0),
             interview.get("status") or "", _dt(interview.get("when")),
             interview.get("interviewer_name") or "", interview.get("message") or "",
             availability or "None submitted",
         ])
 
-    widths = [6, 14, 18, 24, 24, 16, 16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
+    widths = [6, 14, 18, 24, 24, 16, 14, 20, 18, 12, 26,
+              16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
               10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width

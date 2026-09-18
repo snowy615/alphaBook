@@ -139,11 +139,12 @@
       display: block; font-size: 13px; font-weight: 600;
       color: var(--muted); margin-bottom: 7px;
     }
-    .field-group input {
+    .field-group input, .field-group select {
       width: 100%; padding: 11px 14px; border: 1px solid var(--border);
       background: var(--bg); color: var(--text); font-size: 15px; box-sizing: border-box;
+      font-family: inherit;
     }
-    .field-group input:focus { outline: none; border-color: var(--brand); }
+    .field-group input:focus, .field-group select:focus { outline: none; border-color: var(--brand); }
 
     .apl-done-tick {
       font-size: 34px; color: var(--green); line-height: 1; margin-bottom: 10px;

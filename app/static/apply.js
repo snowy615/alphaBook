@@ -91,7 +91,7 @@
 
   // ── Progress rail ──────────────────────────────────────────────────────────
   const STEP_ORDER = ["choose", "cv", "oa", "done"];
-  const STEP_LABEL = { choose: "Choose a programme", cv: "Upload your CV", oa: "Assessment", done: "Submitted" };
+  const STEP_LABEL = { choose: "Choose a programme", cv: "Event & CV", oa: "Assessment", done: "Submitted" };
 
   function stepFor(state) {
     if (state.status === "none") return "choose";
@@ -201,9 +201,10 @@
     $("#app").innerHTML = panel("Apply to Alpha Fund", `
       ${categoryBanner}
       <p class="msp-muted" style="margin-top:0;">
-        Pick the programme you want. You will then put an up-to-date CV on your
-        profile and sit a ${CFG.sessionMinutes}-minute assessment — you can start
-        it whenever suits you, but once it starts it runs to the end in one sitting.
+        Pick the programme you want. Next, register for the outreach event if you'd like to,
+        then put an up-to-date CV on your profile and sit a ${CFG.sessionMinutes}-minute
+        assessment — you can start it whenever suits you, but once it starts it runs to the
+        end in one sitting.
       </p>
       ${options}
       ${oxfordField}
@@ -260,6 +261,70 @@
     });
   }
 
+  // ── Outreach event registration ───────────────────────────────────────────
+  // The first thing shown once a programme is picked, before the CV step —
+  // General Attendance, Fast-Track CV Clinic (capped, first-come), or skip
+  // straight to the online application. Once chosen it's locked in server
+  // side (see /apply/event-ticket), so this screen only ever shows once.
+  let pickedTicket = null;
+
+  function renderEventChoice(state) {
+    pickedTicket = null;
+    const fastFull = !!state.fast_track_full;
+    const capacity = state.fast_track_capacity || 50;
+    const fastBlurb = fastFull
+      ? "Limit reached — no longer available."
+      : `Have your CV reviewed in person by an analyst at the event, and skip the written ` +
+        `assessment entirely — you'll go straight into the same CV-scoring and interview process ` +
+        `as everyone else. ${state.fast_track_remaining} of ${capacity} places left.`;
+
+    $("#app").innerHTML = panel("OAF Quant Bootcamp — Outreach Event", `
+      <p class="msp-muted" style="margin-top:0;">
+        Applying for <strong>${esc(state.programme || "")}</strong>. Before your CV, let us know
+        whether you'd like to come to the outreach event.
+      </p>
+      <label class="apl-choice${fastFull ? " is-disabled" : ""}" data-ticket="fast_track">
+        <input type="radio" name="eventTicket" value="fast_track" ${fastFull ? "disabled" : ""}>
+        <strong>CV Review + Fast-Track Interview</strong>
+        <span class="apl-blurb">${esc(fastBlurb)}</span>
+        ${fastFull ? '<span class="apl-soon">Limit reached — no longer available.</span>' : ""}
+      </label>
+      <label class="apl-choice" data-ticket="general">
+        <input type="radio" name="eventTicket" value="general">
+        <strong>Talk &amp; Networking Only</strong>
+        <span class="apl-blurb">Come to the presentation and meet the team, then apply online in the
+          usual way afterwards.</span>
+      </label>
+      <button class="btn primary" id="eventNext" style="margin-top:16px;" disabled>Continue</button>
+      <p style="margin-top:14px;">
+        <button type="button" class="btn ghost" id="eventSkip">Not attending — continue to the online application</button>
+      </p>`);
+
+    $("#app").querySelectorAll(".apl-choice").forEach((el) => {
+      if (el.classList.contains("is-disabled")) return;
+      el.addEventListener("click", () => {
+        pickedTicket = el.dataset.ticket;
+        $("#app").querySelectorAll(".apl-choice").forEach((o) => o.classList.remove("is-picked"));
+        el.classList.add("is-picked");
+        $("#eventNext").disabled = false;
+      });
+    });
+
+    async function submitTicket(ticket, btn) {
+      btn.disabled = true;
+      try {
+        await api("/apply/event-ticket", { ticket });
+        await refresh();
+      } catch (err) {
+        flash(err.message, true);
+        btn.disabled = false;
+        if (ticket === "fast_track") await refresh();   // capacity may have just filled — re-check
+      }
+    }
+    $("#eventNext").addEventListener("click", (e) => { if (pickedTicket) submitTicket(pickedTicket, e.target); });
+    $("#eventSkip").addEventListener("click", (e) => submitTicket("none", e.target));
+  }
+
   // Which CV screen is showing, independent of whether a CV happens to be
   // on file at this exact instant — that distinction matters because a
   // first-time upload flips cv_uploaded to true mid-flow, and without a
@@ -268,10 +333,12 @@
   //   null    — not yet decided; renderCv derives it from whether a CV exists
   //   "first" — no CV existed when this screen opened; show Continue, no Back
   //   "replace" — a CV already existed; uploading auto-confirms, Back cancels
+  //   "info"  — CV in hand; collecting college/degree/year/LinkedIn before cv-confirm
   let cvScreen = null;
 
   function renderCv(state) {
     const has = state.cv_uploaded;
+    if (cvScreen === "info") { renderCvInfo(state); return; }
     if (cvScreen === "first" || cvScreen === "replace") { renderCvUpload(state, cvScreen); return; }
     if (has) { renderCvAsk(state); return; }
     cvScreen = "first";
@@ -301,11 +368,7 @@
     wireCvPreview($("#cvPreviewArea"));
 
     $("#cvUpdateYes").addEventListener("click", () => { cvScreen = "replace"; renderCvUpload(state, "replace"); });
-    $("#cvUpdateNo").addEventListener("click", async (e) => {
-      e.target.disabled = true;
-      try { await api("/apply/cv-confirm", {}); cvScreen = null; await refresh(); }
-      catch (err) { flash(err.message, true); e.target.disabled = false; }
-    });
+    $("#cvUpdateNo").addEventListener("click", () => { cvScreen = "info"; renderCvInfo(state); });
   }
 
   // A small "View CV" toggle that renders the PDF inline, so reading it
@@ -380,11 +443,10 @@
         }
         if (isReplace) {
           // They already answered "yes, update it" — the upload itself was
-          // the confirmation, so this moves straight on.
+          // the confirmation, so this moves straight to the info step.
           flash("CV updated", false);
-          await api("/apply/cv-confirm", {});
-          cvScreen = null;
-          await refresh();
+          cvScreen = "info";
+          renderCvInfo(state);
         } else {
           flash("CV uploaded", false);
           await refresh();   // redraws this same screen with Continue enabled
@@ -396,10 +458,74 @@
       }
     });
 
-    $("#cvNext")?.addEventListener("click", async (e) => {
+    $("#cvNext")?.addEventListener("click", () => { cvScreen = "info"; renderCvInfo(state); });
+  }
+
+  const OXFORD_COLLEGES = [
+    "All Souls", "Balliol", "Blackfriars", "Brasenose", "Campion Hall", "Christ Church",
+    "Corpus Christi", "Exeter", "Green Templeton", "Harris Manchester", "Hertford", "Jesus",
+    "Keble", "Kellogg", "Lady Margaret Hall", "Linacre", "Lincoln", "Magdalen", "Mansfield",
+    "Merton", "New College", "Nuffield", "Oriel", "Pembroke", "Queen's", "Regent's Park",
+    "Reuben", "St Anne's", "St Antony's", "St Catherine's", "St Cross", "St Edmund Hall",
+    "St Hilda's", "St Hugh's", "St John's", "St Peter's", "St Stephen's House", "Somerville",
+    "Trinity", "University College", "Wadham", "Wolfson", "Worcester", "Wycliffe Hall",
+  ];
+
+  // The last stop before cv-confirm, whichever ticket they picked — Fast-
+  // Track applicants need this exactly as much as anyone else (they're just
+  // skipping the written assessment afterward, not this).
+  function renderCvInfo(state) {
+    const years = state.year_of_study_options || [];
+    $("#app").innerHTML = panel("A few details", `
+      <p class="msp-muted" style="margin-top:0;">
+        Applying for <strong>${esc(state.programme || "")}</strong>.
+      </p>
+      <div class="field-group">
+        <label>College</label>
+        <input type="text" id="infoCollege" list="collegeList" value="${esc(state.college || "")}"
+               placeholder="e.g. Merton">
+        <datalist id="collegeList">
+          ${OXFORD_COLLEGES.map((c) => `<option value="${esc(c)}">`).join("")}
+        </datalist>
+      </div>
+      <div class="field-group" style="margin-top:14px;">
+        <label>Degree</label>
+        <input type="text" id="infoDegree" value="${esc(state.degree || "")}" placeholder="e.g. Computer Science">
+      </div>
+      <div class="field-group" style="margin-top:14px;">
+        <label>Year of study</label>
+        <select id="infoYear">
+          <option value="">Choose one</option>
+          ${years.map((y) => `<option value="${esc(y)}" ${state.year_of_study === y ? "selected" : ""}>${esc(y)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="field-group" style="margin-top:14px;">
+        <label>LinkedIn / GitHub (optional)</label>
+        <input type="text" id="infoLinkedin" value="${esc(state.linkedin || "")}" placeholder="Link to either or both">
+      </div>
+      <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:20px;">
+        <button class="btn primary" id="infoNext">Continue</button>
+        <button class="btn ghost" id="infoBack">Back</button>
+      </div>`);
+
+    $("#infoBack").addEventListener("click", () => { cvScreen = null; renderCv(state); });
+    $("#infoNext").addEventListener("click", async (e) => {
+      const college = $("#infoCollege").value.trim();
+      const degree = $("#infoDegree").value.trim();
+      const year_of_study = $("#infoYear").value;
+      if (!college || !degree || !year_of_study) {
+        flash("Fill in your college, degree and year of study to continue.", true);
+        return;
+      }
       e.target.disabled = true;
-      try { await api("/apply/cv-confirm", {}); cvScreen = null; await refresh(); }
-      catch (err) { flash(err.message, true); e.target.disabled = false; }
+      try {
+        await api("/apply/cv-confirm", { college, degree, year_of_study, linkedin: $("#infoLinkedin").value.trim() });
+        cvScreen = null;
+        await refresh();
+      } catch (err) {
+        flash(err.message, true);
+        e.target.disabled = false;
+      }
     });
   }
 
@@ -416,10 +542,10 @@
       <ul class="apl-rules">
         <li><strong>${Math.round((r.session_seconds || CFG.sessionMinutes * 60) / 60)} minutes in total</strong>, in one sitting. One attempt, two questions.</li>
         <li><strong>Part one — ${Math.round((r.motivation_seconds || CFG.motivationMinutes * 60) / 60)} minutes.</strong>
-            Why do you want to join Alpha Fund, and why you?</li>
+            A behavioural question — something you've pursued seriously, and what it taught you.</li>
         <li><strong>Part two — ${Math.round((r.estimation_seconds || CFG.estimationMinutes * 60) / 60)} minutes.</strong>
-            Pick something large and hard to count exactly — the number of bicycles in
-            Oxford, say — and estimate it. Show your reasoning, or use your own example.</li>
+            An estimation question. Show your reasoning — break the problem into smaller
+            pieces you can actually estimate, and combine them.</li>
         <li>Both questions take plain text, and LaTeX if you want to show a formula —
             each has a Preview button to check it renders the way you mean.</li>
         <li>Submitting part one early moves straight to part two; it does not bank the
@@ -650,6 +776,10 @@
       } else if (state.interview && state.interview.status === "confirmed") {
         body += `<p class="aval-locked-note">Your interview time is confirmed, so availability is locked.</p>`;
       }
+    } else if (state.is_fast_tracked) {
+      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in. As a
+           Fast-Track applicant there's no written assessment — the committee reviews your CV
+           directly, and you'll hear a decision from there.</p>`;
     } else {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
            assessment has been submitted. The committee reads your CV, your written answer
@@ -804,7 +934,7 @@
       sectionLeft = w.seconds_left;
       sessionLeft = oa.session_seconds_left;
       $("#steps").innerHTML = "";
-      $("#app").innerHTML = panel("Part one — why you", `
+      $("#app").innerHTML = panel("Part one — behavioural", `
         <div class="apl-clocks">
           <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
           <span class="apl-clock-sub">Part 1 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
@@ -840,7 +970,7 @@
       sectionLeft = w.seconds_left;
       sessionLeft = oa.session_seconds_left;
       $("#steps").innerHTML = "";
-      $("#app").innerHTML = panel("Part two — estimate something large", `
+      $("#app").innerHTML = panel("Part two — estimation", `
         <div class="apl-clocks">
           <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
           <span class="apl-clock-sub">Part 2 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
@@ -909,7 +1039,9 @@
     if (!state.eligible && state.status === "none") return "ineligible";
     switch (state.status) {
       case "none": return "choose";
-      case "cv": return "cv:" + (state.cv_uploaded ? "yes" : "no");
+      case "cv":
+        if (!state.event_ticket) return "event-choice";
+        return "cv:" + (state.cv_uploaded ? "yes" : "no");
       case "oa_ready": return "gate";
       case "oa_active": {
         const oa = state.oa || {};
@@ -951,7 +1083,9 @@
     renderSteps(state);
     switch (state.status) {
       case "none": renderChoose(state); break;
-      case "cv": renderCv(state); break;
+      case "cv":
+        if (!state.event_ticket) { renderEventChoice(state); break; }
+        renderCv(state); break;
       case "oa_ready": renderOaGate(state); break;
       default: renderDone(state);
     }

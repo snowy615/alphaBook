@@ -256,6 +256,55 @@
       </div>
     </div>
 
+    <!-- Outreach event rosters — who's actually coming, separate from the
+         scored ranking above. Fast-Track shows the capacity count live;
+         General Attendance is uncapped. -->
+    <div class="card msp-panel apa-summary">
+      <div class="head">
+        <h3>Outreach event</h3>
+        <span class="msp-muted">Fast-Track CV Clinic {{ fast_track_rows | length }}/{{ fast_track_capacity }} &middot; General Attendance {{ general_rows | length }}</span>
+      </div>
+      <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
+        {% if not fast_track_rows and not general_rows %}
+          <p class="apa-empty" style="padding:20px;">Nobody has registered for the event yet.</p>
+        {% else %}
+        <table class="msp-table">
+          <thead>
+            <tr><th>Ticket</th><th>Applicant</th><th>College</th><th>Degree</th><th>Year</th><th>CV</th></tr>
+          </thead>
+          <tbody>
+            {% for r in fast_track_rows %}
+            <tr>
+              <td><span class="apa-tag is-info">Fast-Track CV Clinic</span></td>
+              <td><a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a></td>
+              <td>{{ r.college or "—" }}</td>
+              <td>{{ r.degree or "—" }}</td>
+              <td>{{ r.year_of_study or "—" }}</td>
+              <td>
+                {% if r.cv_uploaded %}<a href="/apply/admin/{{ r.user_id }}/cv" target="_blank" rel="noopener">Open ↗</a>
+                {% else %}<span class="msp-muted">—</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+            {% for r in general_rows %}
+            <tr>
+              <td><span class="apa-tag">General Attendance</span></td>
+              <td><a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a></td>
+              <td>{{ r.college or "—" }}</td>
+              <td>{{ r.degree or "—" }}</td>
+              <td>{{ r.year_of_study or "—" }}</td>
+              <td>
+                {% if r.cv_uploaded %}<a href="/apply/admin/{{ r.user_id }}/cv" target="_blank" rel="noopener">Open ↗</a>
+                {% else %}<span class="msp-muted">—</span>{% endif %}
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% endif %}
+      </div>
+    </div>
+
     <!-- One card per applicant: CV, written answer, every graded answer, and scoring. -->
     {% for r in rows %}
     <div class="card msp-panel apa-card" id="a-{{ r.user_id }}">
@@ -279,6 +328,8 @@
           <div class="apa-tags">
             <span class="apa-tag">{{ r.programme }}</span>
             <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
+            {% if r.event_ticket == "fast_track" %}<span class="apa-tag is-info">Fast-Track CV Clinic</span>
+            {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
             {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
             {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
             {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
@@ -323,7 +374,24 @@
               {{ r.submitted_at.strftime("%d %b, %H:%M") if r.submitted_at else "—" }}
             </span>
           </div>
+          <div class="apa-cell">
+            <span class="apa-k">College &amp; degree</span>
+            <span class="apa-v" style="font-size:13px;font-weight:500;">
+              {% if r.college or r.degree %}{{ r.college }}{% if r.college and r.degree %} · {% endif %}{{ r.degree }}
+              {% else %}<span class="msp-muted">—</span>{% endif %}
+            </span>
+          </div>
+          <div class="apa-cell">
+            <span class="apa-k">Year of study</span>
+            <span class="apa-v" style="font-size:13px;font-weight:500;">{{ r.year_of_study or "—" }}</span>
+          </div>
         </div>
+
+        {% if r.linkedin %}
+        <p style="margin:-6px 0 18px;font-size:13px;">
+          <a href="{{ r.linkedin }}" target="_blank" rel="noopener">{{ r.linkedin }} ↗</a>
+        </p>
+        {% endif %}
 
         <p class="apa-h">CV</p>
         {% if r.cv_uploaded %}
@@ -334,6 +402,10 @@
           <p class="msp-muted" style="margin:0 0 18px;">No CV on file.</p>
         {% endif %}
 
+        {% if r.is_fast_tracked %}
+        <p class="apa-h">Written assessment</p>
+        <div class="apa-essay is-empty">Fast-tracked — no written assessment. Reviewed by CV only.</div>
+        {% else %}
         <p class="apa-h">Part one — {{ motivation_prompt }}</p>
         {% if r.motivation_text %}
           <div class="apa-essay apa-math">{{ r.motivation_text }}</div>
@@ -346,6 +418,7 @@
           <div class="apa-essay apa-math">{{ r.estimation_text }}</div>
         {% else %}
           <div class="apa-essay is-empty">Nothing written.</div>
+        {% endif %}
         {% endif %}
 
         <!-- Reviewer scoring: open to every Quant Analyst, not just admins.
@@ -362,7 +435,11 @@
             </div>
             <div class="apa-review-stat">
               <span class="apa-k">Written — average of {{ r.review.count }}</span>
-              <span class="apa-v">{% if r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
+              <span class="apa-v">
+                {% if r.is_fast_tracked %}<span class="msp-muted" style="font-size:14px;">Fast-tracked</span>
+                {% elif r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="apa-of">/{{ score_max }}</span>
+                {% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}
+              </span>
             </div>
           </div>
 
@@ -385,11 +462,13 @@
               <input type="number" id="cv-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
                      value="{{ r.review.mine.cv_score if r.review.mine and r.review.mine.cv_score is not none else '' }}">
             </div>
+            {% if not r.is_fast_tracked %}
             <div class="apa-score-field">
               <label for="written-{{ r.user_id }}">Written ({{ score_min }}–{{ score_max }})</label>
               <input type="number" id="written-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
                      value="{{ r.review.mine.written_score if r.review.mine and r.review.mine.written_score is not none else '' }}">
             </div>
+            {% endif %}
             <div class="apa-score-field apa-score-note">
               <label for="note-{{ r.user_id }}">Note (optional)</label>
               <input type="text" id="note-{{ r.user_id }}" maxlength="300"
@@ -615,10 +694,10 @@
       event.preventDefault();
       const btn = event.target.querySelector("button[type=submit]");
       const cvEl = document.getElementById("cv-" + userId);
-      const writtenEl = document.getElementById("written-" + userId);
+      const writtenEl = document.getElementById("written-" + userId);   // absent for Fast-Track applicants
       const noteEl = document.getElementById("note-" + userId);
       const cv = cvEl.value === "" ? null : Number(cvEl.value);
-      const written = writtenEl.value === "" ? null : Number(writtenEl.value);
+      const written = (!writtenEl || writtenEl.value === "") ? null : Number(writtenEl.value);
       if (cv === null && written === null) {
         flash("Enter at least one score", true);
         return false;
