@@ -231,17 +231,13 @@ class TestEligibility:
         assert mb.can_apply({"membership": mb.M_PUBLIC, "role": mb.ROLE_HOST}) is False
         assert mb.can_apply({"membership": mb.M_PUBLIC, "is_admin": True}) is False
 
-    def test_new_applicants_see_both_tracks_and_the_both_bootcamp_option(self):
+    def test_new_applicants_see_exactly_the_four_tracks(self):
+        # No combined "both at once" option — apply to each separately.
         programmes = mb.apply_programmes_for(mb.M_PUBLIC)
         assert set(programmes) == {
-            mb.M_FUND_BOOTCAMP, mb.M_QUANT_BOOTCAMP, mb.PROGRAMME_BOTH_BOOTCAMP,
+            mb.M_FUND_BOOTCAMP, mb.M_QUANT_BOOTCAMP,
             mb.M_FUND_ANALYST, mb.M_QUANT_ANALYST,
         }
-
-    def test_both_bootcamp_is_not_a_real_membership(self):
-        # It's a request for two tracks at once, not a single membership
-        # value — accepting it never auto-grants, an admin sets it by hand.
-        assert mb.PROGRAMME_BOTH_BOOTCAMP not in mb.MEMBERSHIPS
 
 
 class TestOxfordEmail:
@@ -615,13 +611,6 @@ class TestDisabledProgrammeRejection:
         user = User(id="u1", username="jo")
         with pytest.raises(HTTPException):
             asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_FUND_BOOTCAMP), user))
-
-    def test_both_bootcamp_is_refused(self, monkeypatch):
-        self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
-        user = User(id="u1", username="jo")
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.start_application(
-                ap.StartApplication(programme=mb.PROGRAMME_BOTH_BOOTCAMP), user))
 
     def test_quant_bootcamp_still_works(self, monkeypatch):
         store = self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})

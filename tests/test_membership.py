@@ -136,19 +136,16 @@ class TestDisabledProgrammes:
     (so the apply page can show it as coming) rather than removed, but
     flagged as closed so it can't actually be applied to."""
 
-    def test_only_the_fundamental_side_and_both_are_disabled(self):
-        assert mb.DISABLED_PROGRAMMES == {
-            mb.M_FUND_BOOTCAMP, mb.PROGRAMME_BOTH_BOOTCAMP, mb.M_FUND_ANALYST,
-        }
+    def test_only_the_fundamental_side_is_disabled(self):
+        assert mb.DISABLED_PROGRAMMES == {mb.M_FUND_BOOTCAMP, mb.M_FUND_ANALYST}
 
     def test_quant_programmes_are_open(self):
         assert mb.is_programme_open(mb.M_QUANT_BOOTCAMP) is True
         assert mb.is_programme_open(mb.M_QUANT_ANALYST) is True
 
-    def test_fundamental_and_both_are_closed(self):
+    def test_fundamental_is_closed(self):
         assert mb.is_programme_open(mb.M_FUND_BOOTCAMP) is False
         assert mb.is_programme_open(mb.M_FUND_ANALYST) is False
-        assert mb.is_programme_open(mb.PROGRAMME_BOTH_BOOTCAMP) is False
 
     def test_disabled_programmes_are_still_listed_not_removed(self):
         # Shown on the apply page as "coming next term", not hidden outright.
