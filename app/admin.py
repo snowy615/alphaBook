@@ -603,6 +603,28 @@ async def delete_user(
     if u_data.get("is_admin"):
         raise HTTPException(status_code=400, detail="Cannot delete admin users")
 
+    # Their programme application (if any) — otherwise a Fast-Track or
+    # General Attendance registration outlives the account and keeps
+    # counting against the outreach event's capacity forever.
+    app_doc_ref = db_module.db.collection("applications").document(user_id)
+    app_doc = await app_doc_ref.get()
+    application_removed = app_doc.exists
+    if app_doc.exists:
+        app_data = app_doc.to_dict() or {}
+        cv_blobs = {u_data.get("cv_blob_path"), app_data.get("cv_blob_path")} - {None}
+        for blob_name in cv_blobs:
+            if db_module.bucket:
+                try:
+                    await asyncio.to_thread(db_module.bucket.blob(blob_name).delete)
+                except Exception as exc:
+                    log.warning("delete_user: could not remove CV blob %s: %s", blob_name, exc)
+        await app_doc_ref.delete()
+    elif u_data.get("cv_blob_path") and db_module.bucket:
+        try:
+            await asyncio.to_thread(db_module.bucket.blob(u_data["cv_blob_path"]).delete)
+        except Exception as exc:
+            log.warning("delete_user: could not remove CV blob %s: %s", u_data["cv_blob_path"], exc)
+
     # Delete user's orders
     orders_ref = db_module.db.collection("orders")
     o_docs = await orders_ref.where("user_id", "==", user_id).get()
@@ -660,6 +682,8 @@ async def delete_user(
 
     username = u_data.get("username")
     message = f"User {username} deleted"
+    if application_removed:
+        message += ", along with their programme application"
     if auth_removed:
         message += " — the email address is free to reuse"
     elif auth_note:
@@ -670,6 +694,7 @@ async def delete_user(
         "message": message,
         "auth_removed": auth_removed,
         "auth_note": auth_note,
+        "application_removed": application_removed,
     }
 
 

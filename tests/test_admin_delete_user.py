@@ -76,6 +76,25 @@ class FakeUserNotFound(Exception):
     pass
 
 
+class FakeBlob:
+    def __init__(self, name, bucket_calls):
+        self._name, self._calls = name, bucket_calls
+
+    def delete(self):
+        self._calls.append(self._name)
+
+
+class FakeBucket:
+    """Records every blob name asked to be deleted, sync .delete() like the
+    real google-cloud-storage Blob — the endpoint wraps it in to_thread."""
+
+    def __init__(self):
+        self.deleted: list = []
+
+    def blob(self, name):
+        return FakeBlob(name, self.deleted)
+
+
 @pytest.fixture
 def store():
     return {
@@ -84,6 +103,7 @@ def store():
                         "firebase_uid": "uid-123", "email": "alice@example.com"},
             "admin-1": {"username": "root", "is_admin": True},
         },
+        "applications": {},
         "orders": {},
         "trades": {},
         "player_scores": {"uid-123": {"overall": 61}},
@@ -103,6 +123,9 @@ def wired(monkeypatch, store, auth_accounts):
     calls = {"auth_deleted": [], "cache_invalidated": 0}
 
     monkeypatch.setattr(admin.db_module, "db", FakeDB(store), raising=False)
+    bucket = FakeBucket()
+    monkeypatch.setattr(admin.db_module, "bucket", bucket, raising=False)
+    calls["bucket"] = bucket
 
     def fake_delete_user(uid):
         if uid not in auth_accounts:
@@ -184,3 +207,41 @@ class TestDeleteUser:
         with pytest.raises(HTTPException) as exc:
             run(admin.delete_user("nope", admin=ADMIN))
         assert exc.value.status_code == 404
+
+    def test_deleting_a_user_also_deletes_their_application(self, wired, store):
+        # This is the whole point for a tester registering Fast-Track: without
+        # this, the application (and the capacity it holds) outlives the
+        # account, and the outreach event spot is never actually freed.
+        store["applications"]["uid-123"] = {
+            "user_id": "uid-123", "status": "cv", "event_ticket": "fast_track",
+        }
+        result = run(admin.delete_user("uid-123", admin=ADMIN))
+        assert "uid-123" not in store["applications"]
+        assert result["application_removed"] is True
+        assert "programme application" in result["message"]
+
+    def test_a_user_with_no_application_is_still_deleted_cleanly(self, wired, store):
+        result = run(admin.delete_user("uid-123", admin=ADMIN))
+        assert result["ok"] is True
+        assert result["application_removed"] is False
+        assert "programme application" not in result["message"]
+
+    def test_the_applicants_cv_blob_is_removed_from_storage(self, wired, store):
+        store["applications"]["uid-123"] = {
+            "user_id": "uid-123", "status": "submitted", "cv_blob_path": "cvs/2027/uid-123.pdf",
+        }
+        run(admin.delete_user("uid-123", admin=ADMIN))
+        assert "cvs/2027/uid-123.pdf" in wired["bucket"].deleted
+
+    def test_a_profile_cv_with_no_application_is_still_removed(self, wired, store):
+        store["users"]["uid-123"]["cv_blob_path"] = "cvs/2027/uid-123.pdf"
+        run(admin.delete_user("uid-123", admin=ADMIN))
+        assert "cvs/2027/uid-123.pdf" in wired["bucket"].deleted
+
+    def test_the_same_cv_path_on_both_profile_and_application_is_only_deleted_once(self, wired, store):
+        store["users"]["uid-123"]["cv_blob_path"] = "cvs/2027/uid-123.pdf"
+        store["applications"]["uid-123"] = {
+            "user_id": "uid-123", "status": "submitted", "cv_blob_path": "cvs/2027/uid-123.pdf",
+        }
+        run(admin.delete_user("uid-123", admin=ADMIN))
+        assert wired["bucket"].deleted.count("cvs/2027/uid-123.pdf") == 1
