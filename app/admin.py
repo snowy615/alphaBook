@@ -626,6 +626,11 @@ async def delete_user(
         except Exception as exc:
             log.warning("delete_user: could not remove CV blob %s: %s", u_data["cv_blob_path"], exc)
 
+    # Their event sign-ups — a confirmed place would otherwise keep counting
+    # against an event's capacity after the account is gone.
+    for d in await db_module.db.collection("event_signups").where("user_id", "==", user_id).get():
+        await d.reference.delete()
+
     # Delete user's orders
     orders_ref = db_module.db.collection("orders")
     o_docs = await orders_ref.where("user_id", "==", user_id).get()

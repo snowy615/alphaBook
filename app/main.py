@@ -1015,3 +1015,6 @@ app.include_router(learning_routes.router)
 from app import applications
 app.include_router(applications.router)
 
+from app import events
+app.include_router(events.router)
+

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Events - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .evt-section-title { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 26px 0 10px; }
+    .evt-card { margin-bottom: 14px; }
+    .evt-card.is-past { opacity: .65; }
+    .evt-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+    .evt-title { margin: 0 0 4px; font-size: 19px; }
+    .evt-when { color: var(--brand); font-size: 14px; font-weight: 600; }
+    .evt-desc { margin: 14px 0 0; white-space: pre-wrap; line-height: 1.6; font-size: 14.5px; }
+    .evt-meta { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
+    .evt-tag { display: inline-block; padding: 3px 9px; border: 1px solid var(--border-strong); font-size: 12px; color: var(--text); }
+    .evt-tag.is-good { border-color: var(--green); color: var(--green); }
+    .evt-tag.is-warn { border-color: #d9a441; color: #d9a441; }
+    .evt-tag.is-bad { border-color: var(--red); color: var(--red); }
+    .evt-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+
+    .evt-form { display: grid; gap: 14px; }
+    .evt-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
+    .evt-field label { display: block; font-size: 13px; font-weight: 600; color: var(--muted); margin-bottom: 6px; }
+    .evt-field textarea { min-height: 110px; resize: vertical; font-family: inherit; }
+    .evt-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .evt-hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+
+    .evt-su { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+    .evt-su-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .evt-su-row:last-child { border-bottom: none; }
+    .evt-su-who { min-width: 0; }
+    .evt-su-who strong { display: block; }
+    .evt-su-who span { font-size: 12px; color: var(--muted); }
+    .evt-empty { color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Events</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions" id="topActions">
+      <a href="/" class="btn ghost">Back to Platform</a>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 820px;">
+    <div class="msp-hero">
+      <h2>Events</h2>
+      <p>What Oxford Alpha Fund has coming up. Sign in to sign up.</p>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+
+    <!-- Admin only: create or edit an event -->
+    <div class="card msp-panel hidden" id="formCard">
+      <div class="head">
+        <h3 id="formTitle">New event</h3>
+        <span class="msp-muted">admins only</span>
+      </div>
+      <div class="msp-panel-body evt-form">
+        <div class="evt-field">
+          <label for="evTitle">Title</label>
+          <input id="evTitle" class="msp-input" type="text" maxlength="120" placeholder="Quant Bootcamp Kick-off">
+        </div>
+        <div class="evt-field">
+          <label for="evDesc">Description</label>
+          <textarea id="evDesc" class="msp-input" maxlength="4000" placeholder="What it is, where it is, what to bring."></textarea>
+        </div>
+        <div class="evt-row">
+          <div class="evt-field">
+            <label for="evDate">Date</label>
+            <input id="evDate" class="msp-input" type="date">
+          </div>
+          <div class="evt-field">
+            <label for="evStart">Starts</label>
+            <input id="evStart" class="msp-input" type="time">
+          </div>
+          <div class="evt-field">
+            <label for="evEnd">Ends</label>
+            <input id="evEnd" class="msp-input" type="time">
+          </div>
+        </div>
+        <p class="evt-hint" style="margin-top:-6px;">Times are London time.</p>
+        <div class="evt-row">
+          <div class="evt-field">
+            <label for="evCap">Places</label>
+            <input id="evCap" class="msp-input" type="number" min="1" placeholder="No limit">
+          </div>
+          <div class="evt-field">
+            <label for="evMode">Sign-up</label>
+            <select id="evMode" class="msp-input">
+              <option value="first_come">First come, first served</option>
+              <option value="approval">Needs approval from an admin or analyst</option>
+            </select>
+          </div>
+        </div>
+        <label class="evt-check">
+          <input type="checkbox" id="evShow">
+          Show the number of places and sign-ups publicly
+        </label>
+        <div class="evt-actions" style="margin-top:0;">
+          <button class="btn primary" id="evSave">Create event</button>
+          <button class="btn ghost hidden" id="evCancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="list"><p class="evt-empty">Loading…</p></div>
+  </div>
+
+  <script src="/static/events.js?v=1"></script>
+</body>
+
+</html>

@@ -59,9 +59,10 @@ class FakeCollection:
         data = self._store.get(self.name, {}).get(doc_id)
         return FakeDoc(doc_id, data, self._store, self.name)
 
-    def where(self, *args, **kwargs):
+    def where(self, field=None, _op=None, value=None, **kwargs):
         rows = self._store.get(self.name, {})
-        return FakeQuery([FakeDoc(k, v, self._store, self.name) for k, v in rows.items()])
+        return FakeQuery([FakeDoc(k, v, self._store, self.name) for k, v in rows.items()
+                          if field is None or v.get(field) == value])
 
 
 class FakeDB:
@@ -104,6 +105,7 @@ def store():
             "admin-1": {"username": "root", "is_admin": True},
         },
         "applications": {},
+        "event_signups": {},
         "orders": {},
         "trades": {},
         "player_scores": {"uid-123": {"overall": 61}},
@@ -245,3 +247,11 @@ class TestDeleteUser:
         }
         run(admin.delete_user("uid-123", admin=ADMIN))
         assert wired["bucket"].deleted.count("cvs/2027/uid-123.pdf") == 1
+
+    def test_their_event_signups_go_too_so_a_place_is_freed(self, wired, store):
+        # A confirmed place would otherwise keep counting against the event's
+        # capacity after the account is gone.
+        store["event_signups"]["ev1_uid-123"] = {"event_id": "ev1", "user_id": "uid-123", "status": "confirmed"}
+        store["event_signups"]["ev1_other"] = {"event_id": "ev1", "user_id": "other", "status": "confirmed"}
+        run(admin.delete_user("uid-123", admin=ADMIN))
+        assert list(store["event_signups"]) == ["ev1_other"]
