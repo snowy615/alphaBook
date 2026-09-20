@@ -478,8 +478,8 @@ async def _send_submission_confirmation(application: dict) -> None:
         body_html=(
             f"<p>Hi {name},</p>"
             f"<p>This confirms your CV and assessment for <strong>{programme}</strong> "
-            f"have both been submitted. There is nothing else to do — the committee "
-            f"reviews complete applications, and we will be in touch with a decision.</p>"
+            f"have both been submitted. The committee will review your application and "
+            f"get back to you soon.</p>"
         ),
     )
 

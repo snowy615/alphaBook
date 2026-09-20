@@ -89,10 +89,6 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>
       {cta}
-      <p style="margin-top:36px;padding-top:16px;border-top:1px solid #e5e5e5;
-                font-size:12px;color:#888;">
-        Sent by AlphaBook. If this doesn't apply to you, you can ignore it.
-      </p>
     </div>"""
 
 
