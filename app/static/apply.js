@@ -859,15 +859,24 @@
   ];
 
   function renderLatexReference(id) {
+    // The code shown includes the $...$ delimiters, not just the command —
+    // typing \times alone (as shown, not wrapped) is exactly why a candidate
+    // sees their formula sit there as plain text instead of rendering.
     const rows = LATEX_REFERENCE.map(([label, code]) => `
       <div class="apl-latex-row">
-        <span class="apl-latex-label">${esc(label)}</span>
-        <code>${esc(code)}</code>
-        <span class="apl-latex-eg">$${code}$</span>
+        <div class="apl-latex-label">${esc(label)}</div>
+        <div class="apl-latex-code-line">
+          <code>$${esc(code)}$</code>
+          <span class="apl-latex-eg">$${code}$</span>
+        </div>
       </div>`).join("");
     return `
       <div class="apl-latex-ref" id="${id}Ref" style="display:none;">
         <h4>LaTeX reference</h4>
+        <p class="apl-hint" style="margin:0 0 10px;">
+          Type it exactly as shown, dollar signs included — that's what tells
+          Preview where the formula starts and ends.
+        </p>
         ${rows}
       </div>`;
   }
