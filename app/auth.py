@@ -162,6 +162,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         decoded_token = fb_auth.verify_id_token(id_token)
         firebase_uid = decoded_token['uid']
         email = decoded_token.get('email', '')
+        email_verified = bool(decoded_token.get('email_verified'))
         
         # Check if user exists by firebase_uid
         # We need to query because we don't know the internal ID yet (unless we use firebase_uid as internal ID)
@@ -215,8 +216,19 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             # Only for accounts that actually need it — a Google sign-in
             # arrives with email_verified already true, so this only fires
             # for a fresh email/password signup.
-            if email and not decoded_token.get("email_verified"):
+            if email and not email_verified:
                 await _send_branded_verification_email(email, username)
+
+        # The account exists (and, for a fresh signup, its verification email
+        # has just gone out) — but nobody gets a session until Firebase
+        # reports the address as verified. Signing in again later with a
+        # freshly-issued token (post-verification) picks up email_verified
+        # true and sails through this check normally.
+        if email and not email_verified:
+            return JSONResponse({
+                "status": "unverified",
+                "message": "Check your inbox (and your spam/junk folder) to verify your email before continuing.",
+            }, status_code=403)
 
         # Create session
         token = create_token(user.id) # user.id is firebase_uid
@@ -237,6 +249,28 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
     except Exception as e:
         log.exception("Firebase auth failed")
         return JSONResponse({"status": "error", "message": str(e)}, status_code=401)
+
+
+@router.post("/auth/resend-verification", include_in_schema=False)
+async def resend_verification(id_token: str = Form(...)):
+    """Re-sends the branded verification email — the account itself proves
+    who's asking, via the same Firebase ID token used everywhere else,
+    since a stuck-in-junk email is exactly the situation this exists for."""
+    try:
+        decoded_token = fb_auth.verify_id_token(id_token)
+    except Exception:
+        return JSONResponse({"status": "error", "message": "Invalid session — please sign in again"}, status_code=401)
+
+    email = decoded_token.get("email")
+    if not email:
+        return JSONResponse({"status": "error", "message": "This account has no email on file"}, status_code=400)
+    if decoded_token.get("email_verified"):
+        return JSONResponse({"status": "ok", "message": "Already verified"})
+
+    doc = await db_module.db.collection("users").document(decoded_token["uid"]).get()
+    username = ((doc.to_dict() or {}).get("username") if doc.exists else "") or email.split("@")[0]
+    await _send_branded_verification_email(email, username)
+    return JSONResponse({"status": "ok", "message": "Verification email sent"})
 
 
 # ----- Direct admin login (no Firebase) -----

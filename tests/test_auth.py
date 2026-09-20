@@ -114,7 +114,8 @@ class TestVerificationEmailOnSignup:
 
         result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
 
-        assert result.status_code == 200
+        # Unverified — the email goes out, but no session yet either.
+        assert result.status_code == 403
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@example.com"
         assert sent[0]["subject"] == "Verify your AlphaBook email"
@@ -140,7 +141,7 @@ class TestVerificationEmailOnSignup:
 
         result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username=None))
 
-        assert result.status_code == 200
+        assert result.status_code == 403  # still unverified, still no session
         assert sent == []
 
     def test_a_failed_link_generation_does_not_block_account_creation(self, monkeypatch):
@@ -154,6 +155,119 @@ class TestVerificationEmailOnSignup:
 
         result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
 
-        assert result.status_code == 200
+        assert result.status_code == 403
         assert sent == []   # never got as far as sending, but the account still exists
         assert "fb_uid_1" in fake_db.collections["users"]
+
+
+class TestUnverifiedEmailGate:
+    """The bug this covers: /auth/firebase set a session cookie and logged
+    people straight in regardless of whether they'd clicked the verification
+    link — so the app moved on without anyone actually verifying."""
+
+    def _patch(self, monkeypatch, decoded):
+        fake_db = _FakeDB()
+        monkeypatch.setattr(db_module, "db", fake_db)
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token", lambda token: decoded)
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
+            return True
+
+        monkeypatch.setattr(mailer, "send_email", fake_send)
+        monkeypatch.setattr(
+            auth.fb_auth, "generate_email_verification_link",
+            lambda email, action_code_settings=None: f"https://alphabook.uk/verify?for={email}",
+        )
+        return fake_db
+
+    def test_an_unverified_signup_gets_no_session_cookie(self, monkeypatch):
+        decoded = _decoded(email_verified=False)
+        self._patch(monkeypatch, decoded)
+
+        result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
+
+        assert result.status_code == 403
+        assert "set-cookie" not in {k.lower() for k in result.headers.keys()}
+
+    def test_an_unverified_returning_user_is_also_blocked(self, monkeypatch):
+        decoded = _decoded(uid="fb_uid_9", email="jo@example.com", email_verified=False)
+        fake_db = self._patch(monkeypatch, decoded)
+        fake_db.collections.setdefault("users", {})["fb_uid_9"] = {
+            "username": "jo", "firebase_uid": "fb_uid_9", "email": "jo@example.com",
+            "balance": 10000.0, "is_admin": False, "is_blacklisted": False,
+        }
+
+        result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username=None))
+
+        assert result.status_code == 403
+        assert "set-cookie" not in {k.lower() for k in result.headers.keys()}
+
+    def test_a_verified_token_gets_a_normal_session(self, monkeypatch):
+        decoded = _decoded(uid="fb_uid_10", email="jo@example.com", email_verified=True)
+        self._patch(monkeypatch, decoded)
+
+        result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
+
+        assert result.status_code == 200
+        assert "set-cookie" in {k.lower() for k in result.headers.keys()}
+
+    def test_an_account_with_no_email_at_all_is_never_gated(self, monkeypatch):
+        # Direct-created / legacy accounts with no email shouldn't get stuck
+        # behind a check that has nothing to verify.
+        decoded = {"uid": "fb_uid_11", "email": "", "email_verified": False}
+        self._patch(monkeypatch, decoded)
+
+        result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
+
+        assert result.status_code == 200
+        assert "set-cookie" in {k.lower() for k in result.headers.keys()}
+
+
+class TestResendVerification:
+    def _patch(self, monkeypatch, decoded, *, username_on_file="jo"):
+        fake_db = _FakeDB()
+        fake_db.collections.setdefault("users", {})[decoded["uid"]] = {
+            "username": username_on_file, "firebase_uid": decoded["uid"], "email": decoded.get("email"),
+        }
+        monkeypatch.setattr(db_module, "db", fake_db)
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token", lambda token: decoded)
+
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
+            sent.append(to)
+            return True
+
+        monkeypatch.setattr(mailer, "send_email", fake_send)
+        monkeypatch.setattr(
+            auth.fb_auth, "generate_email_verification_link",
+            lambda email, action_code_settings=None: f"https://alphabook.uk/verify?for={email}",
+        )
+        return sent
+
+    def test_resends_to_an_unverified_account(self, monkeypatch):
+        decoded = _decoded(uid="fb_uid_20", email="jo@example.com", email_verified=False)
+        sent = self._patch(monkeypatch, decoded)
+
+        result = asyncio.run(auth.resend_verification(id_token="tok"))
+
+        assert result.status_code == 200
+        assert sent == ["jo@example.com"]
+
+    def test_an_already_verified_account_is_told_so_and_nothing_is_sent(self, monkeypatch):
+        decoded = _decoded(uid="fb_uid_21", email="jo@example.com", email_verified=True)
+        sent = self._patch(monkeypatch, decoded)
+
+        result = asyncio.run(auth.resend_verification(id_token="tok"))
+
+        assert result.status_code == 200
+        assert sent == []
+
+    def test_an_invalid_token_is_rejected(self, monkeypatch):
+        def boom(token):
+            raise ValueError("bad token")
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token", boom)
+
+        result = asyncio.run(auth.resend_verification(id_token="garbage"))
+
+        assert result.status_code == 401

@@ -49,6 +49,7 @@
       import {
         getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+      import { showVerificationNeeded } from "/static/verify_email.js";
 
       async function init() {
         let firebaseAuth = null;
@@ -119,23 +120,34 @@
             }
 
             try {
-              const userCredential = await signInWithEmailAndPassword(firebaseAuth, identifier, password);
-              const token = await userCredential.user.getIdToken();
+              const user = (await signInWithEmailAndPassword(firebaseAuth, identifier, password)).user;
 
-              const formData = new FormData();
-              formData.append('id_token', token);
+              const postToken = async (forceRefresh) => {
+                const token = await user.getIdToken(forceRefresh);
+                const formData = new FormData();
+                formData.append('id_token', token);
+                const res = await fetch("/auth/firebase", { method: "POST", body: formData, credentials: "include" });
+                const data = await res.json().catch(() => ({}));
+                return { res, data };
+              };
 
-              const loginRes = await fetch("/auth/firebase", {
-                method: "POST",
-                body: formData,
-                credentials: "include"
-              });
+              let { res: loginRes, data } = await postToken(false);
 
-              if (loginRes.ok) {
+              if (loginRes.ok && data.status === "ok") {
                 window.location.href = "/";
+              } else if (data.status === "unverified") {
+                await showVerificationNeeded({ user, email: identifier });
+                ({ res: loginRes } = await postToken(true)); // fresh token now carries email_verified
+                if (loginRes.ok) {
+                  window.location.href = "/";
+                } else {
+                  errDiv.textContent = "Something went wrong — please sign in again.";
+                  errDiv.style.display = "block";
+                  btn.disabled = false;
+                  btn.innerText = "Sign in";
+                }
               } else {
-                const err = await loginRes.json();
-                errDiv.textContent = err.message || err.detail || "Login failed";
+                errDiv.textContent = data.message || data.detail || "Login failed";
                 errDiv.style.display = "block";
                 btn.disabled = false;
                 btn.innerText = "Sign in";

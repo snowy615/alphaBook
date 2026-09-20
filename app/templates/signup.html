@@ -52,6 +52,7 @@
         getAuth, createUserWithEmailAndPassword,
         GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
+      import { showVerificationNeeded } from "/static/verify_email.js";
 
       async function init() {
         try {
@@ -72,27 +73,27 @@
           // very first sign-in with that email) we retry once with a
           // random suffix rather than surfacing a username form nobody asked
           // to fill in.
-          async function syncBackend(user, preferredUsername) {
-            const token = await user.getIdToken();
+          async function syncBackend(user, preferredUsername, forceRefresh = false) {
+            const token = await user.getIdToken(forceRefresh);
             const attempt = async (username) => {
               const formData = new FormData();
               formData.append('id_token', token);
               if (username) formData.append('username', username);
-              return fetch("/auth/firebase", { method: "POST", body: formData, credentials: "include" });
+              const res = await fetch("/auth/firebase", { method: "POST", body: formData, credentials: "include" });
+              const data = await res.json().catch(() => ({}));
+              return { res, data };
             };
 
-            let res = await attempt(preferredUsername);
-            if (!res.ok) {
-              const err = await res.json().catch(() => ({}));
-              if (res.status === 400 && /taken/i.test(err.message || "") && preferredUsername) {
-                res = await attempt(preferredUsername + Math.floor(1000 + Math.random() * 9000));
-              }
-              if (!res.ok) {
-                const err2 = await res.json().catch(() => ({}));
-                throw new Error(err2.message || err2.detail || "Account sync failed");
-              }
+            let { res, data } = await attempt(preferredUsername);
+            if (!res.ok && res.status === 400 && /taken/i.test(data.message || "") && preferredUsername) {
+              ({ res, data } = await attempt(preferredUsername + Math.floor(1000 + Math.random() * 9000)));
             }
-            return res;
+            // A 403 "unverified" isn't a sync failure — the account exists,
+            // it just doesn't get a session yet. Anything else not-ok is.
+            if (!res.ok && data.status !== "unverified") {
+              throw new Error(data.message || data.detail || "Account sync failed");
+            }
+            return { res, data };
           }
 
           // ── Email + password ────────────────────────────────────────────
@@ -115,11 +116,18 @@
               // /auth/firebase below, once the account actually exists —
               // branded like every other AlphaBook email rather than
               // Firebase's generic default template.
-              await syncBackend(user, username);
+              const { data } = await syncBackend(user, username);
 
-              info.textContent = "Account created — check your inbox to verify " + email + ". Taking you in…";
+              if (data.status === "unverified") {
+                await showVerificationNeeded({ user, email });
+                await syncBackend(user, username, true); // fresh token now carries email_verified
+                window.location.href = "/welcome";
+                return;
+              }
+
+              info.textContent = "Account created — taking you in…";
               info.style.display = "block";
-              setTimeout(() => { window.location.href = "/welcome"; }, 1400);
+              setTimeout(() => { window.location.href = "/welcome"; }, 800);
             } catch (error) {
               console.error(error);
               alert("Signup Error: " + error.message);
