@@ -180,10 +180,35 @@
       display: inline-block; width: 12px; height: 12px; margin-right: 5px;
       vertical-align: -1px; border: 1px solid var(--border);
     }
+
+    /* ── Reject confirmation ──────────────────────────────────────────────── */
+    .apa-modal-overlay {
+      position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
+      display: none; align-items: center; justify-content: center; z-index: 100;
+    }
+    .apa-modal {
+      background: var(--panel); border: 1px solid var(--border-strong);
+      padding: 26px; max-width: 380px; width: 90%;
+    }
+    .apa-modal h3 { margin: 0 0 10px; }
+    .apa-modal p { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+    .apa-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
+    .apa-modal-actions .btn.is-danger { background: var(--red); border-color: var(--red); color: #fff; }
   </style>
 </head>
 
 <body>
+  <div class="apa-modal-overlay" id="rejectModal">
+    <div class="apa-modal">
+      <h3>Reject this application?</h3>
+      <p>They'll get a decision email straight away. This can't be undone from here.</p>
+      <div class="apa-modal-actions">
+        <button class="btn ghost" id="rejectModalCancel">Cancel</button>
+        <button class="btn is-danger" id="rejectModalConfirm">Reject application</button>
+      </div>
+    </div>
+  </div>
+
   <div class="topbar">
     <div class="brand">
       <a href="{{ '/admin' if is_admin else '/' }}" class="brand-link">
@@ -772,11 +797,31 @@
       return false;
     }
 
+    // Reject gets its own on-page confirmation (not a native confirm()) since
+    // it's the one decision that's final and easy to click without meaning
+    // to, right next to Shortlist/Accept in the same row of buttons.
+    let rejectModalResolve = null;
+    function askRejectConfirm() {
+      return new Promise((resolve) => {
+        rejectModalResolve = resolve;
+        document.getElementById("rejectModal").style.display = "flex";
+      });
+    }
+    document.getElementById("rejectModalCancel").addEventListener("click", () => {
+      document.getElementById("rejectModal").style.display = "none";
+      rejectModalResolve?.(false);
+    });
+    document.getElementById("rejectModalConfirm").addEventListener("click", () => {
+      document.getElementById("rejectModal").style.display = "none";
+      rejectModalResolve?.(true);
+    });
+
     async function decide(userId, decision) {
       const verbs = { shortlist: "Shortlist", accept: "Accept", reject: "Reject" };
       const extra = decision === "accept" ? " Their membership will be set to the programme they applied for."
         : decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "";
-      if (!confirm(verbs[decision] + " this application?" + extra)) return;
+      const confirmed = decision === "reject" ? await askRejectConfirm() : confirm(verbs[decision] + " this application?" + extra);
+      if (!confirmed) return;
       const note = document.getElementById("decision-note-" + userId);
       try {
         const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/decide`, {
