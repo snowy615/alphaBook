@@ -476,17 +476,24 @@
   // skipping the written assessment afterward, not this).
   function renderCvInfo(state) {
     const years = state.year_of_study_options || [];
+    // A native <select> beats an <input list>+<datalist> combo here — that
+    // combo's "dropdown" is really just autocomplete-while-typing, and
+    // several browsers (Safari in particular) never show a clickable list
+    // for it at all, which is what made the college field look broken.
+    const isOtherCollege = !!state.college && !OXFORD_COLLEGES.includes(state.college);
     $("#app").innerHTML = panel("A few details", `
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>.
       </p>
       <div class="field-group">
         <label>College</label>
-        <input type="text" id="infoCollege" list="collegeList" value="${esc(state.college || "")}"
-               placeholder="e.g. Merton">
-        <datalist id="collegeList">
-          ${OXFORD_COLLEGES.map((c) => `<option value="${esc(c)}">`).join("")}
-        </datalist>
+        <select id="infoCollege">
+          <option value="">Choose one</option>
+          ${OXFORD_COLLEGES.map((c) => `<option value="${esc(c)}" ${state.college === c ? "selected" : ""}>${esc(c)}</option>`).join("")}
+          <option value="__other__" ${isOtherCollege ? "selected" : ""}>Other (not listed)</option>
+        </select>
+        <input type="text" id="infoCollegeOther" placeholder="Enter your college" style="margin-top:8px;${isOtherCollege ? "" : "display:none;"}"
+               value="${esc(isOtherCollege ? state.college : "")}">
       </div>
       <div class="field-group" style="margin-top:14px;">
         <label>Degree</label>
@@ -508,9 +515,17 @@
         <button class="btn ghost" id="infoBack">Back</button>
       </div>`);
 
+    const collegeSelect = $("#infoCollege");
+    const collegeOther = $("#infoCollegeOther");
+    collegeSelect.addEventListener("change", () => {
+      const other = collegeSelect.value === "__other__";
+      collegeOther.style.display = other ? "block" : "none";
+      if (other) collegeOther.focus();
+    });
+
     $("#infoBack").addEventListener("click", () => { cvScreen = null; renderCv(state); });
     $("#infoNext").addEventListener("click", async (e) => {
-      const college = $("#infoCollege").value.trim();
+      const college = collegeSelect.value === "__other__" ? collegeOther.value.trim() : collegeSelect.value;
       const degree = $("#infoDegree").value.trim();
       const year_of_study = $("#infoYear").value;
       if (!college || !degree || !year_of_study) {
