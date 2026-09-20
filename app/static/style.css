@@ -253,20 +253,12 @@ body {
 }
 
 .hero-copy h2 {
-  margin: 0 0 14px;
+  margin: 0 0 22px;
   font-size: 34px;
   line-height: 1.16;
   font-weight: 700;
   letter-spacing: -.015em;
   max-width: 15ch;
-}
-
-.hero-copy p {
-  margin: 0 0 24px;
-  font-size: 14.5px;
-  line-height: 1.65;
-  color: var(--muted);
-  max-width: 54ch;
 }
 
 .hero-cta {
@@ -279,34 +271,6 @@ body {
   padding: 11px 20px;
   font-size: 14px;
   font-weight: 600;
-}
-
-.hero-facts {
-  display: flex;
-  gap: 38px;
-  margin-top: 26px;
-  padding-top: 18px;
-  border-top: 1px solid var(--border);
-}
-
-.hero-facts div {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.hero-facts strong {
-  font-size: 24px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--text);
-}
-
-.hero-facts span {
-  font-size: 11.5px;
-  text-transform: uppercase;
-  letter-spacing: .07em;
-  color: var(--muted);
 }
 
 /* -- live market strip -- */
@@ -758,10 +722,6 @@ body {
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
-  }
-
-  .hero-facts {
-    gap: 22px;
   }
 
   .market-note {
@@ -8277,15 +8237,6 @@ body.tut-locked {
    The coding mode is the differentiator, so it gets a band of its own between
    the hero and the mode grid rather than competing as one card among eight. */
 
-.hero-kicker {
-  display: inline-block;
-  font-size: 12px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--brand);
-  margin-bottom: 10px;
-}
-
 .flagship {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
@@ -8380,7 +8331,7 @@ body.tut-locked {
   min-width: 0;
 }
 
-.flagship-art img {
+.flagship-art svg {
   display: block;
   width: 100%;
   height: auto;
@@ -8390,6 +8341,109 @@ body.tut-locked {
 .flagship-art-cap {
   font-size: 12px;
   color: var(--muted);
+}
+
+/* The map SVG is inlined (not an <img>) so it can pick up these rules and
+   follow the site's own light/dark toggle — an externally-referenced SVG
+   can't see the host page's CSS at all. Its terrain colors have no site
+   token of their own yet, so they get one each; its two players' colors
+   reuse --brand/--green, which the theme already redefines for light mode. */
+:root {
+  --map-bg: #1b2436;
+  --map-bg-deep: #0a1424;
+  --map-forest-bg: #1a2f24;
+  --map-forest-fg: #2c4a36;
+  --map-mountain-bg: #302c40;
+  --map-mountain-fg: #443e5c;
+  --map-icon-chip: #060a12;
+  --map-border: rgba(255, 255, 255, .08);
+}
+
+:root[data-theme="light"] {
+  --map-bg: #e4e9f2;
+  --map-bg-deep: #c7d0e0;
+  --map-forest-bg: #dbeee0;
+  --map-forest-fg: #4f8f5c;
+  --map-mountain-bg: #e6e1f2;
+  --map-mountain-fg: #7c71a8;
+  --map-icon-chip: rgba(22, 29, 43, .55);
+  --map-border: rgba(16, 28, 51, .18);
+}
+
+.flagship-art svg [fill="#1b2436"] { fill: var(--map-bg); }
+.flagship-art svg [fill="#0a1424"] { fill: var(--map-bg-deep); }
+.flagship-art svg [fill="#1a2f24"] { fill: var(--map-forest-bg); }
+.flagship-art svg [fill="#2c4a36"] { fill: var(--map-forest-fg); }
+.flagship-art svg [fill="#302c40"] { fill: var(--map-mountain-bg); }
+.flagship-art svg [stroke="#443e5c"] { stroke: var(--map-mountain-fg); }
+.flagship-art svg [fill="#4d9fd6"] { fill: var(--brand); }
+.flagship-art svg [stroke="#4d9fd6"] { stroke: var(--brand); }
+.flagship-art svg [fill="#35c98b"] { fill: var(--green); }
+.flagship-art svg [stroke="#35c98b"] { stroke: var(--green); }
+.flagship-art svg [fill="#060a12"] { fill: var(--map-icon-chip); }
+.flagship-art svg rect[stroke="#ffffff"] { stroke: var(--map-border); }
+
+/* Movement: territory glows breathe, supply lines flow, units and beacons
+   bob in place. Kept to CSS/attribute selectors so no per-element markup
+   was needed in the SVG itself. */
+.flagship-art svg rect[opacity=".26"] {
+  animation: map-glow 3.2s ease-in-out infinite;
+}
+
+.flagship-art svg line[stroke="#4d9fd6"],
+.flagship-art svg line[stroke="#35c98b"] {
+  stroke-dasharray: 4 3;
+  animation: map-flow 1.1s linear infinite;
+}
+
+.flagship-art svg path[fill="#4d9fd6"],
+.flagship-art svg path[fill="#35c98b"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-bob 2.4s ease-in-out infinite;
+}
+
+.flagship-art svg circle[stroke="#4d9fd6"],
+.flagship-art svg circle[stroke="#35c98b"],
+.flagship-art svg circle[fill="#4d9fd6"],
+.flagship-art svg circle[fill="#35c98b"] {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: map-beacon 2.6s ease-in-out infinite;
+}
+
+.flagship-art svg rect:nth-of-type(3n)[opacity=".26"] {
+  animation-delay: -1.4s;
+}
+
+.flagship-art svg path:nth-of-type(2n)[fill="#4d9fd6"],
+.flagship-art svg path:nth-of-type(2n)[fill="#35c98b"] {
+  animation-delay: -1.2s;
+}
+
+@keyframes map-glow {
+  0%, 100% { opacity: .18; }
+  50% { opacity: .34; }
+}
+
+@keyframes map-flow {
+  to { stroke-dashoffset: -14; }
+}
+
+@keyframes map-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.4px); }
+}
+
+@keyframes map-beacon {
+  0%, 100% { opacity: .6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.12); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flagship-art svg * {
+    animation: none !important;
+  }
 }
 
 @media (max-width: 900px) {
