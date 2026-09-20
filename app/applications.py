@@ -226,6 +226,7 @@ class ConfirmCv(BaseModel):
 class ReviewScore(BaseModel):
     cv_score: Optional[int] = None
     written_score: Optional[int] = None
+    interview_score: Optional[int] = None
     note: Optional[str] = None
 
 
@@ -1006,19 +1007,24 @@ async def submit_availability(req: AvailabilitySubmit, user: User = Depends(curr
 
 def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None) -> Dict[str, Any]:
     """
-    Every reviewer's CV/written scores, and the averages across them.
+    Every reviewer's CV/written/interview scores, and the averages across them.
 
     Several Quant Analyst members can score the same applicant independently;
     nothing here picks a single reviewer's word over another's, which is the
     whole point of averaging instead of just taking the latest score entered.
+    Interview scores apply to everyone alike, fast-tracked or not — unlike
+    the written score, there's no route through the pipeline that skips the
+    interview itself.
     """
     reviews = application.get("reviews") or {}
     cv_scores = [r["cv_score"] for r in reviews.values() if r.get("cv_score") is not None]
     written_scores = [r["written_score"] for r in reviews.values() if r.get("written_score") is not None]
+    interview_scores = [r["interview_score"] for r in reviews.values() if r.get("interview_score") is not None]
     return {
         "count": len(reviews),
         "cv_avg": round(sum(cv_scores) / len(cv_scores), 1) if cv_scores else None,
         "written_avg": round(sum(written_scores) / len(written_scores), 1) if written_scores else None,
+        "interview_avg": round(sum(interview_scores) / len(interview_scores), 1) if interview_scores else None,
         "entries": sorted(
             [{"reviewer_id": rid, **r} for rid, r in reviews.items()],
             key=lambda r: r.get("updated_at") or _now(),
@@ -1120,12 +1126,13 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     docs = await db_module.db.collection(COLLECTION).get()
     rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=viewer_id) for d in docs]
 
-    # Ranked by the average of the CV and written reviewer scores — there is
-    # no auto-graded component any more, so this average *is* the ranking.
-    # An application nobody has scored yet sorts to the bottom rather than
-    # being read as a zero, since it hasn't had its turn.
+    # Ranked by the average of the CV, written and interview reviewer scores
+    # — there is no auto-graded component any more, so this average *is* the
+    # ranking. An application nobody has scored yet sorts to the bottom
+    # rather than being read as a zero, since it hasn't had its turn.
     def _combined(r: Dict[str, Any]) -> Optional[float]:
-        parts = [v for v in (r["review"]["cv_avg"], r["review"]["written_avg"]) if v is not None]
+        parts = [v for v in (r["review"]["cv_avg"], r["review"]["written_avg"], r["review"]["interview_avg"])
+                 if v is not None]
         return round(sum(parts) / len(parts), 2) if parts else None
 
     for r in rows:
@@ -1191,7 +1198,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score", "CV avg", "Written avg",
+        "Programme", "Status", "Combined score", "CV avg", "Written avg", "Interview avg",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1207,7 +1214,8 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
 
     for r in rows:
         reviewer_notes = "; ".join(
-            f"{e['reviewer_name']}: CV {e.get('cv_score', '—')}, written {e.get('written_score', '—')}"
+            f"{e['reviewer_name']}: CV {e.get('cv_score', '—')}, written {e.get('written_score', '—')}, "
+            f"interview {e.get('interview_score', '—')}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
         )
@@ -1222,6 +1230,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             r["combined_score"] if r["combined_score"] is not None else "",
             r["review"]["cv_avg"] if r["review"]["cv_avg"] is not None else "",
             r["review"]["written_avg"] if r["review"]["written_avg"] is not None else "",
+            r["review"]["interview_avg"] if r["review"]["interview_avg"] is not None else "",
             r["review"]["count"], reviewer_notes,
             _dt(r["created_at"]), _dt(r["submitted_at"]), _dt(r["shortlisted_at"]),
             _dt(r["decided_at"]), r["decided_by"], r["decision_note"],
@@ -1237,7 +1246,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         ])
 
     widths = [6, 14, 18, 24, 24, 16, 14, 20, 18, 12, 26,
-              16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
+              16, 12, 14, 8, 12, 12, 14, 40, 17, 17, 17, 17, 14, 24,
               10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
@@ -1281,16 +1290,17 @@ async def applicant_cv(user_id: str, reviewer: User = Depends(require_reviewer))
 @router.post("/admin/{user_id}/score")
 async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depends(require_reviewer)):
     """
-    Record this reviewer's CV and written-response scores.
+    Record this reviewer's CV, written-response and interview scores.
 
     One entry per reviewer, keyed by their own id — resubmitting updates your
     own score rather than adding a second one, and the average on display
     always reflects everyone's latest.
     """
-    for label, value in (("CV", payload.cv_score), ("Written", payload.written_score)):
+    scores = (("CV", payload.cv_score), ("Written", payload.written_score), ("Interview", payload.interview_score))
+    for label, value in scores:
         if value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
             raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
-    if payload.cv_score is None and payload.written_score is None:
+    if all(value is None for _, value in scores):
         raise HTTPException(400, "Enter at least one score")
 
     application = await _load(user_id)
@@ -1305,6 +1315,7 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
         "reviewer_name": reviewer.username,
         "cv_score": payload.cv_score if payload.cv_score is not None else existing.get("cv_score"),
         "written_score": payload.written_score if payload.written_score is not None else existing.get("written_score"),
+        "interview_score": payload.interview_score if payload.interview_score is not None else existing.get("interview_score"),
         "note": (payload.note or "").strip()[:300] or existing.get("note", ""),
         "updated_at": _now(),
     }

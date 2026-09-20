@@ -441,6 +441,10 @@
                 {% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}
               </span>
             </div>
+            <div class="apa-review-stat">
+              <span class="apa-k">Interview — average of {{ r.review.count }}</span>
+              <span class="apa-v">{% if r.review.interview_avg is not none %}{{ r.review.interview_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
+            </div>
           </div>
 
           {% if r.review.entries %}
@@ -449,7 +453,8 @@
             <li>
               <strong>{{ e.reviewer_name }}</strong> —
               CV {{ e.cv_score if e.cv_score is not none else "—" }},
-              written {{ e.written_score if e.written_score is not none else "—" }}
+              written {{ e.written_score if e.written_score is not none else "—" }},
+              interview {{ e.interview_score if e.interview_score is not none else "—" }}
               {% if e.note %}· “{{ e.note }}”{% endif %}
             </li>
             {% endfor %}
@@ -467,6 +472,13 @@
               <label for="written-{{ r.user_id }}">Written ({{ score_min }}–{{ score_max }})</label>
               <input type="number" id="written-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
                      value="{{ r.review.mine.written_score if r.review.mine and r.review.mine.written_score is not none else '' }}">
+            </div>
+            {% endif %}
+            {% if r.status != "submitted" %}
+            <div class="apa-score-field">
+              <label for="interview-score-{{ r.user_id }}">Interview ({{ score_min }}–{{ score_max }})</label>
+              <input type="number" id="interview-score-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
+                     value="{{ r.review.mine.interview_score if r.review.mine and r.review.mine.interview_score is not none else '' }}">
             </div>
             {% endif %}
             <div class="apa-score-field apa-score-note">
@@ -695,10 +707,12 @@
       const btn = event.target.querySelector("button[type=submit]");
       const cvEl = document.getElementById("cv-" + userId);
       const writtenEl = document.getElementById("written-" + userId);   // absent for Fast-Track applicants
+      const interviewEl = document.getElementById("interview-score-" + userId);   // absent before shortlisting
       const noteEl = document.getElementById("note-" + userId);
       const cv = cvEl.value === "" ? null : Number(cvEl.value);
       const written = (!writtenEl || writtenEl.value === "") ? null : Number(writtenEl.value);
-      if (cv === null && written === null) {
+      const interview = (!interviewEl || interviewEl.value === "") ? null : Number(interviewEl.value);
+      if (cv === null && written === null && interview === null) {
         flash("Enter at least one score", true);
         return false;
       }
@@ -708,7 +722,7 @@
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cv_score: cv, written_score: written, note: noteEl.value }),
+          body: JSON.stringify({ cv_score: cv, written_score: written, interview_score: interview, note: noteEl.value }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);

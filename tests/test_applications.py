@@ -363,7 +363,10 @@ class TestReviewSummary:
 
     def test_no_reviews_yet(self):
         summary = ap._review_summary({}, viewer_id="r1")
-        assert summary == {"count": 0, "cv_avg": None, "written_avg": None, "entries": [], "mine": None}
+        assert summary == {
+            "count": 0, "cv_avg": None, "written_avg": None, "interview_avg": None,
+            "entries": [], "mine": None,
+        }
 
 
 class TestRequireReviewer:
@@ -459,6 +462,65 @@ class TestScoring:
         result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=7), reviewer))
         assert result["review"]["cv_avg"] == 7.0
 
+    def test_interview_score_out_of_range_is_rejected(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        reviewer = User(id="r1", username="alice")
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=0), reviewer))
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=11), reviewer))
+
+    def test_an_interview_score_alone_is_enough_to_submit(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        reviewer = User(id="r1", username="alice")
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=9), reviewer))
+        assert result["review"]["interview_avg"] == 9.0
+
+    def test_interview_scores_from_multiple_reviewers_are_averaged(self, monkeypatch):
+        self._patch(monkeypatch, self._base())
+        alice = User(id="r1", username="alice")
+        bob = User(id="r2", username="bob")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=8), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=6), bob))
+        assert result["review"]["interview_avg"] == 7.0
+
+    def test_a_fast_tracked_applicant_can_still_get_an_interview_score(self, monkeypatch):
+        # Written is skipped for Fast-Track, but everyone sits an interview.
+        application = self._base()
+        application["event_ticket"] = ap.EVENT_TICKET_FAST_TRACK
+        self._patch(monkeypatch, application)
+        reviewer = User(id="r1", username="alice")
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=10), reviewer))
+        assert result["review"]["interview_avg"] == 10.0
+
+
+class TestRankedRows:
+    def test_combined_score_folds_in_the_interview_average(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {
+            "u1": {
+                "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED,
+                "reviews": {"r1": {"cv_score": 8, "written_score": 6, "interview_score": 10}},
+            },
+        }
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
+        assert rows[0]["review"]["interview_avg"] == 10.0
+        assert rows[0]["combined_score"] == 8.0   # mean of 8, 6, 10
+
+    def test_an_unscored_interview_does_not_drag_the_average_down(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {
+            "u1": {
+                "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
+                "event_ticket": ap.EVENT_TICKET_FAST_TRACK,
+                "reviews": {"r1": {"cv_score": 9}},
+            },
+        }
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
+        assert rows[0]["combined_score"] == 9.0   # not scored yet, so it's simply excluded
+
 
 class TestDecideFlow:
     def _patch(self, monkeypatch, application):
@@ -528,6 +590,18 @@ class TestDecideFlow:
         for decision in ("shortlist", "accept", "reject"):
             with pytest.raises(HTTPException):
                 asyncio.run(ap.decide("u1", ap.Decision(decision=decision), admin))
+
+    def test_a_fast_tracked_applicant_can_be_shortlisted_just_like_anyone_else(self, monkeypatch):
+        # Fast-Track skips the written assessment, not the interview — the
+        # shortlist/accept/reject pipeline (and the scheduling that follows
+        # it) has to work exactly the same for them.
+        application = self._base(ap.S_SUBMITTED)
+        application["event_ticket"] = ap.EVENT_TICKET_FAST_TRACK
+        store, sent, _ = self._patch(monkeypatch, application)
+        admin = User(id="a1", username="root", is_admin=True)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="shortlist"), admin))
+        assert result["status"] == ap.S_SHORTLISTED
+        assert store["u1"]["status"] == ap.S_SHORTLISTED
 
     def test_a_decided_application_cannot_be_decided_again(self, monkeypatch):
         self._patch(monkeypatch, self._base(ap.S_ACCEPTED))
@@ -884,6 +958,20 @@ class TestInterviewScheduling:
         # they confirm — so they can hold the slot while they decide.
         assert sent[0]["has_ics"] is True
         assert result["interview"]["status"] == ap.INTERVIEW_PROPOSED
+
+    def test_a_fast_tracked_candidate_gets_scheduled_the_same_way(self, monkeypatch):
+        application = self._shortlisted_application()
+        application["event_ticket"] = ap.EVENT_TICKET_FAST_TRACK
+        fake_db, sent = self._patch(monkeypatch, application, self._reviewer_users())
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), reviewer))
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["status"] == ap.INTERVIEW_PROPOSED
+        assert len(sent) == 1
 
     def _proposed_application(self):
         application = self._shortlisted_application()
