@@ -77,35 +77,30 @@ body {
   min-width: 0;
 }
 
-/* The source PNG is the full Oxford Alpha Fund lockup (280x252: mark at
-   y 72-159, wordmark at y 168-179). At header size the wordmark is an
-   unreadable smear, so the tile is a window onto the mark alone — the image is
-   scaled and offset so only x 48-217 / y 66-165 of the source shows. */
+/* The source PNG is the full AlphaBook wordmark (450x166, transparent
+   ground) — shown whole, not cropped, so it just needs a fixed header
+   height with width following the image's own aspect ratio. */
 .logo {
-  position: relative;
+  display: flex;
+  align-items: center;
   flex: 0 0 auto;
-  width: 44px;
-  height: 26px;
-  background: #071131;
-  overflow: hidden;
+  height: 28px;
 }
 
 .logo .logo-img {
-  position: absolute;
-  width: 73px;
-  height: 66px;
+  height: 100%;
+  width: auto;
   max-width: none;
   max-height: none;
-  left: -12.6px;
-  top: -17.3px;
-  object-fit: fill;
+  object-fit: contain;
 }
 
 /* Any .logo-img that is not inside a .logo tile (some pages ship a bare
-   <img>) must never render at its natural 280px. */
+   <img>) must never render at its natural 450px. */
 .logo-img {
   max-width: 100%;
   max-height: 32px;
+  width: auto;
 }
 
 .titles h1 {

@@ -66,11 +66,11 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
                 max-width:520px;margin:0 auto;color:#1a1a1a;">
       <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;">
-        <img src="{LOGO_URL}" alt="AlphaBook" width="28" height="28"
-             style="width:28px;height:28px;display:block;">
-        <span style="font-weight:700;font-size:15px;letter-spacing:0.01em;color:#1a1a1a;">
-          AlphaBook <span style="font-weight:400;color:#888;">&middot; Alpha Fund</span>
-        </span>
+        <div style="background:#0d121e;padding:6px 10px;line-height:0;">
+          <img src="{LOGO_URL}" alt="AlphaBook" width="70" height="26"
+               style="width:70px;height:26px;display:block;">
+        </div>
+        <span style="font-weight:400;font-size:13px;color:#888;">&middot; Alpha Fund</span>
       </div>
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>
