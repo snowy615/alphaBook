@@ -26,6 +26,7 @@ import datetime as dt
 import logging
 import os
 import smtplib
+from email import utils as email_utils
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Optional
@@ -46,13 +47,22 @@ CONFIGURED = bool(SMTP_HOST and SMTP_FROM)
 
 # Where the logo image is fetched from — must be an absolute URL since email
 # clients render with no page context to resolve a relative one against.
+# This is a *separate* asset from the one used on the site: it has the dark
+# backdrop baked in as opaque pixels rather than relying on CSS background +
+# PNG transparency, because Outlook's desktop renderer (the Word engine) is
+# unreliable with alpha-transparent PNGs and can fail to display them at all.
 BASE_URL = os.getenv("APP_BASE_URL", "https://alphabook.uk").rstrip("/")
-LOGO_URL = f"{BASE_URL}/static/alphabook.png"
+LOGO_URL = f"{BASE_URL}/static/alphabook_email.png"
 
 
 def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: Optional[str] = None) -> str:
-    """A minimal, inbox-safe HTML shell — table-free is fine here since this
-    is read in modern mail clients, not Outlook 2007."""
+    """A minimal, inbox-safe HTML shell.
+
+    The header is a <table>, not a flex div — Outlook's desktop renderer
+    doesn't support flexbox at all, so a flex row can silently collapse or
+    reorder there. A <table> with valign is the one layout primitive every
+    mail client, Outlook included, has always supported.
+    """
     cta = ""
     if cta_label and cta_url:
         cta = f'''
@@ -65,13 +75,17 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     return f"""
     <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
                 max-width:520px;margin:0 auto;color:#1a1a1a;">
-      <div style="display:flex;align-items:center;gap:9px;margin-bottom:22px;">
-        <div style="background:#0d121e;padding:6px 10px;line-height:0;">
-          <img src="{LOGO_URL}" alt="AlphaBook" width="70" height="26"
-               style="width:70px;height:26px;display:block;">
-        </div>
-        <span style="font-weight:400;font-size:13px;color:#888;">&middot; Alpha Fund</span>
-      </div>
+      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
+        <tr>
+          <td style="padding:0;">
+            <img src="{LOGO_URL}" alt="AlphaBook" width="90" height="42"
+                 style="width:90px;height:42px;display:block;border:0;">
+          </td>
+          <td style="padding:0 0 0 10px;font-weight:400;font-size:13px;color:#888;vertical-align:middle;">
+            &middot; Alpha Fund
+          </td>
+        </tr>
+      </table>
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>
       {cta}
@@ -135,6 +149,11 @@ def _send_sync(to: str, subject: str, html: str, text: str,
     msg["Subject"] = subject
     msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     msg["To"] = to
+    # Gmail's own relay fills these in for mail sent through its web/app
+    # clients, but smtplib doesn't add them for us — and their absence is
+    # itself a spam signal, since every legitimate mail server stamps both.
+    msg["Date"] = email_utils.formatdate(localtime=True)
+    msg["Message-ID"] = email_utils.make_msgid(domain=SMTP_FROM.split("@")[-1] or "alphabook.uk")
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
 

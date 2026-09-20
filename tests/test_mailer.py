@@ -92,6 +92,33 @@ class TestConfigured:
         assert "Jo" in calls[0]["text"] and "welcome" in calls[0]["text"]
 
 
+class TestMessageHeaders:
+    """Date and Message-ID were missing entirely — smtplib doesn't add them
+    for you, and their absence is itself a spam signal most filters weigh,
+    Microsoft's especially."""
+
+    def test_the_raw_message_carries_date_and_message_id(self, monkeypatch):
+        sent_holder = {}
+
+        class _CaptureSMTP:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def starttls(self): pass
+            def login(self, *a): pass
+            def send_message(self, msg): sent_holder["msg"] = msg
+
+        monkeypatch.setattr(mailer.smtplib, "SMTP", _CaptureSMTP)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+
+        mailer._send_sync("jo@merton.ox.ac.uk", "Subject", "<p>hi</p>", "hi")
+
+        msg = sent_holder["msg"]
+        assert msg["Date"] is not None
+        assert msg["Message-ID"] is not None
+        assert msg["Message-ID"].strip().startswith("<")
+
+
 class TestIcsInvite:
     def _build(self, **overrides):
         start = dt.datetime(2026, 9, 15, 14, 0, tzinfo=dt.timezone.utc)
