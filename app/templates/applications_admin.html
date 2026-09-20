@@ -209,6 +209,17 @@
     </div>
   </div>
 
+  <div class="apa-modal-overlay" id="acceptModal">
+    <div class="apa-modal">
+      <h3>Accept this application?</h3>
+      <p>Are you sure? If you're accepting someone, make sure you've got approval first — this grants membership straight away and emails the candidate.</p>
+      <div class="apa-modal-actions">
+        <button class="btn ghost" id="acceptModalCancel">Cancel</button>
+        <button class="btn primary" id="acceptModalConfirm">Accept application</button>
+      </div>
+    </div>
+  </div>
+
   <div class="topbar">
     <div class="brand">
       <a href="{{ '/admin' if is_admin else '/' }}" class="brand-link">
@@ -587,27 +598,32 @@
         </div>
         {% endif %}
 
-        <!-- Decisions stay admin-only. Shortlisting is the interview gate:
-             accept is only offered once an applicant has been shortlisted. -->
-        {% if is_admin %}
-          {% if r.status == "submitted" %}
-          <div class="apa-decide">
-            <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)">
-            <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
-            <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
-          </div>
-          {% elif r.status == "shortlisted" %}
-          <div class="apa-decide">
-            <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)" value="{{ r.decision_note }}">
-            <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
-            <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
-          </div>
-          {% elif r.status in ("accepted", "rejected") %}
-          <p class="apa-decided-note">
-            {{ r.status | capitalize }}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
-          </p>
-          {% endif %}
+        <!-- Open to any reviewer — an Analyst can shortlist, accept or
+             reject on their own. Accept gets its own heavier confirmation
+             client-side since it's final and grants membership; every
+             decision is attributed and shown below, visible to everyone. -->
+        {% if r.status == "submitted" %}
+        <div class="apa-decide">
+          <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)">
+          <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
+          <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+        </div>
+        {% elif r.status == "shortlisted" %}
+        {% if r.shortlisted_by %}
+        <p class="apa-decided-note">Shortlisted by {{ r.shortlisted_by }}</p>
+        {% endif %}
+        <div class="apa-decide">
+          <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)" value="{{ r.decision_note }}">
+          <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
+          <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+        </div>
+        {% elif r.status in ("accepted", "rejected") %}
+        <p class="apa-decided-note">
+          {{ r.status | capitalize }}{% if r.decided_by %} by {{ r.decided_by }}{% endif %}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
+        </p>
+        {% endif %}
 
+        {% if is_admin %}
           <!-- Record-keeping, not a decision: redo resets the assessment,
                delete removes the application outright. Both admin-only. -->
           <div class="apa-danger">
@@ -797,30 +813,35 @@
       return false;
     }
 
-    // Reject gets its own on-page confirmation (not a native confirm()) since
-    // it's the one decision that's final and easy to click without meaning
-    // to, right next to Shortlist/Accept in the same row of buttons.
-    let rejectModalResolve = null;
-    function askRejectConfirm() {
-      return new Promise((resolve) => {
-        rejectModalResolve = resolve;
-        document.getElementById("rejectModal").style.display = "flex";
+    // Reject and accept each get their own on-page confirmation (not a
+    // native confirm()) — both are final, sit right next to each other and
+    // Shortlist, and accept in particular is easy to click without having
+    // actually cleared it with anyone first.
+    function wireConfirmModal(overlayId, cancelId, confirmId) {
+      let resolveFn = null;
+      const overlay = document.getElementById(overlayId);
+      document.getElementById(cancelId).addEventListener("click", () => {
+        overlay.style.display = "none";
+        resolveFn?.(false);
+      });
+      document.getElementById(confirmId).addEventListener("click", () => {
+        overlay.style.display = "none";
+        resolveFn?.(true);
+      });
+      return () => new Promise((resolve) => {
+        resolveFn = resolve;
+        overlay.style.display = "flex";
       });
     }
-    document.getElementById("rejectModalCancel").addEventListener("click", () => {
-      document.getElementById("rejectModal").style.display = "none";
-      rejectModalResolve?.(false);
-    });
-    document.getElementById("rejectModalConfirm").addEventListener("click", () => {
-      document.getElementById("rejectModal").style.display = "none";
-      rejectModalResolve?.(true);
-    });
+    const askRejectConfirm = wireConfirmModal("rejectModal", "rejectModalCancel", "rejectModalConfirm");
+    const askAcceptConfirm = wireConfirmModal("acceptModal", "acceptModalCancel", "acceptModalConfirm");
 
     async function decide(userId, decision) {
       const verbs = { shortlist: "Shortlist", accept: "Accept", reject: "Reject" };
-      const extra = decision === "accept" ? " Their membership will be set to the programme they applied for."
-        : decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "";
-      const confirmed = decision === "reject" ? await askRejectConfirm() : confirm(verbs[decision] + " this application?" + extra);
+      const extra = decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "";
+      const confirmed = decision === "reject" ? await askRejectConfirm()
+        : decision === "accept" ? await askAcceptConfirm()
+        : confirm(verbs[decision] + " this application?" + extra);
       if (!confirmed) return;
       const note = document.getElementById("decision-note-" + userId);
       try {

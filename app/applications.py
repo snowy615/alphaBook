@@ -110,11 +110,11 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
     Anyone who can read the review page and score applicants: admins, and
     every Analyst member (Fundamental or Quant).
 
-    Deliberately wider than the accept/shortlist/reject decision itself
-    (still :func:`app.admin.require_admin`) — reading CVs and scoring them is
-    exactly what Analyst members are there to do, several of them
-    independently, so the average means something. Making the actual call is
-    still a smaller, named decision.
+    Every decision in :func:`decide` — shortlist, accept, reject — rides on
+    this same check. There's no narrower gate on accept even though it
+    grants membership: the safeguard is a heavier client-side confirmation
+    and the fact that every decision is attributed and visible to every
+    reviewer, not a 403.
     """
     if user.is_admin:
         return user
@@ -1089,6 +1089,7 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "review": _review_summary(application, viewer_id),
         "interview": _admin_interview_view(application.get("interview")),
         "shortlisted_at": _as_utc(application.get("shortlisted_at")),
+        "shortlisted_by": application.get("shortlisted_by") or "",
         "availability": application.get("availability") or [],
         "availability_updated_at": _as_utc(application.get("availability_updated_at")),
         "previous_application": (
@@ -1648,9 +1649,18 @@ async def decline_interview(payload: InterviewDecline, user: User = Depends(curr
 
 
 @router.post("/admin/{user_id}/decide")
-async def decide(user_id: str, payload: Decision, admin: User = Depends(require_admin)):
+async def decide(user_id: str, payload: Decision, reviewer: User = Depends(require_reviewer)):
     """
     Move an application to shortlisted, accepted or rejected.
+
+    Open to any reviewer, same as scoring a CV or proposing an interview
+    time — an Analyst member can shortlist, accept or reject on their own.
+    The client is expected to make Accept a deliberately heavier click (its
+    own confirmation, checking they actually have approval) since it's the
+    one call here that grants membership and can't be walked back from this
+    page, but that's a UI safeguard, not an authorization boundary — every
+    decision is attributed (``shortlisted_by`` / ``decided_by``) and visible
+    to every reviewer, which is the real check on a bad call.
 
     Shortlisting is the interview stage: a submitted application can be
     shortlisted or rejected outright, but can only be *accepted* once it has
@@ -1672,19 +1682,19 @@ async def decide(user_id: str, payload: Decision, admin: User = Depends(require_
             raise HTTPException(400, "Only a newly submitted application can be shortlisted")
         application["status"] = S_SHORTLISTED
         application["shortlisted_at"] = _now()
-        application["shortlisted_by"] = admin.username
+        application["shortlisted_by"] = reviewer.username
     elif payload.decision == "accept":
         if status != S_SHORTLISTED:
             raise HTTPException(400, "Shortlist the applicant and hold the interview before accepting")
         application["status"] = S_ACCEPTED
         application["decided_at"] = _now()
-        application["decided_by"] = admin.username
+        application["decided_by"] = reviewer.username
     else:  # reject
         if status not in (S_SUBMITTED, S_SHORTLISTED):
             raise HTTPException(400, "That application has already been decided")
         application["status"] = S_REJECTED
         application["decided_at"] = _now()
-        application["decided_by"] = admin.username
+        application["decided_by"] = reviewer.username
 
     if payload.note is not None:
         application["decision_note"] = (payload.note or "").strip()[:500]

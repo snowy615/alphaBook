@@ -609,6 +609,35 @@ class TestDecideFlow:
         with pytest.raises(HTTPException):
             asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
 
+    def test_a_non_admin_analyst_can_shortlist(self, monkeypatch):
+        # The bug this covers: shortlisting was accidentally as narrow as
+        # accept/reject, so an Analyst reviewer — who can already score CVs
+        # and schedule interviews — couldn't move a submitted application
+        # into the interview stage at all.
+        store, sent, _ = self._patch(monkeypatch, self._base(ap.S_SUBMITTED))
+        analyst = User(id="r1", username="priya", is_admin=False)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="shortlist"), analyst))
+        assert result["status"] == ap.S_SHORTLISTED
+        assert store["u1"]["status"] == ap.S_SHORTLISTED
+        assert store["u1"]["shortlisted_by"] == "priya"
+
+    def test_a_non_admin_analyst_can_accept(self, monkeypatch):
+        # Accept/reject are open to any reviewer too — the safeguard against
+        # a bad call is the client-side "are you sure, do you have approval"
+        # confirmation plus every decision being attributed, not a 403.
+        store, sent, _ = self._patch(monkeypatch, self._base(ap.S_SHORTLISTED))
+        analyst = User(id="r1", username="priya", is_admin=False)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), analyst))
+        assert result["status"] == ap.S_ACCEPTED
+        assert store["u1"]["decided_by"] == "priya"
+
+    def test_a_non_admin_analyst_can_reject(self, monkeypatch):
+        store, sent, _ = self._patch(monkeypatch, self._base(ap.S_SUBMITTED))
+        analyst = User(id="r1", username="priya", is_admin=False)
+        result = asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), analyst))
+        assert result["status"] == ap.S_REJECTED
+        assert store["u1"]["decided_by"] == "priya"
+
 
 class TestRejectionEmailWording:
     """Analyst rejections read differently from Bootcamp ones — Analyst
