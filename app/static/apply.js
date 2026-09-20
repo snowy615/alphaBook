@@ -840,13 +840,54 @@
   // one submit path — the backend already knows which section is open and
   // saves into it accordingly.
 
-  function renderEssayBox(id) {
+  // A compact cheat-sheet of the LaTeX a candidate is realistically likely
+  // to reach for on an estimation question — not exhaustive, just common.
+  const LATEX_REFERENCE = [
+    ["Fraction", "\\frac{a}{b}"],
+    ["Exponent", "x^{2}"],
+    ["Subscript", "x_{1}"],
+    ["Square root", "\\sqrt{x}"],
+    ["Multiply", "a \\times b"],
+    ["Divide", "a \\div b"],
+    ["Approx. equal", "a \\approx b"],
+    ["Sum", "\\sum_{i=1}^{n} x_i"],
+    ["Product", "\\prod_{i=1}^{n} x_i"],
+    ["Greek letters", "\\pi, \\mu, \\sigma, \\alpha"],
+    ["Infinity", "\\infty"],
+    ["Less/greater or equal", "a \\leq b,\\ a \\geq b"],
+    ["Not equal", "a \\neq b"],
+  ];
+
+  function renderLatexReference(id) {
+    const rows = LATEX_REFERENCE.map(([label, code]) => `
+      <div class="apl-latex-row">
+        <span class="apl-latex-label">${esc(label)}</span>
+        <code>${esc(code)}</code>
+        <span class="apl-latex-eg">$${code}$</span>
+      </div>`).join("");
     return `
-      <textarea class="apl-essay" id="${id}" placeholder="Take a minute to think, then write."
-                spellcheck="true"></textarea>
-      <div class="apl-essay-meta">
-        <span id="${id}Count">0 words</span>
-        <button type="button" class="btn ghost apl-preview-btn" id="${id}PreviewToggle">Preview</button>
+      <div class="apl-latex-ref" id="${id}Ref" style="display:none;">
+        <h4>LaTeX reference</h4>
+        ${rows}
+      </div>`;
+  }
+
+  function renderEssayBox(id, opts = {}) {
+    const withRef = !!opts.latexRef;
+    return `
+      <div class="apl-essay-layout">
+        <div class="apl-essay-col">
+          <textarea class="apl-essay" id="${id}" placeholder="Take a minute to think, then write."
+                    spellcheck="true"></textarea>
+          <div class="apl-essay-meta">
+            <span id="${id}Count">0 words</span>
+            <span style="display:flex;gap:8px;">
+              ${withRef ? `<button type="button" class="btn ghost apl-preview-btn" id="${id}RefToggle">LaTeX reference</button>` : ""}
+              <button type="button" class="btn ghost apl-preview-btn" id="${id}PreviewToggle">Preview</button>
+            </span>
+          </div>
+        </div>
+        ${withRef ? renderLatexReference(id) : ""}
       </div>
       <div class="apl-preview" id="${id}Preview" style="display:none;"></div>
       <p class="apl-hint">
@@ -874,7 +915,7 @@
     } catch { /* a malformed formula just shows as typed */ }
   }
 
-  function wireEssayBox(id, initialText, onInput) {
+  function wireEssayBox(id, initialText, onInput, opts = {}) {
     const essay = $("#" + id);
     const countEl = $("#" + id + "Count");
     const toggle = $("#" + id + "PreviewToggle");
@@ -910,6 +951,25 @@
         toggle.textContent = "Hide preview";
       }
     });
+
+    if (opts.latexRef) {
+      const refBtn = $("#" + id + "RefToggle");
+      const refPanel = $("#" + id + "Ref");
+      // Static content — render its math once rather than on every toggle.
+      if (window.renderMathInElement) {
+        try {
+          renderMathInElement(refPanel, {
+            delimiters: [{ left: "$", right: "$", display: false }],
+            throwOnError: false,
+          });
+        } catch { /* the reference sheet still reads fine as raw LaTeX */ }
+      }
+      refBtn.addEventListener("click", () => {
+        const showing = refPanel.style.display !== "none";
+        refPanel.style.display = showing ? "none" : "block";
+        refBtn.textContent = showing ? "LaTeX reference" : "Hide reference";
+      });
+    }
     return essay;
   }
 
@@ -992,12 +1052,12 @@
         </div>
         <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
         <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
-        ${renderEssayBox("essay")}
+        ${renderEssayBox("essay", { latexRef: true })}
         <button class="btn primary" id="essayNext" style="margin-top:14px;">Submit</button>
         <p class="apl-hint">This is the last question — submitting finishes the assessment.</p>`,
         "part two of two");
 
-      wireEssayBox("essay", w.text, scheduleDraft);
+      wireEssayBox("essay", w.text, scheduleDraft, { latexRef: true });
       $("#essay").focus();
       $("#essayNext").addEventListener("click", () => submitWritten(true));
       startTicking();

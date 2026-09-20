@@ -113,6 +113,9 @@
     }
     .apl-progress span.is-low { background: var(--red); }
 
+    .apl-essay-layout { display: flex; gap: 16px; align-items: flex-start; }
+    .apl-essay-col { flex: 1 1 auto; min-width: 0; }
+
     .apl-essay {
       width: 100%; min-height: 260px; resize: vertical; padding: 14px;
       border: 1px solid var(--border); background: var(--bg); color: var(--text);
@@ -130,6 +133,29 @@
     }
     .apl-preview code, .apl-hint code {
       font-size: 12px; background: var(--card); padding: 1px 5px; border: 1px solid var(--border);
+    }
+
+    /* ── LaTeX reference sheet (estimation question only) ─────────────────── */
+    .apl-latex-ref {
+      flex: 0 0 260px; width: 260px; box-sizing: border-box; padding: 14px;
+      border: 1px solid var(--border); background: var(--panel);
+      font-size: 12.5px; line-height: 1.6; max-height: 320px; overflow-y: auto;
+    }
+    .apl-latex-ref h4 {
+      margin: 0 0 8px; font-size: 11px; text-transform: uppercase;
+      letter-spacing: .06em; color: var(--muted);
+    }
+    .apl-latex-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      gap: 8px; padding: 5px 0; border-bottom: 1px solid var(--border);
+    }
+    .apl-latex-row:last-child { border-bottom: none; }
+    .apl-latex-label { color: var(--muted); flex: 1 1 auto; }
+    .apl-latex-row code { white-space: nowrap; }
+    .apl-latex-eg { color: var(--text); white-space: nowrap; }
+    @media (max-width: 640px) {
+      .apl-essay-layout { flex-direction: column; }
+      .apl-latex-ref { width: 100%; flex-basis: auto; max-height: 220px; }
     }
 
     .apl-q-prompt { font-size: 18px; line-height: 1.5; margin: 0 0 18px; }
