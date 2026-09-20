@@ -390,8 +390,8 @@ import os
 
 from app import membership as mb
 
-_ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "AlphaFund")
-_BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "AlphaFundBootcamp")
+_ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "OAFQA")
+_BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "OAFBC")
 
 
 class ProfileUpdate(BaseModel):
