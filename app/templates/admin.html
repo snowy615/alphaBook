@@ -338,6 +338,7 @@
             <th>Orders</th>
             <th>Trades</th>
             <th>Status</th>
+            <th>Membership</th>
             <th>Role</th>
             <th>Joined</th>
             <th>Actions</th>
@@ -366,6 +367,7 @@
               <span class="badge badge-active">Active</span>
               {% endif %}
             </td>
+            <td>{{ u.membership }}</td>
             <td><select class="admin-role" data-user="{{ u.id }}" onchange="setUserRole(this)">{% for r in roles %}<option value="{{ r.key }}" {% if (u.role or "general") == r.key %}selected{% endif %}>{{ r.label }}</option>{% endfor %}</select></td>
             <td>{{ u.created_at.strftime('%Y-%m-%d') }}</td>
             <td>

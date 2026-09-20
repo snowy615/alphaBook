@@ -207,6 +207,7 @@ async def admin_dashboard(
             "is_admin": u.is_admin,
             "is_blacklisted": u.is_blacklisted,
             "role": mb.role_of(u.model_dump()),
+            "membership": mb.membership_of(u.model_dump()),
             "created_at": u.created_at
         })
 
