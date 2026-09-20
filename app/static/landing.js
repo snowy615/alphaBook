@@ -331,12 +331,23 @@
   async function refreshApplyBadge() {
     const link = $("#applyLink");
     const badge = $("#applyBadge");
-    if (!link && !badge) return;
+    const reviewLink = $("#reviewLink");
+    if (!link && !badge && !reviewLink) return;
     try {
       const state = await fetchJSON("/apply/state");
-      // "analyst" means there's nothing to track — their membership chip
-      // elsewhere already says which track, so the badge just stays hidden.
-      const hasApplication = state && state.status && state.status !== "none" && state.status !== "analyst";
+
+      // An analyst has nothing left to apply for, but they're a reviewer —
+      // this slot points them at the applicant pool instead of hiding
+      // outright, the same way it points a general member at applying.
+      if (state && state.status === "analyst") {
+        if (link) link.style.display = "none";
+        if (badge) badge.style.display = "none";
+        if (reviewLink) reviewLink.style.display = "";
+        return;
+      }
+      if (reviewLink) reviewLink.style.display = "none";
+
+      const hasApplication = state && state.status && state.status !== "none";
 
       if (link) link.style.display = (state && state.eligible && !hasApplication) ? "" : "none";
       if (badge) {
@@ -348,7 +359,7 @@
           badge.style.display = "none";
         }
       }
-    } catch { /* leave both hidden */ }
+    } catch { /* leave all three hidden */ }
   }
 
   async function initAuthUI() {
