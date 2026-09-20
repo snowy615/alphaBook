@@ -67,6 +67,11 @@ from pydantic import BaseModel
 from app import db as db_module
 from app import mailer
 from app import membership as mb
+from app import outreach
+from app.outreach import (
+    EVENT_TICKET_FAST_TRACK, EVENT_TICKET_GENERAL, EVENT_TICKET_NONE, EVENT_TICKETS,
+    FAST_TRACK_CAPACITY,
+)
 from app.admin import require_admin
 from app.auth import current_user
 from app.models import User
@@ -156,17 +161,14 @@ S_SHORTLISTED = "shortlisted"  # invited to interview; not yet a final decision
 S_ACCEPTED = "accepted"
 S_REJECTED = "rejected"
 
-# The outreach event: two ticket types, chosen once, right after picking a
-# programme and before the CV step. Fast-Track is capacity-limited and skips
-# the written assessment entirely — an analyst reviews the CV instead (at the
-# clinic, or on the admin page) and the normal shortlist/accept/reject
-# decision still applies from there. General Attendance and "not attending"
-# both continue through the ordinary CV -> assessment flow.
-EVENT_TICKET_NONE = "none"
-EVENT_TICKET_GENERAL = "general"
-EVENT_TICKET_FAST_TRACK = "fast_track"
-EVENT_TICKETS = {EVENT_TICKET_NONE, EVENT_TICKET_GENERAL, EVENT_TICKET_FAST_TRACK}
-FAST_TRACK_CAPACITY = 50
+# The outreach event: two ticket types, chosen right after picking a
+# programme and before the CV step (see app/outreach.py — the choice is the
+# event sign-up itself, shared with the events page). Fast-Track is
+# capacity-limited and skips the written assessment entirely — an analyst
+# reviews the CV instead (at the clinic, or on the admin page) and the normal
+# shortlist/accept/reject decision still applies from there. General
+# Attendance and "not attending" both continue through the ordinary
+# CV -> assessment flow.
 
 YEAR_OF_STUDY_OPTIONS = ["1st year", "2nd year", "3rd year", "4th year", "Master's", "DPhil / PhD"]
 
@@ -380,14 +382,11 @@ async def _user_data(user_id: str) -> Dict[str, Any]:
 
 
 async def _fast_track_count() -> int:
-    """How many applications currently hold a Fast-Track ticket — the whole
-    collection is small enough (a single admissions cycle, not a live
-    product) that fetching and filtering here is simpler than a separate
-    counter to keep in sync, matching how _ranked_rows() already reads the
-    whole collection. Good enough for a soft ~50-place cap; not meant to
-    defend against a burst of simultaneous submissions down to the person."""
-    docs = await db_module.db.collection(COLLECTION).get()
-    return sum(1 for d in docs if (d.to_dict() or {}).get("event_ticket") == EVENT_TICKET_FAST_TRACK)
+    """How many places are held — by an outreach sign-up or an application
+    (see outreach.fast_track_holders). A soft ~50-place cap: counted by scan
+    at claim time, not meant to defend against a burst of simultaneous
+    submissions down to the person."""
+    return len(await outreach.fast_track_holders())
 
 
 # ── The assessment state machine ─────────────────────────────────────────────
@@ -641,6 +640,10 @@ async def state(user: User = Depends(current_user)):
         out["fast_track_remaining"] = remaining
         out["fast_track_full"] = remaining <= 0
         out["fast_track_capacity"] = FAST_TRACK_CAPACITY
+        # Whatever they've already signed up for on the events page, so the
+        # choice step can show it and let them simply continue.
+        out["event_signup"] = await outreach.ticket_of(uid)
+        out["event"] = await outreach.event_summary()
         out["college"] = application.get("college") or ""
         out["degree"] = application.get("degree") or ""
         out["year_of_study"] = application.get("year_of_study") or ""
@@ -788,6 +791,27 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     return {"ok": True, "status": application["status"], "programme": req.programme}
 
 
+async def event_ticket_locked(uid: str) -> bool:
+    """True once an application has been fast-tracked past the CV step: the
+    ticket is fixed then (it's what skipped the written assessment), so the
+    events page mustn't be able to change it underneath the application."""
+    application = await _load(uid)
+    return bool(application
+                and application.get("status") != S_CV
+                and application.get("event_ticket") == EVENT_TICKET_FAST_TRACK)
+
+
+async def sync_event_ticket(uid: str, ticket: str) -> None:
+    """Carry a change made on the events page into an application that has
+    already been through the choice step. One that hasn't is left alone, so
+    it still shows the choice screen with the sign-up pre-selected."""
+    application = await _load(uid)
+    if application and application.get("status") == S_CV and application.get("event_ticket"):
+        application["event_ticket"] = ticket
+        application["event_registered_at"] = _now()
+        await _save(uid, application)
+
+
 @router.post("/event-ticket")
 async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(current_user)):
     """
@@ -805,12 +829,10 @@ async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(curre
     if req.ticket not in EVENT_TICKETS:
         raise HTTPException(400, "Unknown ticket type")
 
-    if req.ticket == EVENT_TICKET_FAST_TRACK and application.get("event_ticket") != EVENT_TICKET_FAST_TRACK:
-        # Only re-checked when actually claiming a new Fast-Track place —
-        # switching away from one, or re-confirming the one already held,
-        # never needs to compete for a spot.
-        if await _fast_track_count() >= FAST_TRACK_CAPACITY:
-            raise HTTPException(400, "CV Review + Fast-Track is full — choose General Attendance instead")
+    # The choice *is* the event sign-up (shared with the events page), so it
+    # lands there too. Capacity is checked inside — only for claiming a new
+    # Fast-Track place, never for keeping or leaving one.
+    await outreach.set_ticket(uid, user.username, req.ticket)
 
     application["event_ticket"] = req.ticket
     application["event_registered_at"] = _now()
@@ -1148,20 +1170,44 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     return rows
 
 
+async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
+    """Who's coming to the outreach event, by ticket, oldest sign-up first.
+
+    Built from the event sign-ups (so someone who registered on the events
+    page but hasn't started an application is here too) plus any application
+    whose ticket says so, with the application's college/degree/CV where one
+    exists. Not the score ranking — a roster reads as "who signed up"."""
+    by_uid = {r["user_id"]: r for r in rows}
+    entries: Dict[str, Dict[str, Any]] = {}
+    for s in await outreach.confirmed_signups():
+        uid = s.get("user_id")
+        entries[uid] = {"ticket": s.get("ticket"), "at": s.get("created_at"), "signup": s}
+    for r in rows:
+        if r["event_ticket"] in (EVENT_TICKET_FAST_TRACK, EVENT_TICKET_GENERAL) and r["user_id"] not in entries:
+            entries[r["user_id"]] = {"ticket": r["event_ticket"], "at": r["created_at"], "signup": None}
+
+    fast, general = [], []
+    for uid, e in entries.items():
+        app_row = by_uid.get(uid)
+        if app_row is not None:
+            row = {**app_row, "has_application": True}
+        else:
+            s = e["signup"] or {}
+            row = {"user_id": uid, "has_application": False, "username": s.get("username", ""),
+                   "full_name": s.get("full_name", ""), "college": "", "degree": "",
+                   "year_of_study": "", "cv_uploaded": False}
+        row["_at"] = _as_utc(e["at"]) or _now()
+        (fast if e["ticket"] == EVENT_TICKET_FAST_TRACK else general).append(row)
+    fast.sort(key=lambda r: r["_at"])
+    general.sort(key=lambda r: r["_at"])
+    return fast, general
+
+
 @router.get("/admin", include_in_schema=False)
 async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
     rows = await _ranked_rows(str(reviewer.id))
     scored = [r for r in rows if r["review"]["count"] > 0]
-    # Registration order (not the score ranking) — an event roster reads
-    # naturally as "who signed up", not "who's winning".
-    fast_track_rows = sorted(
-        (r for r in rows if r["event_ticket"] == EVENT_TICKET_FAST_TRACK),
-        key=lambda r: r["created_at"] or _now(),
-    )
-    general_rows = sorted(
-        (r for r in rows if r["event_ticket"] == EVENT_TICKET_GENERAL),
-        key=lambda r: r["created_at"] or _now(),
-    )
+    fast_track_rows, general_rows = await _outreach_roster(rows)
     return templates.TemplateResponse("applications_admin.html", {
         "request": request,
         "app_name": "AlphaBook",

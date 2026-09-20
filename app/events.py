@@ -13,6 +13,11 @@ Sign-up comes in two modes, chosen per event:
 * ``approval`` — signing up files a request; an admin or Analyst member
   approves or declines it. Approving is what uses up a place.
 
+One event is special: Quant Outreach (:mod:`app.outreach`). Its sign-up is
+the same thing as the first step of the Quant Bootcamp application, and comes
+with two tickets instead of the plain sign-up — so it has its own endpoint
+and is refused by the generic ones.
+
 Storage is two collections: ``events``, and ``event_signups`` with one
 document per person per event (id ``{event_id}_{user_id}``), so nobody can
 hold two places and cancelling is deleting one document. Capacity is a soft
@@ -35,8 +40,9 @@ from pydantic import BaseModel
 
 from app import db as db_module
 from app import membership as mb
+from app import outreach
 from app.admin import require_admin
-from app.applications import require_reviewer
+from app.applications import event_ticket_locked, require_reviewer, sync_event_ticket
 from app.auth import current_user, http_bearer
 from app.models import User
 
@@ -73,6 +79,14 @@ class EventPayload(BaseModel):
 
 class Decision(BaseModel):
     decision: str        # "approve" | "decline"
+
+
+class TicketChoice(BaseModel):
+    ticket: str          # "fast_track" | "general" | "none"
+
+
+def _is_outreach(event: Dict[str, Any]) -> bool:
+    return event.get("kind") == "outreach"
 
 
 def _now() -> dt.datetime:
@@ -126,11 +140,6 @@ def _parse_event(payload: EventPayload) -> Dict[str, Any]:
     }
 
 
-def _when_label(starts_at: dt.datetime, ends_at: dt.datetime) -> str:
-    s, e = starts_at.astimezone(LONDON_TZ), ends_at.astimezone(LONDON_TZ)
-    return f"{s:%a %d %b %Y}, {s:%H:%M}–{e:%H:%M} London"
-
-
 async def _is_reviewer(user: Optional[User]) -> bool:
     """Admins and Analyst members — the people who can see and decide on
     sign-ups. Same definition as the applications review page."""
@@ -176,21 +185,22 @@ def _is_full(event: Dict[str, Any], confirmed: int) -> bool:
 
 
 def _event_view(event: Dict[str, Any], signups: List[Dict[str, Any]],
-                viewer_id: Optional[str], can_manage: bool) -> Dict[str, Any]:
+                viewer_id: Optional[str], can_manage: bool,
+                fast_track_taken: int = 0) -> Dict[str, Any]:
     starts_at, ends_at = _as_utc(event.get("starts_at")), _as_utc(event.get("ends_at"))
     confirmed = _confirmed(signups)
     mine = next((s for s in signups if viewer_id and s.get("user_id") == viewer_id), None)
     # Numbers are shown to everyone only if the admin chose that; reviewers
     # always see them, since they're the ones managing the list.
     show_numbers = bool(event.get("show_attendance")) or can_manage
-    return {
+    view = {
         "id": event["id"],
         "title": event.get("title", ""),
         "description": event.get("description", ""),
         "date": event.get("date"),
         "start_time": event.get("start_time"),
         "end_time": event.get("end_time"),
-        "when_label": _when_label(starts_at, ends_at),
+        "when_label": outreach.when_label(starts_at, ends_at),
         "starts_at": starts_at.isoformat(),
         "is_past": ends_at <= _now(),
         "signup_mode": event.get("signup_mode", MODE_FIRST_COME),
@@ -201,6 +211,22 @@ def _event_view(event: Dict[str, Any], signups: List[Dict[str, Any]],
         "full": _is_full(event, confirmed),
         "my_status": mine.get("status") if mine else None,
     }
+    if _is_outreach(event):
+        # Two tickets instead of a plain sign-up. How many Fast-Track places
+        # are left is shown to everyone regardless of the attendance setting —
+        # it's the thing people are deciding on.
+        cap = outreach.FAST_TRACK_CAPACITY
+        view["tickets"] = [
+            {"key": outreach.EVENT_TICKET_FAST_TRACK,
+             "label": outreach.TICKET_LABELS[outreach.EVENT_TICKET_FAST_TRACK],
+             "capacity": cap, "remaining": max(0, cap - fast_track_taken),
+             "full": fast_track_taken >= cap},
+            {"key": outreach.EVENT_TICKET_GENERAL,
+             "label": outreach.TICKET_LABELS[outreach.EVENT_TICKET_GENERAL]},
+        ]
+        view["my_ticket"] = mine.get("ticket") if mine and mine.get("status") == ST_CONFIRMED else None
+        view["full"] = False
+    return view
 
 
 # ── Page ─────────────────────────────────────────────────────────────────────
@@ -222,9 +248,13 @@ async def list_events(user: Optional[User] = Depends(optional_user)):
         s = d.to_dict() or {}
         by_event.setdefault(s.get("event_id"), []).append(s)
 
+    event_docs = await db_module.db.collection(EVENTS).get()
+    taken = 0
+    if any((d.to_dict() or {}).get("kind") == "outreach" for d in event_docs):
+        taken = len(await outreach.fast_track_holders())
     events = [
-        _event_view({"id": d.id, **(d.to_dict() or {})}, by_event.get(d.id, []), viewer_id, can_manage)
-        for d in await db_module.db.collection(EVENTS).get()
+        _event_view({"id": d.id, **(d.to_dict() or {})}, by_event.get(d.id, []), viewer_id, can_manage, taken)
+        for d in event_docs
     ]
     # Upcoming first, soonest at the top; finished ones after, most recent first.
     upcoming = sorted((e for e in events if not e["is_past"]), key=lambda e: e["starts_at"])
@@ -251,14 +281,20 @@ async def create_event(payload: EventPayload, admin: User = Depends(require_admi
 
 @router.put("/{event_id}")
 async def update_event(event_id: str, payload: EventPayload, admin: User = Depends(require_admin)):
-    await _load_event(event_id)
-    await db_module.db.collection(EVENTS).document(event_id).update(_parse_event(payload))
+    event = await _load_event(event_id)
+    fields = _parse_event(payload)
+    if _is_outreach(event):
+        # Places and sign-up are the ticket system's, not this form's.
+        fields.pop("capacity")
+        fields.pop("signup_mode")
+    await db_module.db.collection(EVENTS).document(event_id).update(fields)
     return {"ok": True}
 
 
 @router.delete("/{event_id}")
 async def delete_event(event_id: str, admin: User = Depends(require_admin)):
-    await _load_event(event_id)
+    if _is_outreach(await _load_event(event_id)):
+        raise HTTPException(400, "Quant Outreach is tied to the application form, so it can't be deleted — edit it instead")
     for d in await db_module.db.collection(SIGNUPS).where("event_id", "==", event_id).get():
         await d.reference.delete()
     await db_module.db.collection(EVENTS).document(event_id).delete()
@@ -274,6 +310,8 @@ def _signup_ref(event_id: str, user_id: str):
 @router.post("/{event_id}/signup")
 async def sign_up(event_id: str, user: User = Depends(current_user)):
     event = await _load_event(event_id)
+    if _is_outreach(event):
+        raise HTTPException(400, "Choose a ticket for this event")
     ends_at = _as_utc(event.get("ends_at"))
     if ends_at and ends_at <= _now():
         raise HTTPException(400, "This event has already finished")
@@ -305,8 +343,33 @@ async def sign_up(event_id: str, user: User = Depends(current_user)):
     return {"ok": True, "status": status}
 
 
+async def _set_outreach_ticket(user: User, ticket: str) -> None:
+    uid = str(user.id)
+    # An application that's already been fast-tracked owns that ticket now.
+    if ticket != outreach.EVENT_TICKET_FAST_TRACK and await event_ticket_locked(uid):
+        raise HTTPException(400, "You've already been fast-tracked through your application, "
+                                 "so this ticket can't be changed here")
+    await outreach.set_ticket(uid, user.username, ticket)
+    await sync_event_ticket(uid, ticket)
+
+
+@router.post("/{event_id}/ticket")
+async def choose_ticket(event_id: str, payload: TicketChoice, user: User = Depends(current_user)):
+    event = await _load_event(event_id)
+    if not _is_outreach(event):
+        raise HTTPException(400, "This event doesn't have tickets")
+    ends_at = _as_utc(event.get("ends_at"))
+    if ends_at and ends_at <= _now():
+        raise HTTPException(400, "This event has already finished")
+    await _set_outreach_ticket(user, payload.ticket)
+    return {"ok": True, "ticket": payload.ticket}
+
+
 @router.delete("/{event_id}/signup")
 async def cancel_signup(event_id: str, user: User = Depends(current_user)):
+    if _is_outreach(await _load_event(event_id)):
+        await _set_outreach_ticket(user, outreach.EVENT_TICKET_NONE)
+        return {"ok": True}
     ref = _signup_ref(event_id, str(user.id))
     if not (await ref.get()).exists:
         raise HTTPException(404, "You're not signed up for this event")
@@ -326,6 +389,7 @@ async def list_signups(event_id: str, reviewer: User = Depends(require_reviewer)
         "username": s.get("username") or "",
         "email": s.get("email") or "",
         "status": s.get("status"),
+        "ticket": outreach.TICKET_LABELS.get(s.get("ticket")) if s.get("ticket") else None,
         "decided_by": s.get("decided_by") or "",
     } for s in rows]}
 
@@ -336,6 +400,8 @@ async def decide_signup(event_id: str, user_id: str, payload: Decision,
     if payload.decision not in ("approve", "decline"):
         raise HTTPException(400, "Decision must be approve or decline")
     event = await _load_event(event_id)
+    if _is_outreach(event):
+        raise HTTPException(400, "Quant Outreach places aren't approved — people choose their own ticket")
     ref = _signup_ref(event_id, user_id)
     doc = await ref.get()
     if not doc.exists:

@@ -1843,3 +1843,56 @@ class TestEventRegistrationInState:
 
         assert result["event_ticket"] is None
         assert result["is_fast_tracked"] is False
+
+
+class TestChoiceIsTheEventSignup:
+    """The application's event step and the events page are one sign-up."""
+
+    def _patch(self, monkeypatch, application, signups=None):
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {"u1": application}
+        fake_db.collections["event_signups"] = signups or {}
+        fake_db.collections["users"] = {"u1": {"full_name": "Jo Bloggs", "email": "jo@example.com"}}
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return fake_db
+
+    def _cv_stage(self, **extra):
+        return {"user_id": "u1", "username": "jo", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP, **extra}
+
+    def test_choosing_in_the_application_creates_the_event_signup(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, self._cv_stage())
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), user))
+        signup = fake_db.collections["event_signups"]["quant-outreach_u1"]
+        assert signup["ticket"] == "fast_track" and signup["email"] == "jo@example.com"
+
+    def test_not_attending_removes_an_earlier_signup(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, self._cv_stage(), {"quant-outreach_u1": {
+            "event_id": "quant-outreach", "user_id": "u1", "status": "confirmed", "ticket": "general"}})
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), user))
+        assert "quant-outreach_u1" not in fake_db.collections["event_signups"]
+
+    def test_the_state_reflects_a_signup_made_on_the_events_page(self, monkeypatch):
+        self._patch(monkeypatch, self._cv_stage(), {"quant-outreach_u1": {
+            "event_id": "quant-outreach", "user_id": "u1", "status": "confirmed", "ticket": "fast_track"}})
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.state(user))
+        assert result["event_signup"] == "fast_track"
+        assert not result["event_ticket"]   # not yet confirmed on the application itself
+
+    def test_the_state_says_nothing_signed_up_when_there_is_no_signup(self, monkeypatch):
+        self._patch(monkeypatch, self._cv_stage())
+        user = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(user))["event_signup"] is None
+
+    def test_someone_holding_a_place_by_signup_can_keep_it_when_it_looks_full(self, monkeypatch):
+        others = {f"quant-outreach_x{i}": {"event_id": "quant-outreach", "user_id": f"x{i}",
+                                           "status": "confirmed", "ticket": "fast_track"}
+                  for i in range(ap.FAST_TRACK_CAPACITY - 1)}
+        others["quant-outreach_u1"] = {"event_id": "quant-outreach", "user_id": "u1",
+                                       "status": "confirmed", "ticket": "fast_track"}
+        self._patch(monkeypatch, self._cv_stage(), others)
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), user))
+        assert result["event_ticket"] == "fast_track"

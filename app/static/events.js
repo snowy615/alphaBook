@@ -52,9 +52,31 @@
     return `<span>${ev.attending}${places} going${pending}${hiddenNote}</span>`;
   }
 
+  // Quant Outreach: two tickets instead of a plain sign-up. The current one is
+  // highlighted, and it's the same sign-up as the application's first step.
+  function ticketControl(ev) {
+    const id = esc(ev.id);
+    const option = (t) => {
+      const mine = ev.my_ticket === t.key;
+      const full = t.full && !mine;
+      const note = t.capacity
+        ? `<span class="evt-opt-note">${full ? "Limit reached" : `${t.remaining} of ${t.capacity} places left`}</span>` : "";
+      return `<button class="evt-opt${mine ? " is-mine" : ""}" ${full ? "disabled" : ""}
+                data-act="ticket" data-id="${id}" data-ticket="${esc(t.key)}">
+                <strong>${esc(t.label)}</strong>${note}${mine ? `<span class="evt-opt-note">Your ticket</span>` : ""}</button>`;
+    };
+    return `<div class="evt-opts">${ev.tickets.map(option).join("")}</div>
+      <div class="evt-actions">
+        ${ev.my_ticket ? `<button class="btn ghost" data-act="ticket" data-id="${id}" data-ticket="none">Not attending — cancel my sign-up</button>` : ""}
+        <span class="evt-hint">Applying to the Quant Bootcamp? This is the same sign-up as the first step of
+          <a href="/apply">the application</a> — whichever you do first carries over.</span>
+      </div>`;
+  }
+
   function signupControl(ev) {
     if (ev.is_past) return `<span class="evt-tag">Finished</span>`;
     if (!data.viewer) return `<a class="btn" href="/login">Log in to sign up</a>`;
+    if (ev.tickets) return ticketControl(ev);
     switch (ev.my_status) {
       case "confirmed":
         return `<span class="evt-tag is-good">You're going</span>
@@ -79,13 +101,15 @@
     }
     if (data.is_admin) {
       parts.push(`<button class="btn ghost" data-act="edit" data-id="${esc(ev.id)}">Edit</button>`);
-      parts.push(`<button class="btn ghost" data-act="delete" data-id="${esc(ev.id)}">Delete</button>`);
+      // Quant Outreach is tied to the application form, so it stays.
+      if (!ev.tickets) parts.push(`<button class="btn ghost" data-act="delete" data-id="${esc(ev.id)}">Delete</button>`);
     }
     return parts.join("");
   }
 
   function renderEvent(ev) {
-    const mode = ev.signup_mode === "approval" ? "Approval needed" : "First come, first served";
+    const mode = ev.tickets ? "Choose a ticket"
+      : ev.signup_mode === "approval" ? "Approval needed" : "First come, first served";
     return `
       <div class="card msp-panel evt-card ${ev.is_past ? "is-past" : ""}" id="ev-${esc(ev.id)}">
         <div class="msp-panel-body">
@@ -101,7 +125,9 @@
             ${attendanceLine(ev)}
             <span>${mode}</span>
           </div>
-          <div class="evt-actions">${signupControl(ev)}</div>
+          ${ev.tickets && data.viewer && !ev.is_past
+            ? signupControl(ev)
+            : `<div class="evt-actions">${signupControl(ev)}</div>`}
           <div class="evt-su ${openSignups.has(ev.id) ? "" : "hidden"}" id="su-${esc(ev.id)}"></div>
         </div>
       </div>`;
@@ -135,6 +161,9 @@
   async function loadSignups(id) {
     const box = $("#su-" + id);
     if (!box) return;
+    // Outreach places aren't approved — people pick their own ticket — so
+    // there's nothing to decide there, just who's coming and on what.
+    const ticketed = !!(data.events.find((x) => x.id === id) || {}).tickets;
     try {
       const { signups } = await api(`/events/${encodeURIComponent(id)}/signups`);
       box.innerHTML = signups.length ? signups.map((s) => `
@@ -144,9 +173,9 @@
             <span>${esc(s.email || s.username)}${s.decided_by ? ` · decided by ${esc(s.decided_by)}` : ""}</span>
           </div>
           <div class="evt-actions" style="margin-top:0;">
-            ${STATUS_TAG[s.status] || ""}
-            ${s.status !== "confirmed" ? `<button class="btn primary" data-act="decide" data-id="${esc(id)}" data-uid="${esc(s.user_id)}" data-decision="approve">Approve</button>` : ""}
-            ${s.status !== "declined" ? `<button class="btn ghost" data-act="decide" data-id="${esc(id)}" data-uid="${esc(s.user_id)}" data-decision="decline">${s.status === "confirmed" ? "Remove" : "Decline"}</button>` : ""}
+            ${s.ticket ? `<span class="evt-tag">${esc(s.ticket)}</span>` : (STATUS_TAG[s.status] || "")}
+            ${ticketed ? "" : s.status !== "confirmed" ? `<button class="btn primary" data-act="decide" data-id="${esc(id)}" data-uid="${esc(s.user_id)}" data-decision="approve">Approve</button>` : ""}
+            ${ticketed ? "" : s.status !== "declined" ? `<button class="btn ghost" data-act="decide" data-id="${esc(id)}" data-uid="${esc(s.user_id)}" data-decision="decline">${s.status === "confirmed" ? "Remove" : "Decline"}</button>` : ""}
           </div>
         </div>`).join("") : `<p class="evt-empty">Nobody has signed up yet.</p>`;
     } catch (err) {
@@ -168,6 +197,8 @@
     $("#formTitle").textContent = "New event";
     $("#evSave").textContent = "Create event";
     $("#evCancel").classList.add("hidden");
+    $("#evTicketFields").classList.remove("hidden");
+    $("#evTicketNote").classList.add("hidden");
   }
 
   function fillForm(ev) {
@@ -184,6 +215,9 @@
     F.show.checked = ev.show_attendance;
     $("#formTitle").textContent = "Edit event";
     $("#evSave").textContent = "Save changes";
+    // Places and sign-up for Quant Outreach are the ticket system's.
+    $("#evTicketFields").classList.toggle("hidden", !!ev.tickets);
+    $("#evTicketNote").classList.toggle("hidden", !ev.tickets);
     $("#evCancel").classList.remove("hidden");
     $("#formCard").scrollIntoView({ behavior: "smooth", block: "start" });
   }
@@ -226,6 +260,14 @@
         case "signup": {
           const r = await send("POST", url + "/signup");
           showMsg(r.status === "pending" ? "Request sent — you'll be told here once it's approved." : "You're signed up.", true);
+          await load();
+          break;
+        }
+        case "ticket": {
+          const t = btn.dataset.ticket;
+          await send("POST", url + "/ticket", { ticket: t });
+          showMsg(t === "none" ? "Sign-up cancelled."
+            : t === "fast_track" ? "You're signed up for the CV clinic + Fast-Track." : "You're signed up — general attendance.", true);
           await load();
           break;
         }

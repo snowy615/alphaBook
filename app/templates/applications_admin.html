@@ -342,7 +342,7 @@
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         {% if not fast_track_rows and not general_rows %}
-          <p class="apa-empty" style="padding:20px;">Nobody has registered for the event yet.</p>
+          <p class="apa-empty" style="padding:20px;">Nobody has signed up for the outreach event yet.</p>
         {% else %}
         <table class="msp-table">
           <thead>
@@ -352,7 +352,8 @@
             {% for r in fast_track_rows %}
             <tr>
               <td><span class="apa-tag is-info">Fast-Track CV Clinic</span></td>
-              <td><a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a></td>
+              <td>{% if r.has_application %}<a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
+                {% else %}<strong>{{ r.full_name or r.username }}</strong> <span class="msp-muted" style="font-size:12px;">no application yet</span>{% endif %}</td>
               <td>{{ r.college or "—" }}</td>
               <td>{{ r.degree or "—" }}</td>
               <td>{{ r.year_of_study or "—" }}</td>
@@ -365,7 +366,8 @@
             {% for r in general_rows %}
             <tr>
               <td><span class="apa-tag">General Attendance</span></td>
-              <td><a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a></td>
+              <td>{% if r.has_application %}<a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
+                {% else %}<strong>{{ r.full_name or r.username }}</strong> <span class="msp-muted" style="font-size:12px;">no application yet</span>{% endif %}</td>
               <td>{{ r.college or "—" }}</td>
               <td>{{ r.degree or "—" }}</td>
               <td>{{ r.year_of_study or "—" }}</td>

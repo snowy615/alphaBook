@@ -56,6 +56,14 @@ async def lifespan(application: FastAPI):
         traceback.print_exc()
         raise
 
+    # The Quant Outreach event is tied to the application form, so it has to
+    # exist; created once, then left for an admin to edit. Never fatal.
+    try:
+        from app import outreach
+        await outreach.ensure_event()
+    except Exception as e:
+        log.warning("Could not ensure the Quant Outreach event: %s", e)
+
     # Create admin user if doesn't exist
     try:
         log.info("🔄 Setting up admin user...")

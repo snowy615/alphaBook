@@ -269,36 +269,46 @@
   let pickedTicket = null;
 
   function renderEventChoice(state) {
-    pickedTicket = null;
-    const fastFull = !!state.fast_track_full;
+    // The choice *is* the sign-up for the Quant Outreach event — the same one
+    // as on the events page. If they've already signed up there, it arrives
+    // here pre-selected and they can just continue.
+    const existing = state.event_signup || null;
+    pickedTicket = existing;
+    const ev = state.event || {};
+    const eventName = ev.title || "Quant Outreach";
     const capacity = state.fast_track_capacity || 50;
+    const fastFull = !!state.fast_track_full && existing !== "fast_track";
     const fastBlurb = fastFull
       ? "Limit reached — no longer available."
       : `Have your CV reviewed in person by an analyst at the event, and skip the written ` +
         `assessment entirely — you'll go straight into the same CV-scoring and interview process ` +
         `as everyone else. ${state.fast_track_remaining} of ${capacity} places left.`;
+    const TICKET_NAME = { fast_track: "CV clinic + Fast-Track", general: "General attendance" };
 
-    $("#app").innerHTML = panel("OAF Quant Bootcamp — Outreach Event", `
+    const card = (key, title, blurb, disabled) => `
+      <label class="apl-choice${disabled ? " is-disabled" : ""}${pickedTicket === key ? " is-picked" : ""}" data-ticket="${key}">
+        <input type="radio" name="eventTicket" value="${key}" ${disabled ? "disabled" : ""} ${pickedTicket === key ? "checked" : ""}>
+        <strong>${title}</strong>
+        <span class="apl-blurb">${esc(blurb)}</span>
+        ${disabled ? '<span class="apl-soon">Limit reached — no longer available.</span>' : ""}
+      </label>`;
+
+    $("#app").innerHTML = panel(esc(eventName), `
       <p class="msp-muted" style="margin-top:0;">
-        Applying for <strong>${esc(state.programme || "")}</strong>. Before your CV, let us know
-        whether you'd like to come to the outreach event.
+        Applying for <strong>${esc(state.programme || "")}</strong>.
+        ${ev.when_label ? `The outreach event is <strong>${esc(ev.when_label)}</strong>. ` : ""}
+        Before your CV, let us know whether you'll be there.
       </p>
-      <label class="apl-choice${fastFull ? " is-disabled" : ""}" data-ticket="fast_track">
-        <input type="radio" name="eventTicket" value="fast_track" ${fastFull ? "disabled" : ""}>
-        <strong>CV Review + Fast-Track Interview</strong>
-        <span class="apl-blurb">${esc(fastBlurb)}</span>
-        ${fastFull ? '<span class="apl-soon">Limit reached — no longer available.</span>' : ""}
-      </label>
-      <label class="apl-choice" data-ticket="general">
-        <input type="radio" name="eventTicket" value="general">
-        <strong>Talk &amp; Networking Only</strong>
-        <span class="apl-blurb">Come to the presentation and meet the team, then apply online in the
-          usual way afterwards.</span>
-      </label>
-      <button class="btn primary" id="eventNext" style="margin-top:16px;" disabled>Continue</button>
-      <p style="margin-top:14px;">
-        <button type="button" class="btn ghost" id="eventSkip">Not attending — continue to the online application</button>
-      </p>`);
+      ${existing ? `<p class="apl-hint" style="margin:0 0 12px;">
+        You're already signed up for ${esc(eventName)} — <strong>${esc(TICKET_NAME[existing] || existing)}</strong>.
+        Continue with that, or change it below (it changes your event sign-up too).</p>` : ""}
+      ${card("fast_track", "Sign up for the CV clinic + Fast-Track", fastBlurb, fastFull)}
+      ${card("general", "Attend — general (no Fast-Track)",
+        "Come to the presentation and meet the team, then apply online in the usual way, " +
+        "including the written assessment.", false)}
+      ${card("none", "Not attending",
+        "Skip the event and continue to the online application, including the written assessment.", false)}
+      <button class="btn primary" id="eventNext" style="margin-top:16px;" ${pickedTicket ? "" : "disabled"}>Continue</button>`);
 
     $("#app").querySelectorAll(".apl-choice").forEach((el) => {
       if (el.classList.contains("is-disabled")) return;
@@ -322,7 +332,6 @@
       }
     }
     $("#eventNext").addEventListener("click", (e) => { if (pickedTicket) submitTicket(pickedTicket, e.target); });
-    $("#eventSkip").addEventListener("click", (e) => submitTicket("none", e.target));
   }
 
   // Which CV screen is showing, independent of whether a CV happens to be

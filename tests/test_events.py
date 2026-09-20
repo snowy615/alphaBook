@@ -13,7 +13,7 @@ import datetime as dt
 import pytest
 from fastapi import HTTPException
 
-from app import events
+from app import events, outreach
 from app import membership as mb
 from app.models import User
 
@@ -317,7 +317,7 @@ class TestSignupList:
         rows = run(events.list_signups(eid, ANALYST))["signups"]
         assert rows == [{
             "user_id": "u1", "name": "Jo Bloggs", "username": "jo",
-            "email": "jo@ox.ac.uk", "status": "pending", "decided_by": "",
+            "email": "jo@ox.ac.uk", "status": "pending", "ticket": None, "decided_by": "",
         }]
 
 
@@ -329,3 +329,151 @@ class TestDelete:
         run(events.delete_event(gone, ADMIN))
         assert gone not in store["events"]
         assert list(store["event_signups"]) == [f"{kept}_u1"]
+
+
+# ── Quant Outreach: the event whose sign-up is also the application's first step ─
+OUT = outreach.OUTREACH_EVENT_ID
+
+
+def _seed_outreach(store):
+    run(outreach.ensure_event())
+    return OUT
+
+
+def _holders(store, n, ticket="fast_track"):
+    for i in range(n):
+        store.setdefault("event_signups", {})[f"{OUT}_x{i}"] = {
+            "event_id": OUT, "user_id": f"x{i}", "status": "confirmed", "ticket": ticket}
+
+
+class TestOutreachEvent:
+    def test_it_is_created_for_12_october_and_only_once(self, store):
+        _seed_outreach(store)
+        ev = store["events"][OUT]
+        assert ev["kind"] == "outreach" and ev["date"] == "2026-10-12"
+        assert ev["title"] == "Quant Outreach"
+        store["events"][OUT]["title"] = "Edited by an admin"
+        run(outreach.ensure_event())
+        assert store["events"][OUT]["title"] == "Edited by an admin"
+
+    def test_the_list_offers_two_tickets_with_fast_track_places_left(self, store):
+        _seed_outreach(store)
+        _holders(store, 3)
+        ev = run(events.list_events(JO))["events"][0]
+        keys = [t["key"] for t in ev["tickets"]]
+        assert keys == ["fast_track", "general"]
+        assert ev["tickets"][0]["remaining"] == outreach.FAST_TRACK_CAPACITY - 3
+        assert ev["my_ticket"] is None
+
+    def test_choosing_a_ticket_signs_you_up_with_it(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert store["event_signups"][f"{OUT}_u1"]["ticket"] == "fast_track"
+        assert run(events.list_events(JO))["events"][0]["my_ticket"] == "fast_track"
+
+    def test_you_can_change_ticket_or_stop_attending(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        assert store["event_signups"][f"{OUT}_u1"]["ticket"] == "general"
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="none"), JO))
+        assert f"{OUT}_u1" not in store["event_signups"]
+
+    def test_cancel_on_the_events_page_is_the_same_as_not_attending(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        run(events.cancel_signup(OUT, JO))
+        assert f"{OUT}_u1" not in store["event_signups"]
+
+    def test_fast_track_stops_at_fifty_but_general_does_not(self, store):
+        _seed_outreach(store)
+        _holders(store, outreach.FAST_TRACK_CAPACITY)
+        with pytest.raises(HTTPException) as exc:
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert "full" in exc.value.detail.lower()
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+
+    def test_your_own_fast_track_place_is_never_blocked_by_the_limit(self, store):
+        _seed_outreach(store)
+        _holders(store, outreach.FAST_TRACK_CAPACITY - 1)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))   # the 50th
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))   # re-confirming is fine
+
+    def test_a_place_held_only_by_an_application_still_counts(self, store):
+        _seed_outreach(store)
+        _holders(store, outreach.FAST_TRACK_CAPACITY - 2)   # plus the application below = 49
+        store["applications"] = {"legacy": {"event_ticket": "fast_track", "status": "submitted"}}
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))   # the 50th
+        with pytest.raises(HTTPException):
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), SAM))
+
+    def test_the_plain_endpoints_refuse_it(self, store):
+        _seed_outreach(store)
+        with pytest.raises(HTTPException) as exc:
+            run(events.sign_up(OUT, JO))
+        assert "ticket" in exc.value.detail.lower()
+        with pytest.raises(HTTPException):
+            run(events.delete_event(OUT, ADMIN))
+        with pytest.raises(HTTPException):
+            run(events.decide_signup(OUT, "u1", events.Decision(decision="approve"), ADMIN))
+
+    def test_a_plain_event_has_no_ticket_endpoint(self, store):
+        eid = _create()
+        with pytest.raises(HTTPException):
+            run(events.choose_ticket(eid, events.TicketChoice(ticket="general"), JO))
+
+    def test_editing_it_leaves_places_and_signup_to_the_ticket_system(self, store):
+        _seed_outreach(store)
+        run(events.update_event(OUT, _payload(title="Quant Outreach 2", capacity=3, signup_mode="approval"), ADMIN))
+        ev = store["events"][OUT]
+        assert ev["title"] == "Quant Outreach 2" and ev["capacity"] is None and ev["signup_mode"] == "first_come"
+
+    def test_reviewers_see_which_ticket_each_person_has(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        rows = run(events.list_signups(OUT, ANALYST))["signups"]
+        assert rows[0]["ticket"] == "CV clinic + Fast-Track"
+
+
+class TestLinkedToTheApplication:
+    def _application(self, store, **over):
+        store["applications"] = {"u1": {"user_id": "u1", "status": "cv", **over}}
+        return store["applications"]["u1"]
+
+    def test_signing_up_first_is_visible_to_the_application(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        assert run(outreach.ticket_of("u1")) == "general"
+        assert run(outreach.ticket_of("u2")) is None
+
+    def test_an_application_that_has_not_chosen_yet_is_left_to_show_its_choice_screen(self, store):
+        _seed_outreach(store)
+        app = self._application(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert "event_ticket" not in store["applications"]["u1"] and app
+
+    def test_a_change_on_the_events_page_carries_into_a_chosen_application(self, store):
+        _seed_outreach(store)
+        self._application(store, event_ticket="fast_track")
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        assert store["applications"]["u1"]["event_ticket"] == "general"
+        run(events.cancel_signup(OUT, JO))
+        assert store["applications"]["u1"]["event_ticket"] == "none"
+
+    def test_a_fast_tracked_submission_cannot_be_downgraded_from_the_events_page(self, store):
+        _seed_outreach(store)
+        self._application(store, status="submitted", event_ticket="fast_track")
+        run(outreach.set_ticket("u1", "jo", "fast_track"))
+        with pytest.raises(HTTPException) as exc:
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        assert "fast-tracked" in exc.value.detail
+        with pytest.raises(HTTPException):
+            run(events.cancel_signup(OUT, JO))
+        assert store["applications"]["u1"]["event_ticket"] == "fast_track"
+
+    def test_deleting_the_user_frees_the_fast_track_place(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert "u1" in run(outreach.fast_track_holders())
+        store["event_signups"].pop(f"{OUT}_u1")
+        assert "u1" not in run(outreach.fast_track_holders())

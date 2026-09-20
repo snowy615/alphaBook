@@ -28,6 +28,7 @@
     .evt-field textarea { min-height: 110px; resize: vertical; font-family: inherit; }
     .evt-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
     .evt-hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+    .evt-hint a { color: var(--brand); }
 
     .evt-su { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
     .evt-su-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
@@ -36,6 +37,18 @@
     .evt-su-who strong { display: block; }
     .evt-su-who span { font-size: 12px; color: var(--muted); }
     .evt-empty { color: var(--muted); font-size: 14px; }
+
+    .evt-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-top: 14px; }
+    .evt-opt {
+      display: flex; flex-direction: column; gap: 4px; text-align: left; padding: 12px 14px;
+      border: 1px solid var(--border-strong); background: transparent; color: var(--text);
+      font: inherit; font-size: 14px; cursor: pointer;
+    }
+    .evt-opt:hover:not(:disabled) { border-color: var(--brand); }
+    .evt-opt.is-mine { border-color: var(--green); background: rgba(53, 201, 139, .08); }
+    .evt-opt:disabled { opacity: .5; cursor: not-allowed; }
+    .evt-opt-note { font-size: 12px; color: var(--muted); }
+    .evt-opt.is-mine .evt-opt-note:last-child { color: var(--green); }
   </style>
 </head>
 
@@ -93,7 +106,9 @@
           </div>
         </div>
         <p class="evt-hint" style="margin-top:-6px;">Times are London time.</p>
-        <div class="evt-row">
+        <p class="evt-hint hidden" id="evTicketNote">Places and sign-up for this event are handled by its two tickets
+          (CV clinic + Fast-Track, and General attendance) — only the details above can be edited.</p>
+        <div class="evt-row" id="evTicketFields">
           <div class="evt-field">
             <label for="evCap">Places</label>
             <input id="evCap" class="msp-input" type="number" min="1" placeholder="No limit">
@@ -120,7 +135,7 @@
     <div id="list"><p class="evt-empty">Loading…</p></div>
   </div>
 
-  <script src="/static/events.js?v=1"></script>
+  <script src="/static/events.js?v=2"></script>
 </body>
 
 </html>
