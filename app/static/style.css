@@ -8440,9 +8440,26 @@ body.tut-locked {
   50% { opacity: 1; transform: scale(1.12); }
 }
 
+/* Territory itself: two full snapshots of the overlay (rects, border
+   lines, buildings) stacked on the same terrain, crossfaded by JS on an
+   interval (see landing.js) so the map periodically shows real growth —
+   a claimed tile, a new farm or factory — rather than only breathing in
+   place forever. */
+.flagship-art svg .map-state {
+  opacity: 0;
+  transition: opacity 1.6s ease;
+}
+
+.flagship-art svg .map-state.is-active {
+  opacity: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .flagship-art svg * {
     animation: none !important;
+  }
+  .flagship-art svg .map-state {
+    transition: none;
   }
 }
 

@@ -395,9 +395,24 @@
     }
   }
 
+  // ── Flagship map: crossfade between two overlay snapshots so territory
+  //    and buildings visibly change, instead of only breathing in place
+  //    forever (see the .map-state CSS in style.css). ────────────────────
+  function initFlagshipMap() {
+    const states = document.querySelectorAll(".flagship-art svg .map-state");
+    if (states.length < 2) return;   // reduced-motion or a page without the art
+    let i = 0;
+    setInterval(() => {
+      states[i].classList.remove("is-active");
+      i = (i + 1) % states.length;
+      states[i].classList.add("is-active");
+    }, 5000);
+  }
+
   buildGameGrid();
   buildTicker();
   initAuthUI();
+  initFlagshipMap();
   pollTicker();
   setInterval(pollTicker, 4000);
 })();
