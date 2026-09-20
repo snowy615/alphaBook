@@ -1552,35 +1552,36 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
 
 
 async def _send_interview_confirmed_emails(application: dict, interview: dict) -> None:
-    """Both sides get the same calendar invite — the candidate so it's on
-    their calendar, the interviewer so they know it landed."""
+    """One email, to the candidate with the interviewer cc'd — a shared
+    thread rather than two separate copies, so a reply-all from either side
+    reaches the other directly (to share a call link, say) instead of
+    landing on the noreply address neither of them can do anything with."""
     candidate_to = application.get("oxford_email") or application.get("email")
     candidate_name = application.get("full_name") or application.get("username") or "Candidate"
     interviewer_name = interview.get("interviewer_name") or "Interviewer"
     interviewer_email = interview.get("interviewer_email") or ""
     programme = application.get("programme") or "the programme"
     when = interview["when"]
-    ics = _build_interview_ics(application, interview)
 
-    if candidate_to:
-        await mailer.send_email(
-            to=candidate_to, subject="Alpha Fund — your interview is confirmed",
-            title="Interview confirmed",
-            body_html=(f"<p>Hi {candidate_name},</p>"
-                       f"<p>Your interview for <strong>{programme}</strong> is confirmed for "
-                       f"<strong>{_fmt_when(when)}</strong> with {interviewer_name}. "
-                       f"A calendar invite is attached.</p>"),
-            ics=ics,
-        )
-    if interviewer_email:
-        await mailer.send_email(
-            to=interviewer_email, subject=f"Interview confirmed — {candidate_name}",
-            title="Candidate confirmed",
-            body_html=(f"<p>Hi {interviewer_name},</p>"
-                       f"<p>{candidate_name} has confirmed the interview for "
-                       f"<strong>{_fmt_when(when)}</strong>. A calendar invite is attached.</p>"),
-            ics=ics,
-        )
+    to = candidate_to or interviewer_email
+    if not to:
+        return
+    cc = interviewer_email if (candidate_to and interviewer_email and interviewer_email != to) else None
+
+    body = (
+        f"<p>Hi {candidate_name} and {interviewer_name},</p>"
+        f"<p>This confirms the <strong>{programme}</strong> interview for "
+        f"<strong>{_fmt_when(when)}</strong>.</p>"
+        f"<p>{candidate_name}: {candidate_to or 'no email on file'}<br>"
+        f"{interviewer_name}: {interviewer_email or 'no email on file'}</p>"
+        f"<p>A calendar invite is attached. Reply-all on this email to share a call "
+        f"link or sort out any last details directly.</p>"
+    )
+    await mailer.send_email(
+        to=to, cc=cc, subject=f"Alpha Fund — interview confirmed: {_fmt_when(when)}",
+        title="Interview confirmed", body_html=body,
+        ics=_build_interview_ics(application, interview),
+    )
 
 
 async def _send_interview_declined_email(application: dict, interview: dict) -> None:

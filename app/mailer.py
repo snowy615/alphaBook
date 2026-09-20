@@ -140,11 +140,17 @@ def build_ics_invite(
 
 
 def _send_sync(to: str, subject: str, html: str, text: str,
-                ics: Optional[bytes] = None) -> bool:
+                ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
     msg["To"] = to
+    if cc:
+        # A real Cc header, not a second send — smtplib delivers to every
+        # address it finds across To/Cc/Bcc from one send_message() call, and
+        # having both people actually on the same message is the point: it's
+        # one thread either of them can reply-all on to reach the other.
+        msg["Cc"] = cc
     # Gmail's own relay fills these in for mail sent through its web/app
     # clients, but smtplib doesn't add them for us — and their absence is
     # itself a spam signal, since every legitimate mail server stamps both.
@@ -179,7 +185,7 @@ def _send_sync(to: str, subject: str, html: str, text: str,
 
 async def send_email(to: str, subject: str, title: str, body_html: str,
                       cta_label: Optional[str] = None, cta_url: Optional[str] = None,
-                      ics: Optional[bytes] = None) -> bool:
+                      ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
     """Send one email. Never raises — returns whether it actually went out."""
     if not to or "@" not in to:
         log.warning("mailer: refusing to send %r to invalid address %r", subject, to)
@@ -197,4 +203,4 @@ async def send_email(to: str, subject: str, title: str, body_html: str,
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
 
-    return await asyncio.to_thread(_send_sync, to, subject, html, text, ics)
+    return await asyncio.to_thread(_send_sync, to, subject, html, text, ics, cc)

@@ -964,8 +964,8 @@ class TestInterviewScheduling:
 
         sent = []
 
-        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
-            sent.append({"to": to, "subject": subject, "has_ics": ics is not None})
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            sent.append({"to": to, "cc": cc, "subject": subject, "has_ics": ics is not None})
             return True
 
         monkeypatch.setattr(ap, "_load", fake_load)
@@ -1068,7 +1068,9 @@ class TestInterviewScheduling:
         with pytest.raises(HTTPException):
             asyncio.run(ap.confirm_interview(user))
 
-    def test_confirm_moves_to_confirmed_and_emails_both_sides_with_ics(self, monkeypatch):
+    def test_confirm_moves_to_confirmed_and_emails_both_sides_together(self, monkeypatch):
+        # One email on a shared thread, not two separate copies — so either
+        # side can reply-all and actually reach the other one directly.
         fake_db, sent = self._patch(monkeypatch, self._proposed_application())
         user = User(id="u1", username="jo")
 
@@ -1078,9 +1080,24 @@ class TestInterviewScheduling:
         stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
         assert stored["status"] == ap.INTERVIEW_CONFIRMED
         assert stored["responded_at"] is not None
-        assert len(sent) == 2   # candidate + interviewer
-        assert all(s["has_ics"] for s in sent)
-        assert {s["to"] for s in sent} == {"jo@merton.ox.ac.uk", "priya@ox.ac.uk"}
+        assert len(sent) == 1
+        assert sent[0]["has_ics"] is True
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["cc"] == "priya@ox.ac.uk"
+
+    def test_confirm_still_emails_whichever_side_has_an_address(self, monkeypatch):
+        # No interviewer email on file: still just one email, to the
+        # candidate, with nothing cc'd rather than a silent no-op.
+        application = self._proposed_application()
+        application["interview"]["interviewer_email"] = ""
+        fake_db, sent = self._patch(monkeypatch, application)
+        user = User(id="u1", username="jo")
+
+        asyncio.run(ap.confirm_interview(user))
+
+        assert len(sent) == 1
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["cc"] is None
 
     def test_decline_requires_a_pending_proposal(self, monkeypatch):
         self._patch(monkeypatch, self._shortlisted_application())

@@ -39,8 +39,8 @@ class TestConfigured:
     def _patch_sync(self, monkeypatch, result=True):
         calls = []
 
-        def fake_send_sync(to, subject, html, text, ics=None):
-            calls.append({"to": to, "subject": subject, "html": html, "text": text, "ics": ics})
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            calls.append({"to": to, "subject": subject, "html": html, "text": text, "ics": ics, "cc": cc})
             return result
 
         monkeypatch.setattr(mailer, "CONFIGURED", True)
@@ -119,6 +119,51 @@ class TestMessageHeaders:
         assert msg["Message-ID"].strip().startswith("<")
 
 
+class TestCc:
+    """A Cc'd recipient needs to land on the real, single message — not a
+    second send — so that a reply-all from either side reaches the other."""
+
+    def _capture(self, monkeypatch):
+        sent_holder = {}
+
+        class _CaptureSMTP:
+            def __init__(self, *a, **k): pass
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def starttls(self): pass
+            def login(self, *a): pass
+            def send_message(self, msg): sent_holder["msg"] = msg
+
+        monkeypatch.setattr(mailer.smtplib, "SMTP", _CaptureSMTP)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        return sent_holder
+
+    def test_send_sync_sets_the_cc_header(self, monkeypatch):
+        sent_holder = self._capture(monkeypatch)
+        mailer._send_sync("jo@merton.ox.ac.uk", "Subject", "<p>hi</p>", "hi", cc="priya@ox.ac.uk")
+        assert sent_holder["msg"]["Cc"] == "priya@ox.ac.uk"
+
+    def test_no_cc_header_when_none_given(self, monkeypatch):
+        sent_holder = self._capture(monkeypatch)
+        mailer._send_sync("jo@merton.ox.ac.uk", "Subject", "<p>hi</p>", "hi")
+        assert sent_holder["msg"]["Cc"] is None
+
+    def test_send_email_passes_cc_through(self, monkeypatch):
+        calls = []
+
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            calls.append({"to": to, "cc": cc})
+            return True
+
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+
+        run(mailer.send_email(
+            "jo@merton.ox.ac.uk", "Subject", "Title", "<p>hi</p>", cc="priya@ox.ac.uk",
+        ))
+        assert calls[0]["cc"] == "priya@ox.ac.uk"
+
+
 class TestIcsInvite:
     def _build(self, **overrides):
         start = dt.datetime(2026, 9, 15, 14, 0, tzinfo=dt.timezone.utc)
@@ -158,7 +203,7 @@ class TestIcsInvite:
     def test_attaches_to_the_email_with_calendar_content_type(self, monkeypatch):
         calls = []
 
-        def fake_send_sync(to, subject, html, text, ics=None):
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
             calls.append((to, subject, ics))
             return True
 
