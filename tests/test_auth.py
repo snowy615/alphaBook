@@ -223,6 +223,45 @@ class TestUnverifiedEmailGate:
         assert "set-cookie" in {k.lower() for k in result.headers.keys()}
 
 
+class TestResolveUsername:
+    """The bug this covers: logging in by username only ever hit the
+    admin-only /auth/direct path, so it failed for every real account —
+    Firebase itself only knows how to sign in by email."""
+
+    def test_a_known_username_resolves_to_its_email(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {
+            "fb_uid_1": {"username": "jo", "email": "jo@example.com"},
+        }
+        monkeypatch.setattr(db_module, "db", fake_db)
+
+        result = asyncio.run(auth.resolve_username(username="jo"))
+
+        assert result.status_code == 200
+        import json
+        assert json.loads(result.body)["email"] == "jo@example.com"
+
+    def test_an_unknown_username_is_reported_generically(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {}
+        monkeypatch.setattr(db_module, "db", fake_db)
+
+        result = asyncio.run(auth.resolve_username(username="ghost"))
+
+        assert result.status_code == 404
+
+    def test_a_username_with_no_email_on_file_is_reported_the_same_way(self, monkeypatch):
+        # The local admin account, and any other emailless account, must not
+        # be distinguishable from an unknown username by the response.
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {"admin_user_id": {"username": "admin"}}
+        monkeypatch.setattr(db_module, "db", fake_db)
+
+        result = asyncio.run(auth.resolve_username(username="admin"))
+
+        assert result.status_code == 404
+
+
 class TestResendVerification:
     def _patch(self, monkeypatch, decoded, *, username_on_file="jo"):
         fake_db = _FakeDB()

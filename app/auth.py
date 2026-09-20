@@ -251,6 +251,25 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         return JSONResponse({"status": "error", "message": str(e)}, status_code=401)
 
 
+@router.post("/auth/resolve-username", include_in_schema=False)
+async def resolve_username(username: str = Form(...)):
+    """
+    Firebase signs in by email, not username — this looks up the email
+    behind a username so the login page can run a username-typed login
+    through the exact same Firebase flow as an email-typed one, instead of
+    the separate (admin-only) direct-login path.
+
+    Not found and found-but-no-email are reported the same way, so this
+    doesn't become a way to probe which usernames exist.
+    """
+    q = db_module.db.collection("users").where("username", "==", username).limit(1)
+    docs = await q.get()
+    email = (docs[0].to_dict() or {}).get("email") if docs else None
+    if not email:
+        return JSONResponse({"status": "error", "message": "Invalid credentials"}, status_code=404)
+    return JSONResponse({"status": "ok", "email": email})
+
+
 @router.post("/auth/resend-verification", include_in_schema=False)
 async def resend_verification(id_token: str = Form(...)):
     """Re-sends the branded verification email — the account itself proves

@@ -71,17 +71,33 @@
 
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
-          const identifier = form.identifier.value.trim();
+          let identifier = form.identifier.value.trim();
           const password = form.password.value;
           const btn = form.querySelector('button');
           btn.disabled = true;
           btn.innerText = "Signing in...";
           errDiv.style.display = "none";
 
+          if (!identifier.includes("@")) {
+            // Firebase signs in by email, not username — resolve the typed
+            // username to its email first, so this goes through the same
+            // Firebase flow as an email-typed login. A resolution failure
+            // isn't fatal: it just falls through to the direct-login branch
+            // below, which is how the local admin account still gets in.
+            try {
+              const formData = new FormData();
+              formData.append("username", identifier);
+              const res = await fetch("/auth/resolve-username", { method: "POST", body: formData, credentials: "include" });
+              if (res.ok) {
+                identifier = (await res.json()).email;
+              }
+            } catch (err) { /* fall through to direct login */ }
+          }
+
           const isEmail = identifier.includes("@");
 
           if (!isEmail) {
-            // --- Direct login (username + password) ---
+            // --- Direct login (admin username + password) ---
             try {
               const formData = new FormData();
               formData.append("username", identifier);
