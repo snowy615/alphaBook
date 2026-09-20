@@ -181,6 +181,24 @@
       vertical-align: -1px; border: 1px solid var(--border);
     }
 
+    /* ── Search + stage tabs ──────────────────────────────────────────────── */
+    .apa-filters { margin-bottom: 18px; display: flex; flex-direction: column; gap: 12px; }
+    .apa-search {
+      width: 100%; padding: 10px 14px; border: 1px solid var(--border);
+      background: var(--bg); color: var(--text); font: inherit; font-size: 14px;
+      box-sizing: border-box;
+    }
+    .apa-search:focus { outline: none; border-color: var(--brand); }
+    .apa-stage-tabs { display: flex; flex-wrap: wrap; gap: 6px; }
+    .apa-stage-tab {
+      padding: 7px 13px; border: 1px solid var(--border); background: transparent;
+      color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+    }
+    .apa-stage-tab:hover { color: var(--text); border-color: var(--border-strong); }
+    .apa-stage-tab.is-active { color: var(--text); border-color: var(--brand); background: var(--brand-wash); }
+    .apa-stage-tab .n { margin-left: 4px; font-variant-numeric: tabular-nums; opacity: .7; }
+    .apa-none { margin: 0; color: var(--muted); font-size: 14px; }
+
     /* ── Reject confirmation ──────────────────────────────────────────────── */
     .apa-modal-overlay {
       position: fixed; inset: 0; background: rgba(0, 0, 0, 0.6);
@@ -244,6 +262,27 @@
       </div></div>
     {% else %}
 
+    {# Which tab an application sits under. "Started" is everyone who has
+       begun but not yet submitted; "CV screen" is submitted and awaiting a
+       first decision. #}
+    {% set stage_of = {"cv": "started", "oa_ready": "started", "oa_active": "started",
+                       "submitted": "screen", "shortlisted": "shortlist",
+                       "accepted": "accepted", "rejected": "rejected"} %}
+
+    <div class="apa-filters">
+      <input type="search" id="apaSearch" class="apa-search" autocomplete="off"
+             placeholder="Search applicants by name, username, email, college or degree…">
+      <div class="apa-stage-tabs" id="apaTabs">
+        <button type="button" class="apa-stage-tab is-active" data-stage="all">All <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="started">Started application <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="screen">CV screen <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="shortlist">Shortlisted <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="accepted">Accepted <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="rejected">Rejected <span class="n"></span></button>
+      </div>
+      <p class="apa-none hidden" id="apaNone">No applicants match.</p>
+    </div>
+
     <!-- Ranked summary: the whole field on one screen, strongest first. -->
     <div class="card msp-panel apa-summary">
       <div class="head">
@@ -261,7 +300,8 @@
           </thead>
           <tbody>
             {% for r in rows %}
-            <tr>
+            <tr class="apa-item" data-stage="{{ stage_of.get(r.status, 'started') }}"
+                data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank">{{ r.rank if r.rank else "—" }}</td>
               <td>
                 <a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
@@ -343,7 +383,9 @@
 
     <!-- One card per applicant: CV, written answer, every graded answer, and scoring. -->
     {% for r in rows %}
-    <div class="card msp-panel apa-card" id="a-{{ r.user_id }}">
+    <div class="card msp-panel apa-card apa-item" id="a-{{ r.user_id }}"
+         data-stage="{{ stage_of.get(r.status, 'started') }}"
+         data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
           <h3 style="margin:0;">
@@ -894,6 +936,59 @@
         flash(err.message, true);
       }
     }
+
+    // ── Search + stage tabs ──────────────────────────────────────────────────
+    // Filters the summary rows and the applicant cards together — both carry
+    // the same data-stage / data-q — so what's listed and what's expanded
+    // below it never disagree.
+    (function () {
+      const searchEl = document.getElementById("apaSearch");
+      if (!searchEl) return;   // nobody has applied yet, so there's nothing to filter
+      const items = Array.from(document.querySelectorAll(".apa-item"));
+      const tabs = Array.from(document.querySelectorAll(".apa-stage-tab"));
+      const noneEl = document.getElementById("apaNone");
+      let stage = "all";
+
+      const matches = (el, q) => (stage === "all" || el.dataset.stage === stage)
+        && (!q || el.dataset.q.includes(q));
+
+      function apply() {
+        const q = searchEl.value.trim().toLowerCase();
+        items.forEach((el) => el.classList.toggle("hidden", !matches(el, q)));
+        // Counts reflect the search too, so a tab never promises more than it shows.
+        tabs.forEach((tab) => {
+          const s = tab.dataset.stage;
+          const n = items.filter((el) => el.tagName === "TR"
+            && (s === "all" || el.dataset.stage === s) && (!q || el.dataset.q.includes(q))).length;
+          tab.querySelector(".n").textContent = n;
+        });
+        const shown = items.some((el) => el.tagName === "TR" && !el.classList.contains("hidden"));
+        noneEl.classList.toggle("hidden", shown);
+      }
+
+      tabs.forEach((tab) => tab.addEventListener("click", () => {
+        stage = tab.dataset.stage;
+        tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
+        apply();
+      }));
+      searchEl.addEventListener("input", apply);
+
+      // A link into a card that the current filter has hidden (the event
+      // roster's names, say) would otherwise land on nothing.
+      document.addEventListener("click", (e) => {
+        const link = e.target.closest('a[href^="#a-"]');
+        if (!link) return;
+        const target = document.getElementById(link.getAttribute("href").slice(1));
+        if (target && target.classList.contains("hidden")) {
+          stage = "all";
+          searchEl.value = "";
+          tabs.forEach((t) => t.classList.toggle("is-active", t.dataset.stage === "all"));
+          apply();
+        }
+      });
+
+      apply();
+    })();
   </script>
 </body>
 
