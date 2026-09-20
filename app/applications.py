@@ -1453,6 +1453,15 @@ _DECISION_COPY: Dict[str, Dict[str, str]] = {
     },
 }
 
+# Analyst rejections read "next cycle" rather than "a future round" — Analyst
+# recruiting genuinely runs in cycles, unlike Bootcamp, which is the more
+# casual/rolling track.
+_REJECTED_BODY_ANALYST = (
+    "<p>Thank you for applying to <strong>{programme}</strong>. On this occasion "
+    "we won't be taking your application further, but we'd encourage you to apply "
+    "again in the next cycle.</p>"
+)
+
 
 async def _send_decision_email(application: dict, status: str) -> None:
     to = application.get("oxford_email") or application.get("email")
@@ -1461,7 +1470,10 @@ async def _send_decision_email(application: dict, status: str) -> None:
         return
     name = application.get("full_name") or application.get("username") or "there"
     programme = application.get("programme") or "the programme"
-    body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme)
+    body_template = copy["body"]
+    if status == S_REJECTED and programme in mb.ANALYST_MEMBERSHIPS:
+        body_template = _REJECTED_BODY_ANALYST
+    body = f"<p>Hi {name},</p>" + body_template.format(programme=programme)
     cta_url = copy.get("cta_url")
     await mailer.send_email(
         to=to, subject=copy["subject"], title=copy["title"], body_html=body,

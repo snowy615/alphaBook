@@ -118,7 +118,7 @@ class TestVerificationEmailOnSignup:
         assert result.status_code == 403
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@example.com"
-        assert sent[0]["subject"] == "Verify your AlphaBook email"
+        assert sent[0]["subject"] == "Verify your email"
         assert sent[0]["cta_url"] == "https://alphabook.uk/verify?for=jo@example.com"
         assert fake_db.collections["users"]["fb_uid_1"]["username"] == "jo"
 

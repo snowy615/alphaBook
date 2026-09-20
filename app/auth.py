@@ -68,7 +68,7 @@ async def _send_branded_verification_email(email: str, username: str) -> None:
         return
     await mailer.send_email(
         to=email,
-        subject="Verify your AlphaBook email",
+        subject="Verify your email",
         title="Welcome to AlphaBook",
         body_html=(
             f"<p>Hi {username},</p>"

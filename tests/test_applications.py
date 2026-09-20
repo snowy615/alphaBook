@@ -610,6 +610,55 @@ class TestDecideFlow:
             asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
 
 
+class TestRejectionEmailWording:
+    """Analyst rejections read differently from Bootcamp ones — Analyst
+    recruiting runs in cycles, so "next cycle" is the accurate term, while
+    Bootcamp keeps the more casual "a future round" wording."""
+
+    def _patch(self, monkeypatch, application):
+        store = {"u1": application}
+
+        async def fake_load(uid):
+            return store.get(uid)
+
+        async def fake_save(uid, app_):
+            store[uid] = app_
+
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None):
+            sent.append(body_html)
+            return True
+
+        fake_db = _FakeDB()
+        monkeypatch.setattr(ap, "_load", fake_load)
+        monkeypatch.setattr(ap, "_save", fake_save)
+        monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        return sent
+
+    def _base(self, programme, status=ap.S_SUBMITTED):
+        return {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": programme, "status": status,
+        }
+
+    def test_an_analyst_rejection_mentions_the_next_cycle(self, monkeypatch):
+        sent = self._patch(monkeypatch, self._base(mb.M_QUANT_ANALYST))
+        admin = User(id="a1", username="root", is_admin=True)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
+        assert "next cycle" in sent[0]
+        assert "future round" not in sent[0]
+
+    def test_a_bootcamp_rejection_keeps_the_original_wording(self, monkeypatch):
+        sent = self._patch(monkeypatch, self._base(mb.M_QUANT_BOOTCAMP))
+        admin = User(id="a1", username="root", is_admin=True)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), admin))
+        assert "future round" in sent[0]
+        assert "next cycle" not in sent[0]
+
+
 class TestOxfordStudentConfirmation:
     def _patch(self, monkeypatch, user_data):
         store: dict = {}
