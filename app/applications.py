@@ -65,6 +65,7 @@ from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import gcal
 from app import mailer
 from app import membership as mb
 from app import outreach
@@ -682,6 +683,7 @@ def _interview_view(interview: Dict[str, Any]) -> Dict[str, Any]:
         "interviewer_email": interview.get("interviewer_email"),
         "message": interview.get("message") or "",
         "responded_at": interview.get("responded_at"),
+        "meet_link": interview.get("meet_link") or "",
     }
 
 
@@ -1408,6 +1410,25 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     when = payload.when
     if when.tzinfo is None:
         when = when.replace(tzinfo=dt.timezone.utc)
+    end = when + dt.timedelta(minutes=INTERVIEW_MINUTES)
+
+    # A re-proposal (a different time for the same pending interview) moves
+    # the existing Calendar event instead of minting a fresh Meet link and
+    # leaving the old event stray on the calendar.
+    previous = application.get("interview") or {}
+    meet_link = previous.get("meet_link")
+    gcal_event_id = previous.get("gcal_event_id")
+    moved = bool(gcal_event_id) and await gcal.update_event_time(gcal_event_id, when, end)
+    if not moved:
+        candidate_email = application.get("oxford_email") or application.get("email") or ""
+        created = await gcal.create_meet_event(
+            summary=f"Alpha Fund interview — {application.get('full_name') or application.get('username')}",
+            description=f"{application.get('programme') or 'Alpha Fund'} interview.",
+            start=when, end=end,
+            attendee_emails=[e for e in (candidate_email, interviewer["email"]) if e],
+        )
+        meet_link = created["meet_link"] if created else None
+        gcal_event_id = created["event_id"] if created else None
 
     interview = {
         "interviewer_id": interviewer["id"],
@@ -1420,6 +1441,8 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
         "scheduled_at": _now(),
         "responded_at": None,
         "candidate_note": None,
+        "meet_link": meet_link,
+        "gcal_event_id": gcal_event_id,
     }
     application["interview"] = interview
     await _save(user_id, application)
@@ -1570,13 +1593,18 @@ def _build_interview_ics(application: dict, interview: dict) -> bytes:
     if when.tzinfo is None:
         when = when.replace(tzinfo=dt.timezone.utc)
     end = when + dt.timedelta(minutes=INTERVIEW_MINUTES)
+    meet_link = interview.get("meet_link")
+    description = f"{programme} interview with {interviewer_name}."
+    if meet_link:
+        description += f"\nJoin with Google Meet: {meet_link}"
     return mailer.build_ics_invite(
         uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
         summary=f"Alpha Fund interview — {candidate_name}",
-        description=f"{programme} interview with {interviewer_name}.",
+        description=description,
         start=when, end=end,
         organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.SMTP_FROM,
         attendee_name=candidate_name, attendee_email=candidate_to,
+        location=meet_link or "Online — details to follow",
     )
 
 
@@ -1590,12 +1618,17 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
     if interview.get("message"):
         note_block = (f'<p style="color:#555;">A note from {interview["interviewer_name"]}: '
                       f'&ldquo;{interview["message"]}&rdquo;</p>')
+    meet_block = ""
+    if interview.get("meet_link"):
+        meet_block = (f'<p><strong>Meeting link:</strong> '
+                      f'<a href="{interview["meet_link"]}">{interview["meet_link"]}</a></p>')
     body = (
         f"<p>Hi {name},</p>"
         f"<p>The committee would like to interview you for <strong>{programme}</strong>.</p>"
         f"<p><strong>Proposed time:</strong> {_fmt_when(interview['when'])}<br>"
         f"<strong>Interviewer:</strong> {interview['interviewer_name']} "
         f"(<a href=\"mailto:{interview['interviewer_email']}\">{interview['interviewer_email']}</a>)</p>"
+        f"{meet_block}"
         f"{note_block}"
         f"<p>A calendar invite for this slot is attached, so you can hold it while you decide.</p>"
         f"<p>Sign in and open your application to confirm this time. If it doesn't work, "
@@ -1627,12 +1660,17 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
         return
     cc = interviewer_email if (candidate_to and interviewer_email and interviewer_email != to) else None
 
+    meet_block = ""
+    if interview.get("meet_link"):
+        meet_block = (f'<p><strong>Meeting link:</strong> '
+                      f'<a href="{interview["meet_link"]}">{interview["meet_link"]}</a></p>')
     body = (
         f"<p>Hi {candidate_name} and {interviewer_name},</p>"
         f"<p>This confirms the <strong>{programme}</strong> interview for "
         f"<strong>{_fmt_when(when)}</strong>.</p>"
         f"<p>{candidate_name}: {candidate_to or 'no email on file'}<br>"
         f"{interviewer_name}: {interviewer_email or 'no email on file'}</p>"
+        f"{meet_block}"
         f"<p>A calendar invite is attached. Reply-all on this email to share a call "
         f"link or sort out any last details directly.</p>"
     )

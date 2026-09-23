@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FAQ - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .faq-section { margin-bottom: 28px; }
+    .faq-section-title {
+      font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--muted); margin: 0 0 10px;
+    }
+    .faq-item {
+      border: 1px solid var(--border); background: var(--panel);
+      margin-bottom: 8px;
+    }
+    .faq-item summary {
+      padding: 14px 16px; cursor: pointer; font-weight: 600; font-size: 14.5px;
+      list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    }
+    .faq-item summary::-webkit-details-marker { display: none; }
+    .faq-item summary::after {
+      content: "+"; color: var(--muted); font-size: 18px; font-weight: 400; flex-shrink: 0;
+    }
+    .faq-item[open] summary::after { content: "\2212"; }
+    .faq-item p {
+      margin: 0; padding: 0 16px 16px; font-size: 14px; line-height: 1.65; color: var(--muted);
+    }
+    .faq-contact {
+      text-align: center; padding: 28px 24px; border: 1px solid var(--border-strong);
+      background: linear-gradient(135deg, var(--brand-wash), transparent 62%), var(--panel);
+    }
+    .faq-contact h3 { margin: 0 0 8px; }
+    .faq-contact p { margin: 0 0 16px; color: var(--muted); }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">FAQ</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/" class="btn ghost">Back to Platform</a>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 820px;">
+    <div class="msp-hero">
+      <h2>Frequently asked questions</h2>
+      <p>About applying to Alpha Fund, the assessment, and what happens after.</p>
+    </div>
+
+    <div class="faq-section">
+      <p class="faq-section-title">Applying</p>
+      <details class="faq-item">
+        <summary>Who can apply?</summary>
+        <p>Any current University of Oxford student. General public applicants confirm their student status
+          as part of applying; anyone already an Alpha Fund member has already cleared that bar.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What tracks are there, and can I apply to more than one?</summary>
+        <p>Two subjects — Fundamental and Quant — each with a Bootcamp (taught) and an Analyst (research) tier.
+          There's no combined "apply to both" option: pick one track to apply to now, and once that
+          application is decided you're welcome to apply to the other. A Bootcamp member can also apply
+          on to the matching Analyst tier without reapplying from scratch.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Is Fundamental open yet?</summary>
+        <p>Not yet — Fundamental Bootcamp and Fundamental Analyst are shown on the apply page as coming
+          next term. Quant is open now.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Do I need a CV?</summary>
+        <p>Yes — an up-to-date CV goes on your profile as part of applying, and it's what reviewers read
+          alongside your written answers.</p>
+      </details>
+    </div>
+
+    <div class="faq-section">
+      <p class="faq-section-title">The assessment</p>
+      <details class="faq-item">
+        <summary>What does the assessment involve?</summary>
+        <p>One 15-minute sitting, once you start it: a 5-minute question on why you want to join and why
+          you, followed by a 10-minute estimation question (pick something large and hard to count exactly,
+          and reason your way to a number). You can write plain text or light LaTeX for any maths.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I pause and come back later?</summary>
+        <p>No — once you start, the clock runs to the end in one sitting. Start it only when you have
+          15 minutes free and won't be interrupted.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I use AI tools, or notes prepared in advance?</summary>
+        <p>No — the assessment is meant to be your own thinking, in the moment. Pasting in text and leaving
+          the page are both tracked, and it's the same sitting every applicant gets.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Is there still a timed numerical/quant round?</summary>
+        <p>No — the assessment is the two written questions above for every track, Quant included. Quant
+          Analyst applicants can expect the harder mathematical content to come up at interview instead.</p>
+      </details>
+    </div>
+
+    <div class="faq-section">
+      <p class="faq-section-title">After you submit</p>
+      <details class="faq-item">
+        <summary>What happens after I submit?</summary>
+        <p>The committee reviews your CV and written answers. If you're shortlisted, you'll be asked to
+          submit your availability, then an analyst proposes an interview time for you to confirm.</p>
+      </details>
+      <details class="faq-item">
+        <summary>How does interview scheduling work?</summary>
+        <p>Once shortlisted, fill in the hours you're free on the availability grid. An analyst proposes a
+          specific time from that — confirm it, or say it doesn't work and the interviewer will reach out
+          directly to find another. A confirmed interview gets a calendar invite (with a Google Meet link,
+          where available) by email.</p>
+      </details>
+      <details class="faq-item">
+        <summary>Can I apply again if I'm rejected, or after Bootcamp?</summary>
+        <p>Yes — once a decision is made, you can start a fresh application. That's also how a Bootcamp
+          member moves on to Analyst.</p>
+      </details>
+    </div>
+
+    <div class="faq-section">
+      <p class="faq-section-title">Quant Outreach &amp; Fast-Track</p>
+      <details class="faq-item">
+        <summary>What is Quant Outreach?</summary>
+        <p>A talk from senior Alpha Fund members about the fund, careers in quant finance, and how to get
+          involved — see <a href="/events">Events</a> for the date, time and location.</p>
+      </details>
+      <details class="faq-item">
+        <summary>What's the CV clinic + Fast-Track ticket?</summary>
+        <p>Sign up for it and an analyst reviews your CV in person at the event, then you skip the online
+          written assessment and go straight into the interview process. It's limited to the first 50
+          places — general attendance (no cap) is always available if Fast-Track is full, and you can
+          still apply online afterwards either way.</p>
+      </details>
+    </div>
+
+    <div class="faq-contact">
+      <h3>Still have a question?</h3>
+      <p>Email us and we'll get back to you.</p>
+      <a class="btn primary" href="mailto:oxfordalphafund@gmail.com">oxfordalphafund@gmail.com</a>
+    </div>
+  </div>
+</body>
+
+</html>

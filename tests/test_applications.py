@@ -1002,7 +1002,8 @@ class TestInterviewScheduling:
         sent = []
 
         async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
-            sent.append({"to": to, "cc": cc, "subject": subject, "has_ics": ics is not None})
+            sent.append({"to": to, "cc": cc, "subject": subject, "has_ics": ics is not None,
+                         "body_html": body_html, "ics": ics})
             return True
 
         monkeypatch.setattr(ap, "_load", fake_load)
@@ -1087,6 +1088,74 @@ class TestInterviewScheduling:
         stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
         assert stored["status"] == ap.INTERVIEW_PROPOSED
         assert len(sent) == 1
+
+    def test_schedule_interview_attaches_a_meet_link_when_gcal_is_configured(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        created = []
+
+        async def fake_create(**kwargs):
+            created.append(kwargs)
+            return {"event_id": "ev1", "meet_link": "https://meet.google.com/abc-defg-hij"}
+
+        monkeypatch.setattr(ap.gcal, "create_meet_event", fake_create)
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        result = asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), reviewer))
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["meet_link"] == "https://meet.google.com/abc-defg-hij"
+        assert stored["gcal_event_id"] == "ev1"
+        assert result["interview"]["meet_link"] == "https://meet.google.com/abc-defg-hij"
+        assert created[0]["attendee_emails"] == ["jo@merton.ox.ac.uk", "priya@ox.ac.uk"]
+        # The link is in the proposal email body and in the attached .ics.
+        assert "https://meet.google.com/abc-defg-hij" in sent[0]["body_html"]
+        assert b"https://meet.google.com/abc-defg-hij" in sent[0]["ics"]
+
+    def test_schedule_interview_without_gcal_configured_has_no_meet_link(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        monkeypatch.setattr(ap.gcal, "CONFIGURED", False)
+        reviewer = User(id="qa1", username="priya")
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+
+        result = asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), reviewer))
+
+        assert result["interview"]["meet_link"] is None
+        assert "meet.google.com" not in sent[0]["body_html"]
+
+    def test_re_proposing_moves_the_existing_event_instead_of_making_a_new_one(self, monkeypatch):
+        application = self._shortlisted_application()
+        application["interview"] = {
+            "interviewer_id": "qa1", "interviewer_name": "Priya Patel", "interviewer_email": "priya@ox.ac.uk",
+            "message": "", "when": dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2),
+            "status": ap.INTERVIEW_PROPOSED, "scheduled_by": "priya",
+            "scheduled_at": dt.datetime.now(dt.timezone.utc), "responded_at": None, "candidate_note": None,
+            "meet_link": "https://meet.google.com/existing-link", "gcal_event_id": "ev-existing",
+        }
+        fake_db, sent = self._patch(monkeypatch, application, self._reviewer_users())
+        moved = []
+
+        async def fake_update(event_id, start, end):
+            moved.append(event_id)
+            return True
+
+        async def fake_create(**kwargs):
+            raise AssertionError("should not create a fresh event when moving an existing one")
+
+        monkeypatch.setattr(ap.gcal, "update_event_time", fake_update)
+        monkeypatch.setattr(ap.gcal, "create_meet_event", fake_create)
+        reviewer = User(id="qa1", username="priya")
+        new_when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=5)
+
+        result = asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=new_when), reviewer))
+
+        assert moved == ["ev-existing"]
+        assert result["interview"]["meet_link"] == "https://meet.google.com/existing-link"
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert stored["gcal_event_id"] == "ev-existing"
 
     def _proposed_application(self):
         application = self._shortlisted_application()

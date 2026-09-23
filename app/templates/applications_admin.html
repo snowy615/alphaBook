@@ -592,6 +592,11 @@
               {% elif r.interview.status == "confirmed" %}<span class="apa-tag is-good">confirmed</span>
               {% elif r.interview.status == "declined" %}<span class="apa-tag is-bad">declined</span>{% endif %}
             </p>
+            {% if r.interview.meet_link %}
+            <p style="font-size:13px;margin:0 0 4px;">
+              <a href="{{ r.interview.meet_link }}" target="_blank" rel="noopener">Join with Google Meet ↗</a>
+            </p>
+            {% endif %}
             {% if r.interview.message %}
             <p class="msp-muted" style="font-size:13px;margin:0 0 4px;">Note sent: &ldquo;{{ r.interview.message }}&rdquo;</p>
             {% endif %}

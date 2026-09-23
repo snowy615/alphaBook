@@ -643,6 +643,7 @@
         <div class="apl-interview is-confirmed">
           <p><strong>Interview confirmed</strong> for ${esc(fmtLocal(interview.when))}
              with ${esc(interview.interviewer_name || "")}.</p>
+          ${interview.meet_link ? `<p><a href="${esc(interview.meet_link)}" target="_blank" rel="noopener">Join with Google Meet ↗</a></p>` : ""}
           <p class="msp-muted">A calendar invite has been sent to your email.</p>
         </div>`;
     }
@@ -664,6 +665,7 @@
            <strong>Interviewer:</strong> ${esc(interview.interviewer_name || "")}
            ${interview.interviewer_email ? `(<a href="mailto:${esc(interview.interviewer_email)}">${esc(interview.interviewer_email)}</a>)` : ""}
         </p>
+        ${interview.meet_link ? `<p><a href="${esc(interview.meet_link)}" target="_blank" rel="noopener">Join with Google Meet ↗</a></p>` : ""}
         ${note}
         <div class="apl-interview-actions">
           <button class="btn primary" id="confirmInterviewBtn">Confirm this time</button>

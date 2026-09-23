@@ -456,6 +456,11 @@ async def about_page(request: Request):
     )
 
 
+@app.get("/faq", include_in_schema=False)
+async def faq_page(request: Request):
+    return templates.TemplateResponse("faq.html", {"request": request, "app_name": "AlphaBook"})
+
+
 @app.get("/", include_in_schema=False)
 async def home(request: Request):
     from app.models import CustomGame
