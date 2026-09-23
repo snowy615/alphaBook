@@ -944,6 +944,43 @@ class TestAdminInterviewView:
         assert ap._admin_interview_view(None) is None
 
 
+class TestMyPendingInterview:
+    """The admin page's "My pending interviews" tab: an interview assigned
+    to the viewer that they haven't yet logged a score for."""
+
+    def _application(self, **interview_over):
+        interview = {
+            "interviewer_id": "rev1", "interviewer_name": "Priya", "interviewer_email": "p@ox.ac.uk",
+            "when": dt.datetime.now(dt.timezone.utc), "status": ap.INTERVIEW_PROPOSED,
+            "message": "", "scheduled_at": dt.datetime.now(dt.timezone.utc), "responded_at": None,
+        }
+        interview.update(interview_over)
+        return {"username": "jo", "programme": mb.M_QUANT_ANALYST, "status": ap.S_SHORTLISTED,
+                "interview": interview}
+
+    def test_assigned_and_unscored_is_pending(self):
+        row = ap._review_row("u1", self._application(), viewer_id="rev1")
+        assert row["is_my_pending_interview"] is True
+
+    def test_someone_elses_interview_is_not_mine(self):
+        row = ap._review_row("u1", self._application(), viewer_id="rev2")
+        assert row["is_my_pending_interview"] is False
+
+    def test_declined_is_not_pending(self):
+        row = ap._review_row("u1", self._application(status=ap.INTERVIEW_DECLINED), viewer_id="rev1")
+        assert row["is_my_pending_interview"] is False
+
+    def test_already_scored_by_me_is_not_pending(self):
+        application = self._application()
+        application["reviews"] = {"rev1": {"reviewer_name": "Priya", "interview_score": 8}}
+        row = ap._review_row("u1", application, viewer_id="rev1")
+        assert row["is_my_pending_interview"] is False
+
+    def test_no_interview_is_not_pending(self):
+        row = ap._review_row("u1", {"username": "jo", "status": ap.S_SHORTLISTED}, viewer_id="rev1")
+        assert row["is_my_pending_interview"] is False
+
+
 class TestInterviewScheduling:
     """
     The full loop: a reviewer proposes a time, the candidate confirms

@@ -47,12 +47,14 @@ CONFIGURED = bool(SMTP_HOST and SMTP_FROM)
 
 # Where the logo image is fetched from — must be an absolute URL since email
 # clients render with no page context to resolve a relative one against.
-# This is a *separate* asset from the one used on the site: it has the dark
-# backdrop baked in as opaque pixels rather than relying on CSS background +
-# PNG transparency, because Outlook's desktop renderer (the Word engine) is
-# unreliable with alpha-transparent PNGs and can fail to display them at all.
+# This is a *separate* asset from the one used on the site: the current
+# wordmark flattened onto an opaque white background (228x84, 2x the display
+# size below) rather than left transparent, because Outlook's desktop
+# renderer (the Word engine) is unreliable with alpha-transparent PNGs and
+# can fail to display them at all.
 BASE_URL = os.getenv("APP_BASE_URL", "https://alphabook.uk").rstrip("/")
 LOGO_URL = f"{BASE_URL}/static/alphabook_email.png"
+LOGO_W, LOGO_H = 114, 42
 
 
 def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: Optional[str] = None) -> str:
@@ -78,8 +80,8 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
       <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
         <tr>
           <td style="padding:0;">
-            <img src="{LOGO_URL}" alt="AlphaBook" width="90" height="42"
-                 style="width:90px;height:42px;display:block;border:0;">
+            <img src="{LOGO_URL}" alt="AlphaBook" width="{LOGO_W}" height="{LOGO_H}"
+                 style="width:{LOGO_W}px;height:{LOGO_H}px;display:block;border:0;">
           </td>
           <td style="padding:0 0 0 10px;font-weight:400;font-size:13px;color:#888;vertical-align:middle;">
             &middot; Alpha Fund

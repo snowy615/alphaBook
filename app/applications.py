@@ -1077,6 +1077,18 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
     oa = application.get("oa") or {}
     motivation = oa.get("motivation") or {}
     estimation = oa.get("estimation") or {}
+    interview_view = _admin_interview_view(application.get("interview"))
+    review_summary = _review_summary(application, viewer_id)
+    # Surfaced as its own tab on the admin page: an interview assigned to me
+    # that I haven't yet logged a score for. Drops off once I score it, once
+    # it's declined (nothing to do here until it's rescheduled), or once
+    # someone else is proposed instead.
+    is_my_pending_interview = bool(
+        interview_view and viewer_id
+        and interview_view.get("interviewer_id") == viewer_id
+        and interview_view.get("status") != INTERVIEW_DECLINED
+        and (review_summary.get("mine") or {}).get("interview_score") is None
+    )
     return {
         "user_id": uid,
         "username": application.get("username", "?"),
@@ -1108,8 +1120,9 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "flags": application.get("flags") or {},
         "finish_reason": oa.get("finish_reason"),
         "decision_note": application.get("decision_note") or "",
-        "review": _review_summary(application, viewer_id),
-        "interview": _admin_interview_view(application.get("interview")),
+        "review": review_summary,
+        "interview": interview_view,
+        "is_my_pending_interview": is_my_pending_interview,
         "shortlisted_at": _as_utc(application.get("shortlisted_at")),
         "shortlisted_by": application.get("shortlisted_by") or "",
         "availability": application.get("availability") or [],

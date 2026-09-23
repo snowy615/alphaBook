@@ -274,6 +274,7 @@
              placeholder="Search applicants by name, username, email, college or degree…">
       <div class="apa-stage-tabs" id="apaTabs">
         <button type="button" class="apa-stage-tab is-active" data-stage="all">All <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="mine">My pending interviews <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="started">Started application <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="screen">CV screen <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="shortlist">Shortlisted <span class="n"></span></button>
@@ -301,6 +302,7 @@
           <tbody>
             {% for r in rows %}
             <tr class="apa-item" data-stage="{{ stage_of.get(r.status, 'started') }}"
+                data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank">{{ r.rank if r.rank else "—" }}</td>
               <td>
@@ -387,6 +389,7 @@
     {% for r in rows %}
     <div class="card msp-panel apa-card apa-item" id="a-{{ r.user_id }}"
          data-stage="{{ stage_of.get(r.status, 'started') }}"
+         data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
@@ -951,8 +954,12 @@
       const noneEl = document.getElementById("apaNone");
       let stage = "all";
 
-      const matches = (el, q) => (stage === "all" || el.dataset.stage === stage)
-        && (!q || el.dataset.q.includes(q));
+      // "mine" is its own dimension (who's interviewing, not lifecycle
+      // stage), so it overrides data-stage entirely rather than combining
+      // with it — a pending interview can be at any stage from shortlisted
+      // on, and the point of the tab is to not have to know which.
+      const stageOk = (el, s) => s === "all" ? true : s === "mine" ? el.dataset.mine === "1" : el.dataset.stage === s;
+      const matches = (el, q) => stageOk(el, stage) && (!q || el.dataset.q.includes(q));
 
       function apply() {
         const q = searchEl.value.trim().toLowerCase();
@@ -961,7 +968,7 @@
         tabs.forEach((tab) => {
           const s = tab.dataset.stage;
           const n = items.filter((el) => el.tagName === "TR"
-            && (s === "all" || el.dataset.stage === s) && (!q || el.dataset.q.includes(q))).length;
+            && stageOk(el, s) && (!q || el.dataset.q.includes(q))).length;
           tab.querySelector(".n").textContent = n;
         });
         const shown = items.some((el) => el.tagName === "TR" && !el.classList.contains("hidden"));
