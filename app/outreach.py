@@ -47,8 +47,19 @@ TICKET_LABELS = {
 }
 
 _DESCRIPTION = (
-    "Oxford Alpha Fund's Quant outreach event: hear how the fund works, meet the team, "
-    "and find out how to join the Quant Bootcamp.\n\n"
+    "The Quant Outreach Event is designed to introduce students to quantitative finance, "
+    "showcase how involvement in Oxford Alpha Fund can support their professional "
+    "development, and provide an accelerated pathway into the fund. The event involves "
+    "senior OAF members sharing their experiences in securing internships, the skills and "
+    "lessons they gained through their involvement in the fund, and how working with other "
+    "members contributed to their development.\n\n"
+    "The event also includes a CV review and fast-track recruitment component, where "
+    "participants receive direct feedback on their CVs and speak with OAF members through "
+    "a condensed assessment process. Candidates who perform strongly may receive an "
+    "accelerated recruitment decision, while other promising candidates may be placed "
+    "under further consideration. Participants progressing through this route can bypass "
+    "the initial online application and assessment stages of the standard recruitment "
+    "process.\n\n"
     "Choose a ticket when you sign up:\n"
     "• CV clinic + Fast-Track — an analyst reviews your CV in person, and you skip the "
     "online written assessment and go straight into the interview process. Limited to the "
@@ -56,6 +67,7 @@ _DESCRIPTION = (
     "• General attendance — come to the talk and networking without the CV clinic. You can "
     "still apply online afterwards."
 )
+_LOCATION = "Fitzhugh Auditorium, Cohen Quad, Exeter College"
 
 
 def _now() -> dt.datetime:
@@ -77,16 +89,17 @@ async def ensure_event() -> None:
     ref = db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID)
     if (await ref.get()).exists:
         return
-    day = dt.date(2026, 10, 12)
-    starts = dt.datetime.combine(day, dt.time(18, 0), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
-    ends = dt.datetime.combine(day, dt.time(20, 0), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
+    day = dt.date(2026, 10, 11)
+    starts = dt.datetime.combine(day, dt.time(17, 30), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
+    ends = dt.datetime.combine(day, dt.time(19, 0), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
     await ref.set({
         "kind": "outreach",
         "title": "Quant Outreach",
         "description": _DESCRIPTION,
+        "location": _LOCATION,
         "date": day.isoformat(),
-        "start_time": "18:00",
-        "end_time": "20:00",
+        "start_time": "17:30",
+        "end_time": "19:00",
         "starts_at": starts,
         "ends_at": ends,
         "capacity": None,
@@ -108,6 +121,7 @@ async def event_summary() -> Optional[Dict[str, Any]]:
     return {
         "title": data.get("title", "Quant Outreach"),
         "when_label": when_label(starts, ends) if starts and ends else "",
+        "location": data.get("location", ""),
     }
 
 

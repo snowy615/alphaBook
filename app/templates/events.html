@@ -14,6 +14,7 @@
     .evt-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
     .evt-title { margin: 0 0 4px; font-size: 19px; }
     .evt-when { color: var(--brand); font-size: 14px; font-weight: 600; }
+    .evt-loc { color: var(--muted); font-size: 13px; margin-top: 2px; }
     .evt-desc { margin: 14px 0 0; white-space: pre-wrap; line-height: 1.6; font-size: 14.5px; }
     .evt-meta { margin-top: 14px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 13px; color: var(--muted); }
     .evt-tag { display: inline-block; padding: 3px 9px; border: 1px solid var(--border-strong); font-size: 12px; color: var(--text); }
@@ -89,7 +90,11 @@
         </div>
         <div class="evt-field">
           <label for="evDesc">Description</label>
-          <textarea id="evDesc" class="msp-input" maxlength="4000" placeholder="What it is, where it is, what to bring."></textarea>
+          <textarea id="evDesc" class="msp-input" maxlength="4000" placeholder="What it is, what to bring."></textarea>
+        </div>
+        <div class="evt-field">
+          <label for="evLocation">Location</label>
+          <input id="evLocation" class="msp-input" type="text" maxlength="200" placeholder="Room, building, college">
         </div>
         <div class="evt-row">
           <div class="evt-field">

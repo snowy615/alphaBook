@@ -2,9 +2,10 @@
 Events — things Oxford Alpha Fund runs, with sign-up.
 =====================================================
 
-An admin creates an event (title, description, date and start/end time in
-London time, an optional capacity, whether the attendance numbers are shown
-to the public, and how sign-up works). Anyone signed in can then sign up.
+An admin creates an event (title, description, location, date and start/end
+time in London time, an optional capacity, whether the attendance numbers
+are shown to the public, and how sign-up works). Anyone signed in can then
+sign up.
 
 Sign-up comes in two modes, chosen per event:
 
@@ -69,6 +70,7 @@ _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 class EventPayload(BaseModel):
     title: str
     description: str = ""
+    location: str = ""
     date: str            # YYYY-MM-DD, London
     start_time: str      # HH:MM, London
     end_time: str        # HH:MM, London
@@ -129,6 +131,7 @@ def _parse_event(payload: EventPayload) -> Dict[str, Any]:
     return {
         "title": title[:120],
         "description": (payload.description or "").strip()[:4000],
+        "location": (payload.location or "").strip()[:200],
         "date": payload.date,
         "start_time": payload.start_time,
         "end_time": payload.end_time,
@@ -197,6 +200,7 @@ def _event_view(event: Dict[str, Any], signups: List[Dict[str, Any]],
         "id": event["id"],
         "title": event.get("title", ""),
         "description": event.get("description", ""),
+        "location": event.get("location", ""),
         "date": event.get("date"),
         "start_time": event.get("start_time"),
         "end_time": event.get("end_time"),

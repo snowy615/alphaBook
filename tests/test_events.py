@@ -347,11 +347,12 @@ def _holders(store, n, ticket="fast_track"):
 
 
 class TestOutreachEvent:
-    def test_it_is_created_for_12_october_and_only_once(self, store):
+    def test_it_is_created_for_11_october_and_only_once(self, store):
         _seed_outreach(store)
         ev = store["events"][OUT]
-        assert ev["kind"] == "outreach" and ev["date"] == "2026-10-12"
+        assert ev["kind"] == "outreach" and ev["date"] == "2026-10-11"
         assert ev["title"] == "Quant Outreach"
+        assert ev["location"] == outreach._LOCATION
         store["events"][OUT]["title"] = "Edited by an admin"
         run(outreach.ensure_event())
         assert store["events"][OUT]["title"] == "Edited by an admin"

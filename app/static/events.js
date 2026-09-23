@@ -117,6 +117,7 @@
             <div>
               <h3 class="evt-title">${esc(ev.title)}</h3>
               <div class="evt-when">${esc(ev.when_label)}</div>
+              ${ev.location ? `<div class="evt-loc">${esc(ev.location)}</div>` : ""}
             </div>
             <div class="evt-actions" style="margin-top:0;">${manageButtons(ev)}</div>
           </div>
@@ -185,13 +186,13 @@
 
   // ── Admin form ───────────────────────────────────────────────────────────
   const F = {
-    title: $("#evTitle"), desc: $("#evDesc"), date: $("#evDate"), start: $("#evStart"),
-    end: $("#evEnd"), cap: $("#evCap"), mode: $("#evMode"), show: $("#evShow"),
+    title: $("#evTitle"), desc: $("#evDesc"), location: $("#evLocation"), date: $("#evDate"),
+    start: $("#evStart"), end: $("#evEnd"), cap: $("#evCap"), mode: $("#evMode"), show: $("#evShow"),
   };
 
   function resetForm() {
     editingId = null;
-    F.title.value = F.desc.value = F.date.value = F.start.value = F.end.value = F.cap.value = "";
+    F.title.value = F.desc.value = F.location.value = F.date.value = F.start.value = F.end.value = F.cap.value = "";
     F.mode.value = "first_come";
     F.show.checked = false;
     $("#formTitle").textContent = "New event";
@@ -205,6 +206,7 @@
     editingId = ev.id;
     F.title.value = ev.title;
     F.desc.value = ev.description;
+    F.location.value = ev.location || "";
     F.date.value = ev.date;
     F.start.value = ev.start_time;
     F.end.value = ev.end_time;
@@ -227,6 +229,7 @@
     const payload = {
       title: F.title.value,
       description: F.desc.value,
+      location: F.location.value,
       date: F.date.value,
       start_time: F.start.value,
       end_time: F.end.value,
