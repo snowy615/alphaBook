@@ -72,10 +72,14 @@
       color: var(--muted); margin: 0 0 8px;
     }
     .apa-essay {
-      white-space: pre-wrap; line-height: 1.65; font-size: 14.5px;
+      white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: 14.5px;
       border-left: 2px solid var(--border); padding: 2px 0 2px 16px;
       margin: 0 0 18px; max-height: 420px; overflow-y: auto;
     }
+    /* A long unbroken formula scrolls inside the answer rather than
+       pushing past it. */
+    .apa-essay .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+    .apa-essay .katex { overflow-wrap: normal; }
     .apa-essay.is-empty { color: var(--muted); font-style: italic; border-left-style: dashed; }
 
     details.apa-detail { margin-bottom: 4px; }

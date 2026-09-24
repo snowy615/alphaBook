@@ -63,6 +63,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
 from openpyxl import Workbook
+from openpyxl.styles import Alignment
 from openpyxl.utils import get_column_letter
 from pydantic import BaseModel
 
@@ -1687,6 +1688,17 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
               10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
+
+    # Long free text (the two written answers, reviewers' notes, the
+    # interview message, availability) wraps within its column rather than
+    # running on as one line, and every row reads from the top.
+    wrapped = {headers.index(h) + 1 for h in (
+        "Reviewer notes", "Decision note", "Motivation text", "Estimation text",
+        "Interview message", "Availability submitted")}
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=cell.column in wrapped, vertical="top")
+    ws.freeze_panes = "C2"   # headers and names stay put while scrolling
 
     buf = io.BytesIO()
     wb.save(buf)

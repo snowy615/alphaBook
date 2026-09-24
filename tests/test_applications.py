@@ -3149,3 +3149,20 @@ class TestReviewListRanking:
         assert 'data-unreviewed="1"' in attrs("new")
         assert 'data-unreviewed="0"' in attrs("early")   # nothing to review yet
         assert 'id="apaUnreviewed"' in html and "All unreviewed" in html
+
+
+def test_export_wraps_the_written_answers(monkeypatch):
+    """Long answers wrap within their column in the spreadsheet rather than
+    running on as a single line."""
+    from openpyxl import load_workbook
+    _flow_db(monkeypatch, applications={"u1": {
+        "user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST, "status": ap.S_SUBMITTED,
+        "oa": {"motivation": {"text": "word " * 200}, "estimation": {"text": "$$N = 40000 \\\\times 0.6$$ " * 20}}}})
+    wb = load_workbook(_read_streaming(asyncio.run(
+        ap.export_applications(User(id="admin1", username="root", is_admin=True)))))
+    ws = wb.active
+    headers = [c.value for c in ws[1]]
+    for name in ("Motivation text", "Estimation text", "Reviewer notes"):
+        cell = ws.cell(row=2, column=headers.index(name) + 1)
+        assert cell.alignment.wrap_text is True, name
+    assert ws.cell(row=2, column=headers.index("Username") + 1).alignment.wrap_text is not True

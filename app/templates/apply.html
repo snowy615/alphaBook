@@ -129,7 +129,10 @@
     .apl-preview {
       margin-top: 10px; padding: 14px; border: 1px dashed var(--border);
       background: var(--bg); font-size: 15px; line-height: 1.6; white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
+    .apl-preview .katex-display { overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+    .apl-preview .katex { overflow-wrap: normal; }
     .apl-preview code, .apl-hint code {
       font-size: 12px; background: var(--card); padding: 1px 5px; border: 1px solid var(--border);
     }
