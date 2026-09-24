@@ -50,7 +50,15 @@ class _FakeDocRef:
         self._store[self._key] = dict(data)
 
     async def update(self, patch):
-        self._store.setdefault(self._key, {}).update(patch)
+        # Honours Firestore's dotted field paths ("reviews.r1"), which write
+        # one nested field and leave its siblings alone.
+        doc = self._store.setdefault(self._key, {})
+        for key, value in patch.items():
+            *parents, leaf = key.split(".")
+            target = doc
+            for part in parents:
+                target = target.setdefault(part, {})
+            target[leaf] = value
 
     async def delete(self):
         self._store.pop(self._key, None)
@@ -395,7 +403,8 @@ class TestReviewSummary:
     def test_no_reviews_yet(self):
         summary = ap._review_summary({}, viewer_id="r1")
         assert summary == {
-            "count": 0, "cv_avg": None, "cv_max": 15, "written_avg": None, "interview_avg": None,
+            "count": 0, "cv_avg": None, "cv_max": 15, "written_avg": None, "estimation_avg": None,
+            "interview_avg": None, "cv_n": 0, "written_n": 0, "estimation_n": 0, "interview_n": 0,
             "entries": [], "mine": None,
         }
 
@@ -432,17 +441,8 @@ class TestRequireReviewer:
 
 class TestScoring:
     def _patch(self, monkeypatch, application):
-        store = {"u1": application}
-
-        async def fake_load(uid):
-            return store.get(uid)
-
-        async def fake_save(uid, app_):
-            store[uid] = app_
-
-        monkeypatch.setattr(ap, "_load", fake_load)
-        monkeypatch.setattr(ap, "_save", fake_save)
-        return store
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": application})
+        return fake_db.collections[ap.COLLECTION]
 
     def _base(self, status=ap.S_SUBMITTED):
         return {"user_id": "u1", "username": "jo", "status": status, "reviews": {}}
@@ -2561,7 +2561,7 @@ class TestExportNoneScores:
         headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
         notes = next(ws.iter_rows(min_row=2, max_row=2))[headers.index("Reviewer notes")].value
         assert "None" not in notes
-        assert notes == "Priya: CV 8/15, written —, interview —"
+        assert notes == "Priya: CV 8/15, written —, estimation —, interview —"
 
 
 class TestWordingFixes:
@@ -2778,13 +2778,28 @@ class TestCvRubric:
         assert entry["cv_score"] == 9 and entry["cv_rubric"] == picks and entry["cv_max"] == 15
         assert result["review"]["cv_avg"] == 9.0
 
-    def test_every_criterion_must_be_scored(self, monkeypatch):
-        self._patch(monkeypatch)
+    def test_a_half_scored_cv_is_saved_but_has_no_score_yet(self, monkeypatch):
+        # The scoring view saves each pick as it's made, so a partial rubric
+        # is kept; it just doesn't count until every criterion is scored.
+        fake_db = self._patch(monkeypatch)
+        reviewer = User(id="r1", username="al")
         partial = rubric(9)
         partial.pop("market")
-        with pytest.raises(HTTPException) as exc:
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=partial), User(id="r1", username="al")))
-        assert "Previous market experience" in exc.value.detail
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=partial), reviewer))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert entry["cv_rubric"] == partial and entry["cv_score"] is None
+        assert result["review"]["cv_avg"] is None
+
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={**partial, "market": 0}), reviewer))
+        assert result["review"]["cv_avg"] == 9.0
+
+    def test_a_criterion_can_be_unscored(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        reviewer = User(id="r1", username="al")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(9)), reviewer))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={**rubric(9), "major": None}), reviewer))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert "major" not in entry["cv_rubric"] and entry["cv_score"] is None
 
     @pytest.mark.parametrize("key,points", [("motivation", 3), ("market", -1), ("major", 5)])
     def test_only_the_listed_options_are_accepted(self, monkeypatch, key, points):
@@ -2831,7 +2846,7 @@ class TestCvRubric:
         }})
         assert summary["cv_avg"] == 12.0
 
-    def test_the_review_page_renders_the_rubric_without_the_oxford_student_box(self, monkeypatch):
+    def test_the_review_page_carries_the_rubric_without_the_oxford_student_box(self, monkeypatch):
         _flow_db(monkeypatch, applications={
             "u1": {"user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
                    "applicant_category": mb.M_PUBLIC, "confirmed_oxford_student": True,
@@ -2844,9 +2859,127 @@ class TestCvRubric:
                            "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
         html = asyncio.run(ap.admin_applications(request, User(id="admin1", username="root", is_admin=True))).body.decode()
         assert "Oxford student" not in html
-        assert html.count('class="apa-rubric"') == 2
-        assert "STEM achievements" in html and "International medallist" in html
-        assert 'data-total>9<' in html                      # my saved total, shown on load
-        assert html.count('name="rb-u1-') == 21             # 6 criteria, 21 options
-        assert 'name="rb-u2-motivation"' not in html        # Fast-Track: no response criteria
-        assert "9.0<span" in html and "/15" in html and "/11" in html
+        assert "STEM achievements" in html and "International medallist" in html   # the rubric, for the view
+        assert "9.0<span" in html and "/15" in html
+        assert '"cv_max": 11' in html                                             # Fast-Track
+
+
+class TestAutosavedScoring:
+    """The scoring view saves every click and keystroke on its own: only the
+    fields sent change, null clears one, and each reviewer's save touches
+    only their own entry."""
+
+    def _patch(self, monkeypatch, **extra):
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED, **extra}})
+        return fake_db
+
+    def _entry(self, fake_db, rid="r1"):
+        return fake_db.collections[ap.COLLECTION]["u1"]["reviews"][rid]
+
+    def test_only_the_fields_sent_change(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        me = User(id="r1", username="al")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=6, note="Sharp"), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(estimation_score=8), me))
+        entry = self._entry(fake_db)
+        assert (entry["written_score"], entry["estimation_score"], entry["note"]) == (6, 8, "Sharp")
+
+    def test_a_score_or_the_comments_can_be_cleared(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        me = User(id="r1", username="al")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=6, note="Sharp"), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=None), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(note=""), me))
+        entry = self._entry(fake_db)
+        assert entry["written_score"] is None and entry["note"] == ""
+
+    def test_comments_are_long_enough_for_real_notes(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(note="x" * 5000), User(id="r1", username="al")))
+        assert len(self._entry(fake_db)["note"]) == ap.NOTE_MAX_CHARS == 2000
+
+    def test_estimation_is_its_own_score_and_averaged(self, monkeypatch):
+        self._patch(monkeypatch)
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(estimation_score=6), User(id="r1", username="al")))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(estimation_score=9), User(id="r2", username="bo")))
+        assert result["review"]["estimation_avg"] == 7.5 and result["review"]["estimation_n"] == 2
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(estimation_score=11), User(id="r1", username="al")))
+
+    def test_the_combined_ranking_includes_estimation(self, monkeypatch):
+        self._patch(monkeypatch, reviews={"r1": {"reviewer_name": "al", "written_score": 6, "estimation_score": 8}})
+        rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
+        assert rows[0]["combined_score"] == 7.0
+
+    def test_one_reviewers_save_leaves_anothers_alone(self, monkeypatch):
+        # A save writes only that reviewer's entry, so another reviewer's
+        # score that landed in between (not in this request's copy of the
+        # application) survives.
+        fake_db = self._patch(monkeypatch)
+        stale = dict(fake_db.collections[ap.COLLECTION]["u1"])
+
+        async def stale_load(uid):
+            return {**stale, "reviews": {}}
+
+        fake_db.collections[ap.COLLECTION]["u1"]["reviews"] = {"r2": {"reviewer_name": "bo", "written_score": 4}}
+        monkeypatch.setattr(ap, "_load", stale_load)
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=9), User(id="r1", username="al")))
+        reviews = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]
+        assert reviews["r2"]["written_score"] == 4 and reviews["r1"]["written_score"] == 9
+
+    def test_nothing_to_save_is_refused(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(), User(id="r1", username="al")))
+
+
+class TestScoringView:
+    """The review page: four section buttons per candidate and the data the
+    scoring view opens with."""
+
+    def _render(self, monkeypatch, applications):
+        _flow_db(monkeypatch, applications=applications)
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        return asyncio.run(ap.admin_applications(
+            request, User(id="admin1", username="root", is_admin=True))).body.decode()
+
+    def _data(self, html, uid):
+        import json
+        import re
+        m = re.search(r'<script type="application/json" id="score-data-%s">(.*?)</script>' % uid, html, re.S)
+        return json.loads(m.group(1))
+
+    def test_buttons_follow_the_candidates_stage(self, monkeypatch):
+        html = self._render(monkeypatch, {
+            "sub": {"user_id": "sub", "username": "a", "status": ap.S_SUBMITTED, "cv_blob_path": "cvs/a.pdf"},
+            "sl": {"user_id": "sl", "username": "b", "status": ap.S_SHORTLISTED,
+                   "shortlisted_at": dt.datetime.now(dt.timezone.utc)},
+            "ft": {"user_id": "ft", "username": "c", "status": ap.S_SUBMITTED, "event_ticket": "fast_track"},
+        })
+        assert "openScoring('sub', 'cv')" in html and "openScoring('sub', 'written')" in html
+        assert "openScoring('sub', 'estimation')" in html and "openScoring('sub', 'interview')" not in html
+        assert "openScoring('sl', 'interview')" in html
+        assert "openScoring('ft', 'cv')" in html and "openScoring('ft', 'written')" not in html
+        assert 'id="scOverlay"' in html and 'id="scNote"' in html
+
+    def test_the_view_opens_with_my_saved_scores_and_comments(self, monkeypatch):
+        html = self._render(monkeypatch, {"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "status": ap.S_SUBMITTED,
+            "cv_blob_path": "cvs/jo.pdf",
+            "oa": {"motivation": {"text": "Chess </script> club"}, "estimation": {"text": "About 30,000"}},
+            "reviews": {
+                "admin1": {"reviewer_name": "root", "cv_rubric": {"major": 2}, "cv_score": None,
+                           "written_score": 7, "note": "Keen", "updated_at": dt.datetime.now(dt.timezone.utc)},
+                "r2": {"reviewer_name": "bo", "written_score": 5},
+            },
+        }})
+        d = self._data(html, "u1")
+        assert d["name"] == "Jo Bloggs" and d["cv_url"] == "/apply/admin/u1/cv"
+        assert d["mine"] == {"cv_rubric": {"major": 2}, "written_score": 7, "estimation_score": None,
+                             "interview_score": None, "note": "Keen"}
+        assert d["review"]["written_avg"] == 6.0 and d["review"]["written_n"] == 2
+        assert d["motivation"] == "Chess </script> club"   # safely embedded, not cut short
+        assert "in progress" in html                        # my half-scored CV

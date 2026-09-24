@@ -194,6 +194,7 @@ SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 # Written and interview scores are on a 1-10 scale for now (their own
 # criteria are still to come). The CV is scored against CV_RUBRIC below.
 SCORE_MIN, SCORE_MAX = 1, 10
+NOTE_MAX_CHARS = 2000   # a reviewer's general comments on one applicant
 
 # The CV round: each criterion is scored by picking exactly one option, and
 # the CV score is the total (out of 15). Options are listed lowest first, and
@@ -300,11 +301,18 @@ class ConfirmCv(BaseModel):
 
 
 class ReviewScore(BaseModel):
-    # The CV is scored criterion by criterion ({criterion key: points}); the
-    # CV score is their total. A bare cv_score is no longer accepted.
-    cv_rubric: Optional[Dict[str, int]] = None
+    """One reviewer's scores for one applicant, saved as they go.
+
+    Only the fields actually sent are changed (the scoring view autosaves
+    each edit on its own), and sending null clears that field. The CV is
+    scored criterion by criterion ({criterion key: points}); the CV score is
+    their total once every criterion is scored. A bare cv_score is refused.
+    ``note`` is the reviewer's general comments on the applicant, shared by
+    every section."""
+    cv_rubric: Optional[Dict[str, Optional[int]]] = None
     cv_score: Optional[int] = None
     written_score: Optional[int] = None
+    estimation_score: Optional[int] = None
     interview_score: Optional[int] = None
     note: Optional[str] = None
 
@@ -477,6 +485,14 @@ async def _load(user_id: str) -> Optional[dict]:
 
 async def _save(user_id: str, application: dict) -> None:
     await db_module.db.collection(COLLECTION).document(user_id).set(application)
+
+
+async def _save_review(user_id: str, reviewer_id: str, entry: dict) -> None:
+    """Write one reviewer's entry and nothing else. Scores autosave on every
+    click, often with several reviewers on the same applicant at once;
+    writing the whole application back (as _save does) would let one
+    reviewer's save wipe out another's that landed a moment earlier."""
+    await db_module.db.collection(COLLECTION).document(user_id).update({f"reviews.{reviewer_id}": entry})
 
 
 async def _user_data(user_id: str) -> Dict[str, Any]:
@@ -1262,14 +1278,26 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     # would be meaningless; it's still listed, marked as the old scale.
     cv_scores = [r["cv_score"] for r in reviews.values()
                  if r.get("cv_rubric") and r.get("cv_score") is not None]
-    written_scores = [r["written_score"] for r in reviews.values() if r.get("written_score") is not None]
-    interview_scores = [r["interview_score"] for r in reviews.values() if r.get("interview_score") is not None]
+
+    def _given(key: str) -> List[int]:
+        return [r[key] for r in reviews.values() if r.get(key) is not None]
+
+    def _avg(scores: List[int]) -> Optional[float]:
+        return round(sum(scores) / len(scores), 1) if scores else None
+
+    written_scores, estimation_scores, interview_scores = (
+        _given("written_score"), _given("estimation_score"), _given("interview_score"))
     return {
         "count": len(reviews),
-        "cv_avg": round(sum(cv_scores) / len(cv_scores), 1) if cv_scores else None,
+        "cv_avg": _avg(cv_scores),
         "cv_max": _cv_max(application.get("event_ticket") == EVENT_TICKET_FAST_TRACK),
-        "written_avg": round(sum(written_scores) / len(written_scores), 1) if written_scores else None,
-        "interview_avg": round(sum(interview_scores) / len(interview_scores), 1) if interview_scores else None,
+        "written_avg": _avg(written_scores),
+        "estimation_avg": _avg(estimation_scores),
+        "interview_avg": _avg(interview_scores),
+        # How many reviewers each average is over — each section is scored
+        # by whoever chose to score it, not necessarily everyone.
+        "cv_n": len(cv_scores), "written_n": len(written_scores),
+        "estimation_n": len(estimation_scores), "interview_n": len(interview_scores),
         "entries": sorted(
             [{"reviewer_id": rid, **r} for rid, r in reviews.items()],
             key=lambda r: r.get("updated_at") or _now(),
@@ -1394,7 +1422,8 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     def _combined(r: Dict[str, Any]) -> Optional[float]:
         review = r["review"]
         cv = review["cv_avg"] * SCORE_MAX / review["cv_max"] if review["cv_avg"] is not None else None
-        parts = [v for v in (cv, review["written_avg"], review["interview_avg"]) if v is not None]
+        parts = [v for v in (cv, review["written_avg"], review["estimation_avg"], review["interview_avg"])
+                 if v is not None]
         return round(sum(parts) / len(parts), 2) if parts else None
 
     for r in rows:
@@ -1460,6 +1489,7 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "score_max": SCORE_MAX,
         "cv_rubric": CV_RUBRIC,
         "cv_response_keys": sorted(CV_RESPONSE_KEYS),
+        "note_max_chars": NOTE_MAX_CHARS,
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
@@ -1486,7 +1516,8 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Written avg", "Interview avg",
+        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Written avg", "Estimation avg",
+        "Interview avg",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1515,7 +1546,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
 
         reviewer_notes = "; ".join(
             f"{e['reviewer_name']}: CV {_cv(e)}, written {_score(e, 'written_score')}, "
-            f"interview {_score(e, 'interview_score')}"
+            f"estimation {_score(e, 'estimation_score')}, interview {_score(e, 'interview_score')}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
         )
@@ -1530,6 +1561,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             r["combined_score"] if r["combined_score"] is not None else "",
             r["review"]["cv_avg"] if r["review"]["cv_avg"] is not None else "",
             r["review"]["written_avg"] if r["review"]["written_avg"] is not None else "",
+            r["review"]["estimation_avg"] if r["review"]["estimation_avg"] is not None else "",
             r["review"]["interview_avg"] if r["review"]["interview_avg"] is not None else "",
             r["review"]["count"], reviewer_notes,
             _dt(r["created_at"]), _dt(r["submitted_at"]), _dt(r["shortlisted_at"]),
@@ -1546,7 +1578,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         ])
 
     widths = [6, 14, 18, 24, 24, 16, 14, 20, 18, 12, 26,
-              16, 12, 14, 8, 12, 12, 14, 40, 17, 17, 17, 17, 14, 24,
+              16, 12, 14, 8, 12, 12, 12, 14, 40, 17, 17, 17, 17, 14, 24,
               10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
@@ -1587,17 +1619,16 @@ async def applicant_cv(user_id: str, reviewer: User = Depends(require_reviewer))
     )
 
 
-def _checked_cv_rubric(raw: Dict[str, int], fast_tracked: bool) -> Dict[str, int]:
-    """Every criterion this applicant is scored on, each with one of its own
-    options' points. All or nothing: a half-filled rubric's total would look
-    like a low score rather than an unfinished one."""
+def _checked_cv_rubric(raw: Dict[str, Optional[int]], fast_tracked: bool) -> Dict[str, int]:
+    """The criteria scored so far, each with one of its own options' points.
+    May be partial (the scoring view saves as each one is picked); a null
+    value un-scores that criterion."""
     criteria = _cv_rubric_for(fast_tracked)
     allowed = {c["key"]: {o["points"] for o in c["options"]} for c in criteria}
-    missing = [c["label"] for c in criteria if c["key"] not in raw]
-    if missing:
-        raise HTTPException(400, f"Score every CV criterion (missing: {', '.join(missing)})")
     out: Dict[str, int] = {}
     for key, points in raw.items():
+        if points is None and key in allowed:
+            continue
         if key not in allowed:
             raise HTTPException(400, f"Unknown CV criterion: {key}")
         if points not in allowed[key]:
@@ -1609,20 +1640,25 @@ def _checked_cv_rubric(raw: Dict[str, int], fast_tracked: bool) -> Dict[str, int
 @router.post("/admin/{user_id}/score")
 async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depends(require_reviewer)):
     """
-    Record this reviewer's CV, written-response and interview scores.
+    Save this reviewer's scores and comments for one applicant.
 
-    One entry per reviewer, keyed by their own id — resubmitting updates your
-    own score rather than adding a second one, and the average on display
-    always reflects everyone's latest.
+    One entry per reviewer, keyed by their own id, so any number of
+    reviewers can score the same applicant and the averages always reflect
+    everyone's latest. Only the fields in the request change — the scoring
+    view autosaves every click and keystroke on its own — and null clears a
+    field, so everything stays editable at any time.
     """
-    if payload.cv_score is not None and payload.cv_rubric is None:
+    sent = payload.model_fields_set
+    if "cv_score" in sent and payload.cv_score is not None:
         raise HTTPException(400, "Score the CV using the criteria")
-    scores = (("Written", payload.written_score), ("Interview", payload.interview_score))
-    for label, value in scores:
-        if value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
-            raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
-    if payload.cv_rubric is None and all(value is None for _, value in scores):
+    fields = sent & {"cv_rubric", "written_score", "estimation_score", "interview_score", "note"}
+    if not fields:
         raise HTTPException(400, "Enter at least one score")
+    for key, label in (("written_score", "Written"), ("estimation_score", "Estimation"),
+                       ("interview_score", "Interview")):
+        value = getattr(payload, key)
+        if key in fields and value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
+            raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
 
     application = await _load(user_id)
     if application is None:
@@ -1631,24 +1667,29 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
         raise HTTPException(400, "This application hasn't been submitted yet — nothing to score")
 
     fast_tracked = application.get("event_ticket") == EVENT_TICKET_FAST_TRACK
-    cv_rubric = _checked_cv_rubric(payload.cv_rubric, fast_tracked) if payload.cv_rubric is not None else None
-
     reviews = application.setdefault("reviews", {})
-    existing = reviews.get(str(reviewer.id), {})
-    if cv_rubric is not None:
-        cv_fields = {"cv_rubric": cv_rubric, "cv_score": sum(cv_rubric.values()),
-                     "cv_max": _cv_max(fast_tracked)}
-    else:
-        cv_fields = {k: existing.get(k) for k in ("cv_rubric", "cv_score", "cv_max")}
-    reviews[str(reviewer.id)] = {
-        "reviewer_name": reviewer.username,
-        **cv_fields,
-        "written_score": payload.written_score if payload.written_score is not None else existing.get("written_score"),
-        "interview_score": payload.interview_score if payload.interview_score is not None else existing.get("interview_score"),
-        "note": (payload.note or "").strip()[:300] or existing.get("note", ""),
-        "updated_at": _now(),
-    }
-    await _save(user_id, application)
+    entry = dict(reviews.get(str(reviewer.id), {}))
+    entry["reviewer_name"] = reviewer.username
+
+    if "cv_rubric" in fields:
+        cv_rubric = _checked_cv_rubric(payload.cv_rubric or {}, fast_tracked)
+        complete = len(cv_rubric) == len(_cv_rubric_for(fast_tracked))
+        entry.update({
+            "cv_rubric": cv_rubric,
+            # Only a finished rubric has a score: a half-scored CV's running
+            # total would read as a low score, not an unfinished one.
+            "cv_score": sum(cv_rubric.values()) if complete else None,
+            "cv_max": _cv_max(fast_tracked),
+        })
+    for key in ("written_score", "estimation_score", "interview_score"):
+        if key in fields:
+            entry[key] = getattr(payload, key)
+    if "note" in fields:
+        entry["note"] = (payload.note or "").strip()[:NOTE_MAX_CHARS]
+    entry["updated_at"] = _now()
+
+    reviews[str(reviewer.id)] = entry
+    await _save_review(user_id, str(reviewer.id), entry)
     return {"ok": True, "review": _review_summary(application, str(reviewer.id))}
 
 

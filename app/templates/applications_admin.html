@@ -147,6 +147,65 @@
 
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
 
+    /* ── Scoring view ─────────────────────────────────────────────────────── */
+    .apa-score-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
+    .apa-review-note { white-space: pre-wrap; color: var(--muted); margin: 4px 0 2px; font-size: 13px; }
+    .sc-overlay {
+      position: fixed; inset: 0; z-index: 1000; background: var(--bg);
+      display: grid; grid-template-rows: auto 1fr;
+    }
+    .sc-overlay.hidden { display: none; }
+    .sc-head {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--card);
+    }
+    .sc-who { font-size: 15px; margin-right: 6px; }
+    .sc-tabs { display: flex; gap: 4px; flex-wrap: wrap; flex: 1; }
+    .sc-tab {
+      background: none; border: 1px solid var(--border); color: var(--text); cursor: pointer;
+      padding: 6px 12px; border-radius: 6px; font: inherit; font-size: 13px;
+    }
+    .sc-tab.is-on { border-color: var(--brand); background: var(--brand-wash); font-weight: 600; }
+    .sc-status { font-size: 12px; color: var(--muted); min-width: 60px; text-align: right; }
+    .sc-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 0; }
+    .sc-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+    .sc-pane-head {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      padding: 8px 14px; font-size: 13px; font-weight: 600; color: var(--muted);
+      border-bottom: 1px solid var(--border);
+    }
+    .sc-pane-head a { color: var(--brand); text-decoration: none; font-weight: 600; }
+    .sc-cv { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+    .sc-answer { padding: 16px 18px; overflow-y: auto; }
+    .sc-prompt { font-weight: 600; margin: 0 0 12px; line-height: 1.5; }
+    .sc-essay { max-height: none; }
+    .sc-right { overflow-y: auto; padding: 16px 18px 28px; }
+    .sc-avg { margin: 0 0 12px; font-size: 13px; }
+    .sc-scale { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 8px; }
+    .sc-num, .sc-clear {
+      min-width: 40px; padding: 8px 0; border: 1px solid var(--border-strong, var(--border));
+      border-radius: 6px; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer;
+    }
+    .sc-clear { padding: 8px 12px; font-weight: 500; color: var(--muted); }
+    .sc-num.is-on { border-color: var(--brand); background: var(--brand-wash); }
+    .sc-hint { font-size: 12px; color: var(--muted); margin: 2px 0 8px; }
+    .sc-comments { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 14px; }
+    .sc-comments label { font-weight: 600; font-size: 14px; }
+    .sc-comments textarea {
+      width: 100%; min-height: 150px; resize: vertical; box-sizing: border-box; font: inherit; font-size: 14px;
+      padding: 10px; border: 1px solid var(--border-strong, var(--border)); border-radius: 6px;
+      background: var(--card); color: var(--text);
+    }
+    @media (max-width: 900px) {
+      .sc-overlay { overflow-y: auto; display: block; }
+      .sc-who { flex: 1; }
+      .sc-tabs { order: 3; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; }
+      .sc-tab { white-space: nowrap; }
+      .sc-body { display: block; }
+      .sc-left { border-right: none; border-bottom: 1px solid var(--border); height: 60vh; }
+      .sc-right { overflow: visible; }
+    }
+
     /* ── CV rubric ─────────────────────────────────────────────────────────── */
     .apa-rubric { margin: 14px 0 12px; }
     .apa-rubric-title { margin: 0 0 8px; font-weight: 600; font-size: 14px; }
@@ -524,101 +583,84 @@
         {% endif %}
         {% endif %}
 
-        <!-- Reviewer scoring: open to every Quant Analyst, not just admins.
-             Several people can score the same applicant independently, and
-             the averages below are what the ranked table and decision are
-             based on. -->
+        <!-- Reviewer scoring: open to every reviewer. Each section opens the
+             full-screen scoring view (CV or answer on the left, scores on the
+             right). Everything autosaves, stays editable, and any number of
+             reviewers can score; the averages here are across all of them. -->
         {% if r.status in ("submitted", "shortlisted", "accepted", "rejected") %}
+        {% set can_interview = r.status in ("shortlisted", "accepted") or r.shortlisted_at %}
+        {% set m = r.review.mine or {} %}
         <div class="apa-review">
           <p class="apa-h">Reviewer scores</p>
           <div class="apa-review-summary">
+            {% macro stat(label, avg, n, out_of, skipped=None) %}
             <div class="apa-review-stat">
-              <span class="apa-k">CV — average of {{ r.review.count }}</span>
-              <span class="apa-v">{% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="apa-of">/{{ r.review.cv_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
-            </div>
-            <div class="apa-review-stat">
-              <span class="apa-k">Written — average of {{ r.review.count }}</span>
+              <span class="apa-k">{{ label }}{% if n %} · {{ n }} reviewer{{ "s" if n != 1 }}{% endif %}</span>
               <span class="apa-v">
-                {% if r.is_fast_tracked %}<span class="msp-muted" style="font-size:14px;">Fast-tracked</span>
-                {% elif r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="apa-of">/{{ score_max }}</span>
+                {% if skipped %}<span class="msp-muted" style="font-size:14px;">{{ skipped }}</span>
+                {% elif avg is not none %}{{ avg }}<span class="apa-of">/{{ out_of }}</span>
                 {% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}
               </span>
             </div>
-            <div class="apa-review-stat">
-              <span class="apa-k">Interview — average of {{ r.review.count }}</span>
-              <span class="apa-v">{% if r.review.interview_avg is not none %}{{ r.review.interview_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
-            </div>
+            {% endmacro %}
+            {{ stat("CV", r.review.cv_avg, r.review.cv_n, r.review.cv_max) }}
+            {{ stat("Written response", r.review.written_avg, r.review.written_n, score_max,
+                    "Fast-tracked" if r.is_fast_tracked else None) }}
+            {{ stat("Estimation", r.review.estimation_avg, r.review.estimation_n, score_max,
+                    "Fast-tracked" if r.is_fast_tracked else None) }}
+            {{ stat("Interview", r.review.interview_avg, r.review.interview_n, score_max,
+                    None if can_interview else "After shortlisting") }}
+          </div>
+
+          <div class="apa-score-buttons">
+            <button type="button" class="btn primary" onclick="openScoring('{{ r.user_id }}', 'cv')">Score CV</button>
+            {% if not r.is_fast_tracked %}
+            <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'written')">Written response</button>
+            <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'estimation')">Estimation</button>
+            {% endif %}
+            {% if can_interview %}
+            <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'interview')">Interview</button>
+            {% endif %}
           </div>
 
           {% if r.review.entries %}
           <ul class="apa-review-list">
             {% for e in r.review.entries %}
             <li>
-              <strong>{{ e.reviewer_name }}</strong> —
-              CV {% if e.cv_score is none %}—{% elif e.cv_rubric %}{{ e.cv_score }}/{{ e.cv_max or r.review.cv_max }}{% else %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% endif %},
-              written {{ e.get("written_score") if e.get("written_score") is not none else "—" }},
-              interview {{ e.get("interview_score") if e.get("interview_score") is not none else "—" }}
-              {% if e.note %}· “{{ e.note }}”{% endif %}
+              <strong>{{ e.reviewer_name }}</strong>:
+              CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("cv_score") is not none %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %},
+              written {{ e.get("written_score") if e.get("written_score") is not none else "–" }},
+              estimation {{ e.get("estimation_score") if e.get("estimation_score") is not none else "–" }},
+              interview {{ e.get("interview_score") if e.get("interview_score") is not none else "–" }}
+              {% if e.note %}<div class="apa-review-note">{{ e.note }}</div>{% endif %}
             </li>
             {% endfor %}
           </ul>
           {% endif %}
 
-          {% set mine_rubric = (r.review.mine.cv_rubric if r.review.mine and r.review.mine.cv_rubric else {}) %}
-          <div class="apa-rubric" id="rubric-{{ r.user_id }}" data-max="{{ r.review.cv_max }}">
-            <p class="apa-rubric-title">CV round <span class="msp-muted">({{ r.review.cv_max }} points{% if r.is_fast_tracked %}; Fast-Track, so the two written-response criteria don't apply{% endif %})</span></p>
-            <table class="apa-rubric-table">
-              <thead><tr><th>Criterion</th><th>Your score</th><th class="apa-rubric-pts">Points</th></tr></thead>
-              <tbody>
-                {% for c in cv_rubric if not (r.is_fast_tracked and c.key in cv_response_keys) %}
-                <tr data-key="{{ c.key }}">
-                  <th scope="row">{{ c.label }}</th>
-                  <td>
-                    <div class="apa-rubric-opts" role="radiogroup" aria-label="{{ c.label }}">
-                      {% for o in c.options %}
-                      <label class="apa-rubric-opt">
-                        <input type="radio" name="rb-{{ r.user_id }}-{{ c.key }}" value="{{ o.points }}"
-                               {% if mine_rubric.get(c.key) == o.points %}checked{% endif %}>
-                        <span><b>{{ o.points }}</b> {{ o.label }}</span>
-                      </label>
-                      {% endfor %}
-                    </div>
-                  </td>
-                  <td class="apa-rubric-pts" data-pts>{{ mine_rubric.get(c.key, "") }}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-              <tfoot>
-                <tr><th scope="row">Total</th><td></td>
-                  <td class="apa-rubric-pts"><strong data-total>{{ mine_rubric.values() | sum if mine_rubric else 0 }}</strong>/{{ r.review.cv_max }}</td></tr>
-              </tfoot>
-            </table>
-          </div>
-
-          <form class="apa-score-form" onsubmit="return submitScore(event, '{{ r.user_id }}')">
-            {% if not r.is_fast_tracked %}
-            <div class="apa-score-field">
-              <label for="written-{{ r.user_id }}">Written ({{ score_min }}–{{ score_max }})</label>
-              <input type="number" id="written-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
-                     value="{{ r.review.mine.written_score if r.review.mine and r.review.mine.written_score is not none else '' }}">
-            </div>
-            {% endif %}
-            {% if r.status != "submitted" %}
-            <div class="apa-score-field">
-              <label for="interview-score-{{ r.user_id }}">Interview ({{ score_min }}–{{ score_max }})</label>
-              <input type="number" id="interview-score-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
-                     value="{{ r.review.mine.interview_score if r.review.mine and r.review.mine.interview_score is not none else '' }}">
-            </div>
-            {% endif %}
-            <div class="apa-score-field apa-score-note">
-              <label for="note-{{ r.user_id }}">Note (optional)</label>
-              <input type="text" id="note-{{ r.user_id }}" maxlength="300"
-                     value="{{ r.review.mine.note if r.review.mine else '' }}" placeholder="What stood out">
-            </div>
-            <button class="btn primary" type="submit">
-              {{ "Update my score" if r.review.mine else "Save my score" }}
-            </button>
-          </form>
+          <script type="application/json" id="score-data-{{ r.user_id }}">{{ {
+            "name": r.full_name or r.username,
+            "programme": r.programme,
+            "fast": r.is_fast_tracked,
+            "interview": true if can_interview else false,
+            "cv_url": ("/apply/admin/" ~ r.user_id ~ "/cv") if r.cv_uploaded else "",
+            "motivation": r.motivation_text,
+            "estimation": r.estimation_text,
+            "cv_max": r.review.cv_max,
+            "mine": {
+              "cv_rubric": m.get("cv_rubric") or {},
+              "written_score": m.get("written_score"),
+              "estimation_score": m.get("estimation_score"),
+              "interview_score": m.get("interview_score"),
+              "note": m.get("note") or "",
+            },
+            "review": {
+              "cv_avg": r.review.cv_avg, "cv_n": r.review.cv_n,
+              "written_avg": r.review.written_avg, "written_n": r.review.written_n,
+              "estimation_avg": r.review.estimation_avg, "estimation_n": r.review.estimation_n,
+              "interview_avg": r.review.interview_avg, "interview_n": r.review.interview_n,
+            },
+          } | tojson }}</script>
         </div>
         {% endif %}
 
@@ -741,6 +783,26 @@
     {% endif %}
   </div>
 
+    <div class="sc-overlay hidden" id="scOverlay" role="dialog" aria-modal="true" aria-labelledby="scTitle">
+      <div class="sc-head">
+        <div class="sc-who"><strong id="scTitle"></strong> <span class="msp-muted" id="scSub"></span></div>
+        <nav class="sc-tabs" id="scTabs" aria-label="Section"></nav>
+        <span class="sc-status" id="scStatus" aria-live="polite"></span>
+        <button type="button" class="btn ghost" id="scClose">Close</button>
+      </div>
+      <div class="sc-body">
+        <section class="sc-left" id="scLeft"></section>
+        <section class="sc-right">
+          <div id="scScore"></div>
+          <div class="sc-comments">
+            <label for="scNote">General comments</label>
+            <p class="sc-hint">One box for this candidate, the same in every section. Saved as you type.</p>
+            <textarea id="scNote" maxlength="{{ note_max_chars }}" placeholder="What stood out, across the CV, answers and interview"></textarea>
+          </div>
+        </section>
+      </div>
+    </div>
+
   <script>
     // Applicants may have typed LaTeX in their written responses (see the
     // apply page's Preview) — render it here too, on every essay block at
@@ -841,70 +903,228 @@
       }
     }
 
-    // The CV rubric: one radio group per criterion. Returns {key: points}
-    // when every criterion is picked, null when none are, and "partial" in
-    // between (the server wants all or nothing).
-    function readRubric(userId) {
-      const box = document.getElementById("rubric-" + userId);
-      if (!box) return null;
-      const out = {};
-      let picked = 0, total = 0;
-      box.querySelectorAll("tbody tr[data-key]").forEach((row) => {
-        total++;
-        const checked = row.querySelector("input[type=radio]:checked");
-        if (checked) { out[row.dataset.key] = Number(checked.value); picked++; }
-      });
-      if (picked === 0) return null;
-      return picked === total ? out : "partial";
+    // ── Scoring view ─────────────────────────────────────────────────────
+    // One overlay for every applicant and section. Each click and keystroke
+    // is saved on its own (only that field is sent), one request at a time
+    // so a later save can never land before an earlier one.
+    const RUBRIC = {{ cv_rubric | tojson }};
+    const RESPONSE_KEYS = new Set({{ cv_response_keys | tojson }});
+    const SCORE_MAX = {{ score_max }};
+    const PROMPTS = { written: {{ motivation_prompt | tojson }}, estimation: {{ estimation_prompt | tojson }} };
+    const SECTIONS = [
+      { key: "cv", label: "CV" },
+      { key: "written", label: "Written response" },
+      { key: "estimation", label: "Estimation" },
+      { key: "interview", label: "Interview" },
+    ];
+    const SCORE_FIELD = { written: "written_score", estimation: "estimation_score", interview: "interview_score" };
+    const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
+    const $sc = (id) => document.getElementById(id);
+    const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+    function sectionsFor(d) {
+      return SECTIONS.filter((s) =>
+        (s.key === "written" || s.key === "estimation") ? !d.fast
+        : s.key === "interview" ? d.interview : true);
     }
 
-    document.querySelectorAll(".apa-rubric").forEach((box) => {
-      box.addEventListener("change", () => {
-        let sum = 0;
-        box.querySelectorAll("tbody tr[data-key]").forEach((row) => {
-          const checked = row.querySelector("input[type=radio]:checked");
-          row.querySelector("[data-pts]").textContent = checked ? checked.value : "";
-          if (checked) sum += Number(checked.value);
-        });
-        box.querySelector("[data-total]").textContent = sum;
-      });
-    });
+    function openScoring(uid, section) {
+      sc.uid = uid;
+      sc.d = JSON.parse($sc("score-data-" + uid).textContent);
+      sc.changed = false;
+      sc.pending = {};
+      $sc("scTitle").textContent = sc.d.name;
+      $sc("scSub").textContent = sc.d.programme || "";
+      $sc("scNote").value = sc.d.mine.note || "";
+      $sc("scStatus").textContent = "";
+      $sc("scOverlay").classList.remove("hidden");
+      document.body.style.overflow = "hidden";
+      showSection(section);
+    }
 
-    async function submitScore(event, userId) {
-      event.preventDefault();
-      const btn = event.target.querySelector("button[type=submit]");
-      const rubric = readRubric(userId);
-      if (rubric === "partial") {
-        flash("Score every CV criterion, or leave them all blank", true);
-        return false;
+    function closeScoring() {
+      clearTimeout(sc.noteTimer);
+      if ($sc("scNote").value !== (sc.d.mine.note || "")) queueSave({ note: $sc("scNote").value });
+      const finish = () => {
+        $sc("scOverlay").classList.add("hidden");
+        document.body.style.overflow = "";
+        if (sc.changed) location.reload();   // refresh the averages behind it
+      };
+      // Let anything still saving land before leaving.
+      const wait = () => (sc.inFlight || Object.keys(sc.pending).length) ? setTimeout(wait, 150) : finish();
+      wait();
+    }
+
+    function showSection(section) {
+      sc.section = section;
+      const d = sc.d;
+      $sc("scTabs").innerHTML = sectionsFor(d).map((s) =>
+        `<button type="button" class="sc-tab${s.key === section ? " is-on" : ""}" data-sec="${s.key}">${s.label}</button>`).join("");
+      $sc("scTabs").querySelectorAll(".sc-tab").forEach((b) =>
+        b.addEventListener("click", () => showSection(b.dataset.sec)));
+      renderLeft();
+      renderRight();
+    }
+
+    function renderLeft() {
+      const d = sc.d, left = $sc("scLeft");
+      if (sc.section === "written" || sc.section === "estimation") {
+        const text = sc.section === "written" ? d.motivation : d.estimation;
+        left.innerHTML = `
+          <div class="sc-pane-head"><span>${sc.section === "written" ? "Written response" : "Estimation"}</span></div>
+          <div class="sc-answer">
+            <p class="sc-prompt">${escHtml(PROMPTS[sc.section])}</p>
+            ${text ? `<div class="apa-essay apa-math sc-essay">${escHtml(text)}</div>`
+                   : `<div class="apa-essay is-empty">Nothing written.</div>`}
+          </div>`;
+        const el = left.querySelector(".apa-math");
+        if (el && window.renderMathInElement) {
+          renderMathInElement(el, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }], throwOnError: false });
+        }
+        return;
       }
-      const writtenEl = document.getElementById("written-" + userId);   // absent for Fast-Track applicants
-      const interviewEl = document.getElementById("interview-score-" + userId);   // absent before shortlisting
-      const noteEl = document.getElementById("note-" + userId);
-      const written = (!writtenEl || writtenEl.value === "") ? null : Number(writtenEl.value);
-      const interview = (!interviewEl || interviewEl.value === "") ? null : Number(interviewEl.value);
-      if (rubric === null && written === null && interview === null) {
-        flash("Enter at least one score", true);
-        return false;
+      if (!d.cv_url) {
+        left.innerHTML = `<div class="sc-pane-head"><span>CV</span></div><p class="msp-muted" style="padding:16px;">No CV on file.</p>`;
+        return;
       }
-      btn.disabled = true;
+      // Keep the same frame when flipping between CV and Interview, rather
+      // than reloading the PDF every time.
+      if (left.dataset.cv === d.cv_url && left.querySelector("iframe")) return;
+      left.dataset.cv = d.cv_url;
+      left.innerHTML = `
+        <div class="sc-pane-head"><span>CV</span>
+          <a href="${d.cv_url}" target="_blank" rel="noopener">Open in a new tab ↗</a></div>
+        <iframe class="sc-cv" src="${d.cv_url}" title="CV"></iframe>`;
+    }
+
+    function avgLine(avg, n, outOf) {
+      if (avg === null || avg === undefined) return `<span class="msp-muted">No one has scored this yet.</span>`;
+      return `Average <strong>${avg}/${outOf}</strong> across ${n} reviewer${n === 1 ? "" : "s"}.`;
+    }
+
+    function renderRight() {
+      const d = sc.d, box = $sc("scScore"), rv = d.review;
+      if (sc.section === "cv") {
+        const criteria = RUBRIC.filter((c) => !(d.fast && RESPONSE_KEYS.has(c.key)));
+        const mine = d.mine.cv_rubric || {};
+        box.innerHTML = `
+          <p class="apa-rubric-title">CV round <span class="msp-muted">(${d.cv_max} points${d.fast ? "; Fast-Track, so the written-response criteria don't apply" : ""})</span></p>
+          <p class="sc-avg">${avgLine(rv.cv_avg, rv.cv_n, d.cv_max)}</p>
+          <table class="apa-rubric-table">
+            <thead><tr><th>Criterion</th><th>Your score</th><th class="apa-rubric-pts">Points</th></tr></thead>
+            <tbody>${criteria.map((c) => `
+              <tr data-key="${c.key}">
+                <th scope="row">${escHtml(c.label)}</th>
+                <td><div class="apa-rubric-opts" role="radiogroup" aria-label="${escHtml(c.label)}">
+                  ${c.options.map((o) => `
+                    <label class="apa-rubric-opt">
+                      <input type="radio" name="sc-${c.key}" value="${o.points}" ${mine[c.key] === o.points ? "checked" : ""}>
+                      <span><b>${o.points}</b> ${escHtml(o.label)}</span>
+                    </label>`).join("")}
+                </div></td>
+                <td class="apa-rubric-pts" data-pts>${mine[c.key] ?? ""}</td>
+              </tr>`).join("")}
+            </tbody>
+            <tfoot><tr><th scope="row">Total</th><td data-left></td>
+              <td class="apa-rubric-pts"><strong data-total></strong>/${d.cv_max}</td></tr></tfoot>
+          </table>`;
+        const updateTotal = () => {
+          const picked = Object.values(d.mine.cv_rubric || {});
+          box.querySelector("[data-total]").textContent = picked.reduce((a, b) => a + b, 0);
+          const left = criteria.length - picked.length;
+          box.querySelector("[data-left]").innerHTML = left
+            ? `<span class="msp-muted">${left} still to score. The total only counts once all are scored.</span>` : "";
+        };
+        updateTotal();
+        box.querySelectorAll("tr[data-key]").forEach((row) => {
+          row.addEventListener("change", (ev) => {
+            const points = Number(ev.target.value);
+            d.mine.cv_rubric = { ...(d.mine.cv_rubric || {}), [row.dataset.key]: points };
+            row.querySelector("[data-pts]").textContent = points;
+            updateTotal();
+            queueSave({ cv_rubric: d.mine.cv_rubric });
+          });
+        });
+        return;
+      }
+      const field = SCORE_FIELD[sc.section];
+      const label = SECTIONS.find((s) => s.key === sc.section).label;
+      const avgKey = sc.section + "_avg", nKey = sc.section + "_n";
+      const current = d.mine[field];
+      box.innerHTML = `
+        <p class="apa-rubric-title">${label} <span class="msp-muted">(out of ${SCORE_MAX})</span></p>
+        <p class="sc-avg">${avgLine(rv[avgKey], rv[nKey], SCORE_MAX)}</p>
+        <div class="sc-scale" role="radiogroup" aria-label="${label} score">
+          ${Array.from({ length: SCORE_MAX }, (_, i) => i + 1).map((n) =>
+            `<button type="button" class="sc-num${current === n ? " is-on" : ""}" data-n="${n}" aria-pressed="${current === n}">${n}</button>`).join("")}
+          <button type="button" class="sc-clear" data-n="">Clear</button>
+        </div>
+        <p class="sc-hint">Detailed criteria for this section are to follow.</p>`;
+      box.querySelectorAll("[data-n]").forEach((b) => b.addEventListener("click", () => {
+        const n = b.dataset.n === "" ? null : Number(b.dataset.n);
+        d.mine[field] = n;
+        box.querySelectorAll(".sc-num").forEach((x) => {
+          const on = Number(x.dataset.n) === n;
+          x.classList.toggle("is-on", on);
+          x.setAttribute("aria-pressed", on);
+        });
+        queueSave({ [field]: n });
+      }));
+    }
+
+    function queueSave(patch) {
+      Object.assign(sc.pending, patch);
+      $sc("scStatus").textContent = "Saving…";
+      flushSaves();
+    }
+
+    async function flushSaves() {
+      if (sc.inFlight || !Object.keys(sc.pending).length) return;
+      const body = sc.pending;
+      sc.pending = {};
+      sc.inFlight = true;
       try {
-        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/score`, {
-          method: "POST",
-          credentials: "include",
+        const r = await fetch(`/apply/admin/${encodeURIComponent(sc.uid)}/score`, {
+          method: "POST", credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cv_rubric: rubric, written_score: written, interview_score: interview, note: noteEl.value }),
+          body: JSON.stringify(body),
         });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        flash("Score saved", false);
-        location.reload();
+        const res = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(res.detail || `HTTP ${r.status}`);
+        sc.changed = true;
+        if (res.review) {
+          for (const k of Object.keys(sc.d.review)) if (k in res.review) sc.d.review[k] = res.review[k];
+          const avg = document.querySelector("#scScore .sc-avg");
+          if (avg) {
+            const key = sc.section;
+            avg.innerHTML = key === "cv"
+              ? avgLine(sc.d.review.cv_avg, sc.d.review.cv_n, sc.d.cv_max)
+              : avgLine(sc.d.review[key + "_avg"], sc.d.review[key + "_n"], SCORE_MAX);
+          }
+        }
+        if ("note" in body) sc.d.mine.note = body.note;
+        $sc("scStatus").textContent = Object.keys(sc.pending).length ? "Saving…" : "Saved";
       } catch (err) {
-        flash(err.message, true);
-        btn.disabled = false;
+        // Put it back so the next edit (or closing) retries it.
+        sc.pending = { ...body, ...sc.pending };
+        $sc("scStatus").textContent = "Couldn't save: " + err.message;
+        sc.inFlight = false;
+        setTimeout(flushSaves, 3000);
+        return;
       }
-      return false;
+      sc.inFlight = false;
+      flushSaves();
     }
+
+    $sc("scNote").addEventListener("input", () => {
+      $sc("scStatus").textContent = "Saving…";
+      clearTimeout(sc.noteTimer);
+      sc.noteTimer = setTimeout(() => queueSave({ note: $sc("scNote").value }), 700);
+    });
+    $sc("scClose").addEventListener("click", closeScoring);
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && !$sc("scOverlay").classList.contains("hidden")) closeScoring();
+    });
 
     async function scheduleInterview(event, userId) {
       event.preventDefault();
