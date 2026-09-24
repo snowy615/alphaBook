@@ -102,7 +102,7 @@ ANALYST = User(id="qa", username="priya")
 
 
 def _payload(**over):
-    base = dict(title="Kick-off", description="Come along", date="2099-10-05",
+    base = dict(title="Kick-off", description="Come along", location="Cohen Quad", date="2099-10-05",
                 start_time="18:00", end_time="19:30")
     base.update(over)
     return events.EventPayload(**base)
@@ -298,10 +298,22 @@ class TestListing:
             "Sooner", "Later", "Old", "Older"]
         assert later and sooner
 
-    def test_the_label_reads_in_london_time(self, store):
+    def test_date_and_time_read_plainly_in_uk_time_with_no_london_suffix(self, store):
         _create()
-        label = run(events.list_events(None))["events"][0]["when_label"]
-        assert "05 Oct 2099" in label and "18:00–19:30" in label and "London" in label
+        ev = run(events.list_events(None))["events"][0]
+        assert ev["date_label"] == "Monday 5 October 2099"
+        assert ev["time_label"] == "6:00–7:30 pm"
+        assert ev["location"] == "Cohen Quad"
+        assert "London" not in ev["when_label"]
+
+    def test_a_time_across_noon_says_am_and_pm(self, store):
+        _create(start_time="11:00", end_time="13:15")
+        assert run(events.list_events(None))["events"][0]["time_label"] == "11:00 am–1:15 pm"
+
+    def test_location_is_required(self, store):
+        with pytest.raises(HTTPException) as exc:
+            _create(location="  ")
+        assert "where" in exc.value.detail
 
     def test_pending_count_is_for_reviewers_only(self, store):
         eid = _create(signup_mode="approval")
@@ -518,3 +530,35 @@ class TestFastTrackMidApplication:
         with pytest.raises(HTTPException) as exc:
             run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
         assert "only be used once" in exc.value.detail
+
+
+class TestOutreachContentUpdate:
+    """A CONTENT_REVISION bump pushes the details written in code onto the
+    live event once — and only once, so later admin edits stick."""
+
+    def test_an_older_live_event_picks_up_the_new_details_once(self, store):
+        _seed_outreach(store)
+        store["events"][OUT].update({"description": "old text", "location": "somewhere else",
+                                     "content_revision": None})
+        store["event_signups"] = {f"{OUT}_u1": {"event_id": OUT, "user_id": "u1",
+                                                "status": "confirmed", "ticket": "general"}}
+
+        run(outreach.ensure_event())
+
+        ev = store["events"][OUT]
+        assert ev["description"] == outreach._DESCRIPTION
+        assert ev["location"] == "Fitzhugh Auditorium, Cohen Quad, Exeter College"
+        assert ev["content_revision"] == outreach.CONTENT_REVISION
+        assert ev["kind"] == "outreach"
+        assert f"{OUT}_u1" in store["event_signups"]   # sign-ups untouched
+
+        store["events"][OUT]["title"] = "Edited by an admin afterwards"
+        run(outreach.ensure_event())
+        assert store["events"][OUT]["title"] == "Edited by an admin afterwards"
+
+    def test_the_event_reads_sunday_evening(self, store):
+        _seed_outreach(store)
+        ev = run(events.list_events(None))["events"][0]
+        assert ev["date_label"] == "Sunday 11 October 2026"
+        assert ev["time_label"] == "5:30–7:00 pm"
+        assert "Time:" not in ev["description"] and "Location:" not in ev["description"]

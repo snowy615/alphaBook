@@ -59,13 +59,7 @@ _DESCRIPTION = (
     "accelerated recruitment decision, while other promising candidates may be placed "
     "under further consideration. Participants progressing through this route can bypass "
     "the initial online application and assessment stages of the standard recruitment "
-    "process.\n\n"
-    "Choose a ticket when you sign up:\n"
-    "• CV clinic + Fast-Track — an analyst reviews your CV in person, and you skip the "
-    "online written assessment and go straight into the interview process. Limited to the "
-    f"first {FAST_TRACK_CAPACITY} places.\n"
-    "• General attendance — come to the talk and networking without the CV clinic. You can "
-    "still apply online afterwards."
+    "process."
 )
 _LOCATION = "Fitzhugh Auditorium, Cohen Quad, Exeter College"
 
@@ -74,26 +68,49 @@ def _now() -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc)
 
 
-def when_label(starts_at: dt.datetime, ends_at: dt.datetime) -> str:
+def _clock(t: dt.datetime) -> str:
+    """5:30, 7:00 — 12-hour, no am/pm (time_label adds that)."""
+    return f"{t.hour % 12 or 12}:{t.minute:02d}"
+
+
+def date_label(starts_at: dt.datetime) -> str:
+    """"Sunday 11 October 2026" — the event's own (UK) calendar date."""
+    s = starts_at.astimezone(LONDON_TZ)
+    return f"{s:%A} {s.day} {s:%B %Y}"
+
+
+def time_label(starts_at: dt.datetime, ends_at: dt.datetime) -> str:
+    """"5:30–7:00 pm", or "11:00 am–1:00 pm" across noon. Shown as the
+    wall-clock time in Oxford, with no time-zone suffix: every event is
+    in person here, and a bare "London" next to the time read as if the
+    event itself were in London."""
     s, e = starts_at.astimezone(LONDON_TZ), ends_at.astimezone(LONDON_TZ)
-    return f"{s:%a %d %b %Y}, {s:%H:%M}–{e:%H:%M} London"
+    s_half, e_half = ("am" if s.hour < 12 else "pm"), ("am" if e.hour < 12 else "pm")
+    if s_half == e_half:
+        return f"{_clock(s)}–{_clock(e)} {e_half}"
+    return f"{_clock(s)} {s_half}–{_clock(e)} {e_half}"
+
+
+def when_label(starts_at: dt.datetime, ends_at: dt.datetime) -> str:
+    """Date and time on one line, for places with room for only one."""
+    return f"{date_label(starts_at)}, {time_label(starts_at, ends_at)}"
 
 
 def _ref(uid: str):
     return db_module.db.collection(SIGNUPS).document(f"{OUTREACH_EVENT_ID}_{uid}")
 
 
-async def ensure_event() -> None:
-    """Create the event if it doesn't exist yet. Never overwrites: once it's
-    there an admin owns the details (title, description, date and times)."""
-    ref = db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID)
-    if (await ref.get()).exists:
-        return
+# Bumped whenever the details above are deliberately changed in code and the
+# live event should pick them up. ensure_event() applies them once to an
+# event stored at an older revision, then leaves it to admins again.
+CONTENT_REVISION = 2
+
+
+def _content() -> Dict[str, Any]:
     day = dt.date(2026, 10, 11)
     starts = dt.datetime.combine(day, dt.time(17, 30), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
     ends = dt.datetime.combine(day, dt.time(19, 0), tzinfo=LONDON_TZ).astimezone(dt.timezone.utc)
-    await ref.set({
-        "kind": "outreach",
+    return {
         "title": "Quant Outreach",
         "description": _DESCRIPTION,
         "location": _LOCATION,
@@ -102,6 +119,26 @@ async def ensure_event() -> None:
         "end_time": "19:00",
         "starts_at": starts,
         "ends_at": ends,
+        "content_revision": CONTENT_REVISION,
+    }
+
+
+async def ensure_event() -> None:
+    """Create the event if it doesn't exist yet. Otherwise an admin owns the
+    details (title, description, location, date and times) and they're left
+    alone — except once per CONTENT_REVISION bump, when the details written
+    here replace whatever is stored. That's how a change made in code reaches
+    the live event without anyone re-typing it on the Events page. Sign-ups
+    live in their own collection, so they're untouched either way."""
+    ref = db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID)
+    doc = await ref.get()
+    if doc.exists:
+        if int((doc.to_dict() or {}).get("content_revision") or 1) < CONTENT_REVISION:
+            await ref.update({**_content(), "updated_at": _now()})
+        return
+    await ref.set({
+        "kind": "outreach",
+        **_content(),
         "capacity": None,
         "show_attendance": False,
         "signup_mode": "first_come",
@@ -151,6 +188,8 @@ async def event_summary() -> Optional[Dict[str, Any]]:
     return {
         "title": data.get("title", "Quant Outreach"),
         "when_label": when_label(starts, ends) if starts and ends else "",
+        "date_label": date_label(starts) if starts else "",
+        "time_label": time_label(starts, ends) if starts and ends else "",
         "location": data.get("location", ""),
         "is_past": _has_ended(data),
     }

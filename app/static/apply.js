@@ -328,7 +328,7 @@
     $("#app").innerHTML = panel(esc(eventName), `
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>.
-        ${ev.when_label ? `The outreach event is <strong>${esc(ev.when_label)}</strong>${ev.location ? `, at <strong>${esc(ev.location)}</strong>` : ""}. ` : ""}
+        ${ev.when_label ? `The outreach event is on <strong>${esc(ev.when_label)}</strong>${ev.location ? `, at <strong>${esc(ev.location)}</strong>` : ""}. ` : ""}
         Before your CV, let us know whether you'll be there.
       </p>
       ${existing ? `<p class="apl-hint" style="margin:0 0 12px;">

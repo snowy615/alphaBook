@@ -114,6 +114,8 @@ def _parse_event(payload: EventPayload) -> Dict[str, Any]:
         raise HTTPException(400, "Pick a date")
     if not _TIME_RE.match(payload.start_time or "") or not _TIME_RE.match(payload.end_time or ""):
         raise HTTPException(400, "Pick a start and end time")
+    if not (payload.location or "").strip():
+        raise HTTPException(400, "Say where the event is")
     if payload.signup_mode not in SIGNUP_MODES:
         raise HTTPException(400, "Sign-up must be first come first served, or need approval")
     if payload.capacity is not None and payload.capacity < 1:
@@ -207,6 +209,8 @@ def _event_view(event: Dict[str, Any], signups: List[Dict[str, Any]],
         "start_time": event.get("start_time"),
         "end_time": event.get("end_time"),
         "when_label": outreach.when_label(starts_at, ends_at),
+        "date_label": outreach.date_label(starts_at),
+        "time_label": outreach.time_label(starts_at, ends_at),
         "starts_at": starts_at.isoformat(),
         "is_past": ends_at <= _now(),
         "signup_mode": event.get("signup_mode", MODE_FIRST_COME),

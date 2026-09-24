@@ -116,8 +116,11 @@
           <div class="evt-top">
             <div>
               <h3 class="evt-title">${esc(ev.title)}</h3>
-              <div class="evt-when">${esc(ev.when_label)}</div>
-              ${ev.location ? `<div class="evt-loc">${esc(ev.location)}</div>` : ""}
+              <dl class="evt-facts">
+                <dt>Date</dt><dd>${esc(ev.date_label || "")}</dd>
+                <dt>Time</dt><dd>${esc(ev.time_label || "")}</dd>
+                ${ev.location ? `<dt>Location</dt><dd>${esc(ev.location)}</dd>` : ""}
+              </dl>
             </div>
             <div class="evt-actions" style="margin-top:0;">${manageButtons(ev)}</div>
           </div>
@@ -226,6 +229,12 @@
 
   $("#evCancel").addEventListener("click", resetForm);
   $("#evSave").addEventListener("click", async () => {
+    // Date, time and location are what people come to this page for, so
+    // none of them can be left blank (the server checks too).
+    if (!F.date.value || !F.start.value || !F.end.value || !F.location.value.trim()) {
+      showMsg("Fill in the date, start and end time, and location.", false);
+      return;
+    }
     const payload = {
       title: F.title.value,
       description: F.desc.value,
