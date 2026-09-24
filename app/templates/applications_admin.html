@@ -1174,7 +1174,7 @@
 
     // ── Interview timer ──
     // Three parts: the CV discussion, then the easy and hard questions, each
-    // with its own schedule of what's due when (one minute left, stop). Runs on this
+    // with its own schedule of what's due when (hints, stop). Runs on this
     // page only (nothing saved), and keeps running if you switch tab or close
     // the scoring view, so an accidental close mid-question doesn't lose it.
     const timer = { uid: null, part: "cv", start: 0, id: null };
@@ -1200,7 +1200,8 @@
           <p class="sc-part" data-part-label></p>
           <ol class="sc-cues" data-cues></ol>
           <p class="sc-hint">Start each question once it has been read out and any clarifying questions
-            answered. No hints; stop at 10 minutes whether or not they've finished.</p>
+            answered. A hint is due only if they haven't reached its checkpoint, and never earlier. Stop at
+            10 minutes whether or not they've finished.</p>
         </div>`;
     }
 

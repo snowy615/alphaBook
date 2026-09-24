@@ -3066,14 +3066,16 @@ class TestInterviewRubric:
         assert result["review"]["interview_avg"] == 10.5 and result["review"]["interview_n"] == 2
         assert result["review"]["interview_max"] == 15
 
-    def test_the_timer_has_three_parts_and_no_hints(self):
+    def test_the_timer_has_three_parts_and_the_hint_schedule(self):
         parts = {t["key"]: t for t in ap.INTERVIEW_TIMERS}
         assert [t["button"] for t in ap.INTERVIEW_TIMERS] == ["Start CV", "Start easy", "Start hard"]
         assert parts["cv"]["seconds"] == 8 * 60
         for q in ("easy", "hard"):
+            cues = {c["label"]: c for c in parts[q]["cues"]}
             assert parts[q]["seconds"] == 10 * 60
-            assert parts[q]["cues"][-1]["at"] == 10 * 60 and parts[q]["cues"][-1]["label"] == "Stop"
-            assert not any("Hint" in c["label"] for c in parts[q]["cues"])
+            assert cues["Hint 1"]["at"] == 3 * 60 and "Checkpoint 1" in cues["Hint 1"]["detail"]
+            assert cues["Hint 2"]["at"] == 6 * 60 and "Checkpoint 2" in cues["Hint 2"]["detail"]
+            assert cues["Stop"]["at"] == 10 * 60
 
     def test_the_guide_page_follows_the_standard(self, monkeypatch):
         from starlette.requests import Request
@@ -3082,7 +3084,7 @@ class TestInterviewRubric:
         html = asyncio.run(ap.interview_guide(request, User(id="r1", username="al"))).body.decode()
         assert "Interview rubric (15 points + CV penalty)" in html
         assert "Everyone attempts both questions" in html and "Clarification is allowed" in html
-        assert "Checkpoint" not in html and "daptability" not in html
+        assert "Checkpoint 1" in html and "3:00" in html and "6:00" in html and "daptability" not in html
         assert "fabricated" in html and "10:00" in html
         assert "\u2014" not in html   # no em dashes in the guide
 

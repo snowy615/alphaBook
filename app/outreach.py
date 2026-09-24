@@ -25,9 +25,15 @@ import datetime as dt
 from typing import Any, Dict, List, Optional, Set
 from zoneinfo import ZoneInfo
 
+import html
+import logging
+
 from fastapi import HTTPException
 
 from app import db as db_module
+from app import gcal, mailer
+
+log = logging.getLogger("uvicorn.error")
 
 OUTREACH_EVENT_ID = "quant-outreach"
 EVENTS = "events"
@@ -260,3 +266,70 @@ async def set_ticket(uid: str, username: str, ticket: str) -> None:
         "ticket": ticket,
         "created_at": _now(),
     })
+    # A new sign-up (from the events page or the application) gets the
+    # event in their inbox and calendar. Only on signing up, not on moving
+    # between tickets, so nobody gets a second copy of the same event.
+    try:
+        await send_signup_invite(uid, username, udata, ticket)
+    except Exception:
+        log.exception("outreach: couldn't send the sign-up invite to %s", uid)
+
+
+async def send_signup_invite(uid: str, username: str, udata: Dict[str, Any], ticket: str) -> bool:
+    """Email a sign-up confirmation with the event attached as a calendar
+    invite: date, time, location and the full description, in the email
+    and in the invite itself.
+
+    The invite is METHOD:PUBLISH, an event to add, not a meeting request:
+    there's no organiser's calendar holding it, and a request would make
+    Gmail's calendar card try to load it from one and fail. The UID is fixed
+    per person, so signing up again after cancelling updates the same
+    calendar entry rather than adding a second."""
+    to = udata.get("email") or ""
+    if not to:
+        return False
+    doc = await db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID).get()
+    if not doc.exists:
+        return False
+    event = doc.to_dict() or {}
+    starts, ends = _as_utc(event.get("starts_at")), _as_utc(event.get("ends_at"))
+    if not starts or not ends:
+        return False
+    title = event.get("title") or "Quant Outreach"
+    location = event.get("location") or ""
+    description = (event.get("description") or "").strip()
+    ticket_label = TICKET_LABELS.get(ticket, "")
+    name = udata.get("full_name") or username or "there"
+
+    e = html.escape
+    paragraphs = "".join(f"<p>{e(p).replace(chr(10), '<br>')}</p>" for p in description.split("\n\n") if p.strip())
+    body = (
+        f"<p>Hi {e(name)},</p>"
+        f"<p>You're signed up for <strong>{e(title)}</strong>"
+        f"{f' ({e(ticket_label)})' if ticket_label else ''}.</p>"
+        f"<p><strong>When:</strong> {e(date_label(starts))}, {e(time_label(starts, ends))}<br>"
+        f"{f'<strong>Where:</strong> {e(location)}' if location else ''}</p>"
+        f"{paragraphs}"
+        f"<p>A calendar invite is attached, so you can add it to your calendar.</p>"
+    )
+    ics_description = "\n\n".join(part for part in (
+        f"Ticket: {ticket_label}" if ticket_label else "",
+        description,
+    ) if part)
+    ics = mailer.build_ics_invite(
+        uid=f"{OUTREACH_EVENT_ID}-{uid}",
+        summary=title,
+        description=ics_description,
+        start=starts, end=ends,
+        organizer_name="Alpha Fund", organizer_email=mailer.sender() or gcal.ACCOUNT_EMAIL,
+        attendee_name=name, attendee_email=to,
+        location=location or "Location to be confirmed",
+        method="PUBLISH",
+    )
+    return await mailer.send_email(
+        to=to,
+        subject=f"You're signed up: {title}, {date_label(starts)}",
+        title="You're signed up",
+        body_html=body,
+        ics=ics,
+    )

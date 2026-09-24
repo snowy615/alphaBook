@@ -243,10 +243,10 @@ CV_RESPONSE_KEYS = {"motivation", "fermi"}
 
 # The interview (the standard rubric): likability, communication, and two
 # questions from the question bank, easy then hard, 10 minutes each. Every
-# candidate attempts both, and there are no hints (clarifying questions
-# only), so each question is scored purely on how far the candidate got
-# within its time. Out of 15 (3 + 2 + 5 + 5), less a CV-project penalty of
-# 0 to -5.
+# candidate attempts both, with hints only on the fixed schedule in
+# INTERVIEW_TIMERS, and each question is scored on how far the candidate
+# got within its time. Out of 15 (3 + 2 + 5 + 5), less a CV-project penalty
+# of 0 to -5.
 def _problem_solving() -> List[Dict[str, Any]]:
     """The levels both questions share, lowest first."""
     return [
@@ -289,12 +289,17 @@ INTERVIEW_MAX = 15
 
 # The interview's three timed parts, in order, and what's due when. Each
 # question is timed from when it has been read out and any clarifying
-# questions answered, and stops at its time whether or not it's finished.
-# The scoring view's timer and the interview guide both read this.
+# questions answered, and stops at 10 minutes whether or not it's finished.
+# Hints come only on this schedule, the same for every candidate: each is
+# given at its time only if the candidate hasn't yet reached that hint's
+# checkpoint (each question in the bank lists Hint 1, Hint 2 and the
+# checkpoint each one gets you to), and never earlier, even if asked. The
+# scoring view's timer and the interview guide both read this.
 def _question_cues(end: str) -> List[Dict[str, Any]]:
     return [
-        {"at": 0, "label": "Start", "detail": "clarifying questions only, no hints"},
-        {"at": 9 * 60, "label": "One minute left", "detail": "they should be pulling their answer together"},
+        {"at": 0, "label": "No hints", "detail": "clarifying questions only"},
+        {"at": 3 * 60, "label": "Hint 1", "detail": "if they haven't reached Checkpoint 1"},
+        {"at": 6 * 60, "label": "Hint 2", "detail": "if they haven't reached Checkpoint 2"},
         {"at": 10 * 60, "label": "Stop", "detail": end},
     ]
 

@@ -562,3 +562,80 @@ class TestOutreachContentUpdate:
         assert ev["date_label"] == "Sunday 11 October 2026"
         assert ev["time_label"] == "5:30–7:00 pm"
         assert "Time:" not in ev["description"] and "Location:" not in ev["description"]
+
+
+class TestOutreachSignupInvite:
+    """Signing up for Quant Outreach emails a calendar invite carrying the
+    event's time, location and description."""
+
+    def _capture(self, monkeypatch):
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            sent.append({"to": to, "subject": subject, "body": body_html,
+                         "ics": ics.decode() if ics else None})
+            return True
+
+        monkeypatch.setattr(outreach.mailer, "send_email", fake_send)
+        return sent
+
+    def _unfold(self, ics):
+        return ics.replace("\r\n ", "")
+
+    def test_signing_up_sends_the_invite_with_location_and_description(self, store, monkeypatch):
+        sent = self._capture(monkeypatch)
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+
+        assert len(sent) == 1
+        mail = sent[0]
+        assert mail["to"] == "jo@ox.ac.uk"
+        assert "Sunday 11 October 2026" in mail["subject"]
+        assert "Fitzhugh Auditorium, Cohen Quad, Exeter College" in mail["body"]
+        assert "5:30–7:00 pm" in mail["body"] and "General attendance" in mail["body"]
+        assert "The Quant Outreach Event is designed" in mail["body"]
+
+        ics = self._unfold(mail["ics"])
+        assert "METHOD:PUBLISH" in ics
+        assert "LOCATION:Fitzhugh Auditorium\\, Cohen Quad\\, Exeter College" in ics
+        assert "DESCRIPTION:Ticket: General attendance\\n\\nThe Quant Outreach Event is designed" in ics
+        assert "DTSTART:20261011T163000Z" in ics and "DTEND:20261011T180000Z" in ics   # 17:30-19:00 BST
+        assert f"UID:{OUT}-u1@alphabook.uk" in ics
+        # Every physical line is within the 75-octet limit.
+        assert all(len(line.encode()) <= 75 for line in mail["ics"].split("\r\n"))
+
+    def test_it_also_comes_from_the_application_step(self, store, monkeypatch):
+        from app import applications as ap
+        sent = self._capture(monkeypatch)
+        _seed_outreach(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "cv"}}
+        run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), JO))
+        assert len(sent) == 1 and "CV clinic + Fast-Track" in sent[0]["body"]
+
+    def test_changing_ticket_does_not_send_it_again(self, store, monkeypatch):
+        sent = self._capture(monkeypatch)
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert len(sent) == 1
+
+    def test_a_mail_failure_does_not_stop_the_signup(self, store, monkeypatch):
+        async def boom(*a, **k):
+            raise RuntimeError("smtp down")
+
+        monkeypatch.setattr(outreach.mailer, "send_email", boom)
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        assert store["event_signups"][f"{OUT}_u1"]["ticket"] == "general"
+
+
+def test_the_invite_attachment_method_matches_the_file():
+    from app import mailer
+    for method in ("PUBLISH", "REQUEST"):
+        ics = mailer.build_ics_invite(
+            uid="x", summary="S", description="D " * 100, start=dt.datetime(2026, 10, 11, 16, 30, tzinfo=dt.timezone.utc),
+            end=dt.datetime(2026, 10, 11, 18, tzinfo=dt.timezone.utc), organizer_name="A", organizer_email="a@b.c",
+            attendee_name="J", attendee_email="j@b.c", method=method)
+        msg = mailer._build_message("a@b.c", "j@b.c", "s", "<p>h</p>", "t", ics)
+        part = msg.get_payload()[-1]
+        assert part.get_param("method") == method and part.get_filename() == "invite.ics"

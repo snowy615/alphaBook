@@ -137,7 +137,25 @@ def build_ics_invite(
         "END:VEVENT",
         "END:VCALENDAR",
     ]
-    return ("\r\n".join(lines) + "\r\n").encode("utf-8")
+    return ("\r\n".join(_ics_fold(line) for line in lines) + "\r\n").encode("utf-8")
+
+
+def _ics_fold(line: str) -> str:
+    """RFC 5545 §3.1: a content line longer than 75 octets is split, each
+    continuation starting with a space. Long descriptions (an event's full
+    blurb) would otherwise be cut off or rejected by stricter clients. Split
+    on character boundaries so a multi-byte character is never broken."""
+    out, current, size = [], "", 0
+    for ch in line:
+        width = len(ch.encode("utf-8"))
+        limit = 75 if not out else 74   # continuation lines lose one octet to the leading space
+        if size + width > limit:
+            out.append(current)
+            current, size = "", 0
+        current += ch
+        size += width
+    out.append(current)
+    return "\r\n ".join(out)
 
 
 def _build_message(sender: str, to: str, subject: str, html: str, text: str,
@@ -161,10 +179,18 @@ def _build_message(sender: str, to: str, subject: str, html: str, text: str,
     msg.add_alternative(html, subtype="html")
 
     if ics:
-        msg.add_attachment(ics, maintype="text", subtype="calendar", filename="interview.ics")
+        # The MIME method has to match the file's own METHOD line: a
+        # REQUEST (an interview invite) and a PUBLISH (an event to add) are
+        # handled differently by mail clients.
+        method = "REQUEST"
+        for line in ics.decode("utf-8", "replace").splitlines():
+            if line.startswith("METHOD:"):
+                method = line.split(":", 1)[1].strip() or method
+                break
+        msg.add_attachment(ics, maintype="text", subtype="calendar", filename="invite.ics")
         part = msg.get_payload()[-1]
-        part.set_param("method", "REQUEST")
-        part.set_param("name", "interview.ics")
+        part.set_param("method", method)
+        part.set_param("name", "invite.ics")
     return msg
 
 

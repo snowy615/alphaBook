@@ -91,7 +91,7 @@
     </div>
 
     <div class="ig-section">
-      <p class="ig-section-title">Timing</p>
+      <p class="ig-section-title">Timing and hints</p>
       {% for t in interview_timers %}
       <p class="ig-part">{{ t.label }} <span class="msp-muted">({{ t.seconds // 60 }} minutes)</span></p>
       <div class="ig-schedule">
@@ -110,10 +110,17 @@
           At 10 minutes, stop the question and move on. The Interview tab of the scoring view has a timer (Start CV,
           Start easy, Start hard) that calls out each step.</li>
         <li><strong>Everyone attempts both questions,</strong> whatever happened on the easy one.</li>
+        <li><strong>Hints only on the schedule, and checkpoints decide whether one is needed.</strong> Each question
+          in the bank lists Hint 1, Hint 2, and the checkpoint each hint gets the candidate to. At 3:00, give Hint 1
+          only if they haven't reached Checkpoint 1; at 6:00, give Hint 2 only if they haven't reached Checkpoint 2.
+          That's the whole test: not how confident they seem, or whether they ask.</li>
+        <li><strong>No early hints, and only the official wording.</strong> If a candidate asks before a hint is due,
+          tell them the next one comes at its time if they still need it. Give each hint at the next natural pause
+          after its time, and read it as written in the question bank.</li>
         <li><strong>Use the score criteria.</strong> Score on the candidate's progress and reasoning within the time
           limit. Don't give extra time to let them finish.</li>
         <li><strong>Clarification is allowed.</strong> Answering questions about wording or assumptions is fine and
-          doesn't affect the score. Don't give hints beyond clarification.</li>
+          doesn't affect the score. Beyond that, no help other than the scheduled hints.</li>
         <li><strong>Likability:</strong> 2 should be the typical score. Keep 3 for someone you'd particularly want on
           the team.</li>
         <li><strong>Be consistent.</strong> Follow the same structure, timing and level of guidance for every
