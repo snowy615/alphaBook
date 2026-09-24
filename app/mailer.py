@@ -13,7 +13,16 @@ that email itself (``sendEmailVerification`` in the client SDK, using
 Firebase's own templates and deliverability), so duplicating it here would
 just be a second, worse copy of the same email.
 
-If ``SMTP_HOST`` is unset, ``send_email`` logs and returns False instead of
+Two ways out, tried in order:
+
+1. **Gmail API, as oxfordalphafund@gmail.com** — using the same Google
+   connection that mints Meet links (:mod:`app.gcal`), when that connection
+   was granted the ``gmail.send`` permission. No app password needed.
+2. **SMTP** — whatever mailbox ``SMTP_*`` points at. Used if the Gmail route
+   isn't set up, isn't permitted, or fails for a given message, so an email
+   is never lost just because one route is down.
+
+If neither is configured, ``send_email`` logs and returns False instead of
 raising. That keeps local dev and the test suite working with no mail server
 configured, and keeps a misconfigured mailer from taking down the request
 that triggered the email — a candidate finishing their OA should never see a
@@ -22,6 +31,7 @@ that triggered the email — a candidate finishing their OA should never see a
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime as dt
 import logging
 import os
@@ -30,6 +40,10 @@ from email import utils as email_utils
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Optional
+
+import httpx
+
+from app import gcal
 
 log = logging.getLogger("uvicorn.error")
 
@@ -141,11 +155,11 @@ def build_ics_invite(
     return ("\r\n".join(lines) + "\r\n").encode("utf-8")
 
 
-def _send_sync(to: str, subject: str, html: str, text: str,
-                ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
+def _build_message(sender: str, to: str, subject: str, html: str, text: str,
+                   ics: Optional[bytes] = None, cc: Optional[str] = None) -> EmailMessage:
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = formataddr((SMTP_FROM_NAME, SMTP_FROM))
+    msg["From"] = formataddr((SMTP_FROM_NAME, sender))
     msg["To"] = to
     if cc:
         # A real Cc header, not a second send — smtplib delivers to every
@@ -157,7 +171,7 @@ def _send_sync(to: str, subject: str, html: str, text: str,
     # clients, but smtplib doesn't add them for us — and their absence is
     # itself a spam signal, since every legitimate mail server stamps both.
     msg["Date"] = email_utils.formatdate(localtime=True)
-    msg["Message-ID"] = email_utils.make_msgid(domain=SMTP_FROM.split("@")[-1] or "alphabook.uk")
+    msg["Message-ID"] = email_utils.make_msgid(domain=sender.split("@")[-1] or "alphabook.uk")
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
 
@@ -166,7 +180,12 @@ def _send_sync(to: str, subject: str, html: str, text: str,
         part = msg.get_payload()[-1]
         part.set_param("method", "REQUEST")
         part.set_param("name", "interview.ics")
+    return msg
 
+
+def _send_sync(to: str, subject: str, html: str, text: str,
+                ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
+    msg = _build_message(SMTP_FROM, to, subject, html, text, ics, cc)
     try:
         if SMTP_USE_STARTTLS:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as s:
@@ -185,16 +204,63 @@ def _send_sync(to: str, subject: str, html: str, text: str,
         return False
 
 
-async def send_email(to: str, subject: str, title: str, body_html: str,
-                      cta_label: Optional[str] = None, cta_url: Optional[str] = None,
-                      ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
-    """Send one email. Never raises — returns whether it actually went out."""
+GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
+# Flips on the first "not allowed" answer from Google (the connection was
+# granted calendar access only) so every later email goes straight to SMTP
+# instead of asking again. Reset by a redeploy, which is what updating the
+# token env var causes anyway.
+_gmail_state = {"refused": False}
+
+
+def gmail_enabled() -> bool:
+    return gcal.CONFIGURED and not _gmail_state["refused"]
+
+
+async def _send_via_gmail(to: str, subject: str, html: str, text: str,
+                          ics: Optional[bytes], cc: Optional[str]) -> bool:
+    if not gmail_enabled():
+        return False
+    token = await gcal.access_token()
+    if not token:
+        return False
+    msg = _build_message(gcal.ACCOUNT_EMAIL, to, subject, html, text, ics, cc)
+    raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            r = await client.post(GMAIL_SEND_URL, headers={"Authorization": f"Bearer {token}"},
+                                  json={"raw": raw})
+        if r.status_code in (401, 403):
+            _gmail_state["refused"] = True
+            log.warning("mailer: Google refused gmail.send (HTTP %s) — the connection has no "
+                        "email permission; using SMTP from now on", r.status_code)
+            return False
+        r.raise_for_status()
+        return True
+    except Exception:
+        log.exception("mailer: Gmail API send failed for %r to %s — falling back to SMTP", subject, to)
+        return False
+
+
+def sender() -> Optional[str]:
+    """The address emails are currently going out from, or None if neither
+    route is set up. The Gmail route is reported optimistically until Google
+    has actually refused it once."""
+    if gmail_enabled():
+        return gcal.ACCOUNT_EMAIL
+    return SMTP_FROM if CONFIGURED else None
+
+
+async def deliver(to: str, subject: str, title: str, body_html: str,
+                  cta_label: Optional[str] = None, cta_url: Optional[str] = None,
+                  ics: Optional[bytes] = None, cc: Optional[str] = None) -> Optional[str]:
+    """Send one email; return the address it went out from, or None if it
+    didn't. Never raises."""
     if not to or "@" not in to:
         log.warning("mailer: refusing to send %r to invalid address %r", subject, to)
-        return False
-    if not CONFIGURED:
-        log.warning("mailer: SMTP_HOST not set — skipping %r to %s", subject, to)
-        return False
+        return None
+    if not CONFIGURED and not gmail_enabled():
+        log.warning("mailer: no email route configured — skipping %r to %s", subject, to)
+        return None
 
     html = _wrap(title, body_html, cta_label, cta_url)
     # A plain-text fallback derived from the label/body, not a full HTML strip
@@ -205,4 +271,15 @@ async def send_email(to: str, subject: str, title: str, body_html: str,
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
 
-    return await asyncio.to_thread(_send_sync, to, subject, html, text, ics, cc)
+    if await _send_via_gmail(to, subject, html, text, ics, cc):
+        return gcal.ACCOUNT_EMAIL
+    if not CONFIGURED:
+        return None
+    return SMTP_FROM if await asyncio.to_thread(_send_sync, to, subject, html, text, ics, cc) else None
+
+
+async def send_email(to: str, subject: str, title: str, body_html: str,
+                     cta_label: Optional[str] = None, cta_url: Optional[str] = None,
+                     ics: Optional[bytes] = None, cc: Optional[str] = None) -> bool:
+    """Send one email. Never raises — returns whether it actually went out."""
+    return await deliver(to, subject, title, body_html, cta_label, cta_url, ics, cc) is not None

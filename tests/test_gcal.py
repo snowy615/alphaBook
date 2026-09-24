@@ -52,6 +52,10 @@ class _FakeAsyncClient:
         _FakeAsyncClient.calls.append(("patch", url, kwargs))
         return _FakeAsyncClient.responses.pop(0)
 
+    async def delete(self, url, **kwargs):
+        _FakeAsyncClient.calls.append(("delete", url, kwargs))
+        return _FakeAsyncClient.responses.pop(0)
+
 
 @pytest.fixture(autouse=True)
 def _configured(monkeypatch):
@@ -181,3 +185,20 @@ class TestUpdateEventTime:
         start = dt.datetime.now(dt.timezone.utc)
 
         assert run(gcal.update_event_time("gone", start, start)) is False
+
+
+class TestDeleteEvent:
+    def test_deletes_the_event_without_notifying_anyone(self, monkeypatch):
+        monkeypatch.setattr(gcal.httpx, "AsyncClient", _FakeAsyncClient)
+        _FakeAsyncClient.calls, _FakeAsyncClient.responses = [], []
+        _queue_token()
+        _FakeAsyncClient.responses.append(_FakeResponse(204))
+        assert run(gcal.delete_event("ev123")) is True
+        method, url, kwargs = _FakeAsyncClient.calls[-1]
+        assert method == "delete" and url.endswith("/ev123")
+        assert kwargs["params"]["sendUpdates"] == "none"
+
+    def test_unconfigured_or_missing_id_is_a_no_op(self, monkeypatch):
+        assert run(gcal.delete_event("")) is False
+        monkeypatch.setattr(gcal, "CONFIGURED", False)
+        assert run(gcal.delete_event("ev123")) is False

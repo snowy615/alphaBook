@@ -1602,7 +1602,7 @@ def _build_interview_ics(application: dict, interview: dict) -> bytes:
         summary=f"Alpha Fund interview — {candidate_name}",
         description=description,
         start=when, end=end,
-        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.SMTP_FROM,
+        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.sender() or "",
         attendee_name=candidate_name, attendee_email=candidate_to,
         location=meet_link or "Online — details to follow",
     )
@@ -1671,8 +1671,9 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
         f"<p>{candidate_name}: {candidate_to or 'no email on file'}<br>"
         f"{interviewer_name}: {interviewer_email or 'no email on file'}</p>"
         f"{meet_block}"
-        f"<p>A calendar invite is attached. Reply-all on this email to share a call "
-        f"link or sort out any last details directly.</p>"
+        f"<p>A calendar invite is attached. Reply-all on this email to "
+        f"{'sort out any last details' if interview.get('meet_link') else 'share a call link or sort out any last details'}"
+        f" directly.</p>"
     )
     await mailer.send_email(
         to=to, cc=cc, subject=f"Alpha Fund — interview confirmed: {_fmt_when(when)}",

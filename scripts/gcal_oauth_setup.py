@@ -1,5 +1,6 @@
 """
-One-time OAuth consent flow for app/gcal.py's Google Meet link generation.
+One-time OAuth consent flow for app/gcal.py's Google Meet link generation,
+and for sending the site's email as the same account (app/mailer.py).
 
 Run this once, locally, signed into oxfordalphafund@gmail.com in the browser
 it opens. It prints a refresh token — set that (plus the client id/secret)
@@ -43,7 +44,12 @@ REDIRECT_PORT = 8765
 # 127.0.0.1 rather than "localhost": browsers may resolve localhost to IPv6
 # (::1) while this server listens on IPv4, which shows as "refused to connect".
 REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/"
-SCOPE = "https://www.googleapis.com/auth/calendar.events"
+# Calendar events mint the Meet links; gmail.send lets the site send its
+# emails as this same account (app/mailer.py) instead of via SMTP.
+SCOPE = " ".join([
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.send",
+])
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 

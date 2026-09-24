@@ -9,11 +9,24 @@ import asyncio
 import datetime as dt
 from email import message_from_bytes
 
-from app import mailer
+import base64
+import email
+
+import pytest
+
+from app import gcal, mailer
 
 
 def run(coro):
     return asyncio.run(coro)
+
+
+@pytest.fixture(autouse=True)
+def _no_gmail_by_default(monkeypatch):
+    # Everything below exercises the SMTP route unless a test opts in to the
+    # Gmail one — so a developer's own GOOGLE_OAUTH_* env never leaks in.
+    monkeypatch.setattr(gcal, "CONFIGURED", False)
+    monkeypatch.setattr(mailer, "_gmail_state", {"refused": False})
 
 
 class TestUnconfigured:
@@ -242,3 +255,88 @@ class TestIcsInvite:
         ics_parts = [p for p in parsed.walk() if p.get_content_type() == "text/calendar"]
         assert len(ics_parts) == 1
         assert ics_parts[0].get_payload(decode=True) == ics_bytes
+
+
+class _GmailResp:
+    def __init__(self, status_code):
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
+class TestGmailRoute:
+    """Sending as oxfordalphafund@gmail.com through the Gmail API, with SMTP
+    as the fallback whenever that route isn't available."""
+
+    def _patch(self, monkeypatch, status=200, smtp_ok=True):
+        posts, smtp = [], []
+
+        class _Client:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, url, headers=None, json=None):
+                posts.append({"url": url, "auth": headers.get("Authorization"), "raw": json["raw"]})
+                return _GmailResp(status)
+
+        async def fake_token():
+            return "tok"
+
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            smtp.append(to)
+            return smtp_ok
+
+        monkeypatch.setattr(gcal, "CONFIGURED", True)
+        monkeypatch.setattr(gcal, "ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
+        monkeypatch.setattr(gcal, "access_token", fake_token)
+        monkeypatch.setattr(mailer.httpx, "AsyncClient", _Client)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        monkeypatch.setattr(mailer, "SMTP_FROM", "yansnow615@gmail.com")
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+        return posts, smtp
+
+    def _decode(self, raw):
+        return email.message_from_bytes(base64.urlsafe_b64decode(raw))
+
+    def test_sends_as_the_connected_account_when_allowed(self, monkeypatch):
+        posts, smtp = self._patch(monkeypatch)
+        sent_from = run(mailer.deliver("jo@ox.ac.uk", "Hello", "Title", "<p>hi</p>", cc="priya@ox.ac.uk"))
+        assert sent_from == "oxfordalphafund@gmail.com"
+        assert smtp == []
+        assert posts[0]["url"] == mailer.GMAIL_SEND_URL and posts[0]["auth"] == "Bearer tok"
+        msg = self._decode(posts[0]["raw"])
+        assert "oxfordalphafund@gmail.com" in msg["From"]
+        assert msg["To"] == "jo@ox.ac.uk" and msg["Cc"] == "priya@ox.ac.uk"
+        assert msg["Subject"] == "Hello"
+
+    def test_the_calendar_invite_survives_the_gmail_route(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch)
+        run(mailer.deliver("jo@ox.ac.uk", "Invite", "Title", "<p>hi</p>", ics=b"BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n"))
+        msg = self._decode(posts[0]["raw"])
+        assert [p.get_content_type() for p in msg.walk() if p.get_content_type() == "text/calendar"] == ["text/calendar"]
+
+    def test_no_email_permission_falls_back_to_smtp_and_stops_asking(self, monkeypatch):
+        posts, smtp = self._patch(monkeypatch, status=403)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
+        assert run(mailer.deliver("sam@ox.ac.uk", "B", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
+        assert len(posts) == 1          # Google refused once; the second went straight to SMTP
+        assert smtp == ["jo@ox.ac.uk", "sam@ox.ac.uk"]
+        assert mailer.sender() == "yansnow615@gmail.com"
+
+    def test_a_one_off_google_error_falls_back_but_keeps_trying_gmail(self, monkeypatch):
+        posts, smtp = self._patch(monkeypatch, status=500)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
+        assert mailer.gmail_enabled() is True
+        assert smtp == ["jo@ox.ac.uk"]
+
+    def test_gmail_alone_is_enough_without_smtp(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch)
+        monkeypatch.setattr(mailer, "CONFIGURED", False)
+        assert run(mailer.send_email("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) is True
+
+    def test_nothing_configured_sends_nothing(self, monkeypatch):
+        monkeypatch.setattr(mailer, "CONFIGURED", False)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) is None
+        assert mailer.sender() is None

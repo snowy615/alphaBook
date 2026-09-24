@@ -255,3 +255,55 @@ class TestDeleteUser:
         store["event_signups"]["ev1_other"] = {"event_id": "ev1", "user_id": "other", "status": "confirmed"}
         run(admin.delete_user("uid-123", admin=ADMIN))
         assert list(store["event_signups"]) == ["ev1_other"]
+
+
+class TestIntegrationsCheck:
+    """The admin "Run check" button: a real Meet link is made and cleaned up,
+    and a test email reports which address it actually went out from."""
+
+    def _patch(self, monkeypatch, created=True, sent_from="oxfordalphafund@gmail.com"):
+        deleted, emails = [], []
+
+        async def fake_create(**kwargs):
+            return {"event_id": "ev1", "meet_link": "https://meet.google.com/abc-defg-hij"} if created else None
+
+        async def fake_delete(event_id):
+            deleted.append(event_id)
+            return True
+
+        async def fake_deliver(to, subject, title, body_html, *a, **k):
+            emails.append(to)
+            return sent_from
+
+        monkeypatch.setattr(admin.gcal, "CONFIGURED", True)
+        monkeypatch.setattr(admin.gcal, "ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
+        monkeypatch.setattr(admin.gcal, "create_meet_event", fake_create)
+        monkeypatch.setattr(admin.gcal, "delete_event", fake_delete)
+        monkeypatch.setattr(admin.mailer, "deliver", fake_deliver)
+        return deleted, emails
+
+    def test_everything_working(self, monkeypatch):
+        deleted, emails = self._patch(monkeypatch)
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert result["meet"]["ok"] and result["meet"]["sample_link"].startswith("https://meet.google.com/")
+        assert deleted == ["ev1"]                       # the test event doesn't linger
+        assert emails == ["oxfordalphafund@gmail.com"]  # never sent to an applicant
+        assert result["email"]["ok"] and result["email"]["sent_from"] == "oxfordalphafund@gmail.com"
+        assert "still going out" not in result["email"]["detail"]
+
+    def test_says_so_when_email_is_still_on_the_old_address(self, monkeypatch):
+        self._patch(monkeypatch, sent_from="yansnow615@gmail.com")
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert result["email"]["ok"] is True
+        assert "still going out from yansnow615@gmail.com" in result["email"]["detail"]
+
+    def test_a_refused_google_connection_is_reported(self, monkeypatch):
+        deleted, _ = self._patch(monkeypatch, created=False)
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert result["meet"]["ok"] is False and deleted == []
+
+    def test_unconfigured_is_reported_not_attempted(self, monkeypatch):
+        self._patch(monkeypatch)
+        monkeypatch.setattr(admin.gcal, "CONFIGURED", False)
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert result["meet"]["ok"] is False and "Not configured" in result["meet"]["detail"]

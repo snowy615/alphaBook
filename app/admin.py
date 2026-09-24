@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from firebase_admin import auth as fb_auth
 from app import db as db_module
+from app import gcal
+from app import mailer
 from app import membership as mb
 from app import scores
 from app.auth import current_user
@@ -1038,3 +1040,45 @@ async def generate_cv_book(
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+@router.post("/admin/integrations/check")
+async def check_integrations(admin: User = Depends(require_admin)):
+    """Prove the Google connection and email actually work, end to end.
+
+    Creates a throwaway Meet event on the connected calendar and deletes it
+    straight away, then sends a short test email to that same account and
+    reports which address it went out from. Nothing reaches applicants.
+    """
+    meet: Dict[str, object] = {"ok": False}
+    if not gcal.CONFIGURED:
+        meet["detail"] = "Not configured — GOOGLE_OAUTH_* env vars aren't set."
+    else:
+        start = dt.datetime.now(dt.timezone.utc).replace(microsecond=0) + dt.timedelta(days=1)
+        created = await gcal.create_meet_event(
+            summary="AlphaBook connection check (safe to ignore)",
+            description="Created and deleted automatically by the admin connection check.",
+            start=start, end=start + dt.timedelta(minutes=30), attendee_emails=[],
+        )
+        if created:
+            removed = await gcal.delete_event(created["event_id"])
+            meet = {"ok": True, "detail": f"Created a Meet link on {gcal.ACCOUNT_EMAIL}'s calendar"
+                                          f"{' and removed the test event' if removed else ' (test event left behind — delete it by hand)'}.",
+                    "sample_link": created["meet_link"]}
+        else:
+            meet["detail"] = ("Google refused — the saved sign-in may be wrong or revoked. "
+                              "Check the server logs for the 'gcal:' error.")
+
+    to = gcal.ACCOUNT_EMAIL
+    sent_from = await mailer.deliver(
+        to, "AlphaBook email check", "Email is working",
+        "<p>This is a test sent from the AlphaBook admin page. Nothing to do.</p>",
+    )
+    if sent_from:
+        detail = f"Sent a test email to {to} from {sent_from}."
+        if sent_from != gcal.ACCOUNT_EMAIL:
+            detail += (f" Emails are still going out from {sent_from}, not {gcal.ACCOUNT_EMAIL}: "
+                       "the Google connection doesn't have permission to send email yet.")
+        email = {"ok": True, "sent_from": sent_from, "detail": detail}
+    else:
+        email = {"ok": False, "detail": "The test email didn't send — check the server logs for 'mailer:'."}
+    return {"meet": meet, "email": email}

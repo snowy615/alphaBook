@@ -38,6 +38,9 @@ REFRESH_TOKEN = os.getenv("GOOGLE_OAUTH_REFRESH_TOKEN", "")
 CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 
 CONFIGURED = bool(CLIENT_ID and CLIENT_SECRET and REFRESH_TOKEN)
+# The mailbox the refresh token belongs to. The same token also sends email
+# as this address when it was granted the gmail.send scope (see app/mailer).
+ACCOUNT_EMAIL = os.getenv("GOOGLE_ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 _EVENTS_URL = f"https://www.googleapis.com/calendar/v3/calendars/{CALENDAR_ID}/events"
@@ -48,7 +51,7 @@ _EVENTS_URL = f"https://www.googleapis.com/calendar/v3/calendars/{CALENDAR_ID}/e
 _token_cache: Dict[str, Any] = {"access_token": None, "expires_at": None}
 
 
-async def _access_token() -> Optional[str]:
+async def access_token() -> Optional[str]:
     now = dt.datetime.now(dt.timezone.utc)
     cached, expires_at = _token_cache["access_token"], _token_cache["expires_at"]
     if cached and expires_at and now < expires_at:
@@ -84,7 +87,7 @@ async def create_meet_event(*, summary: str, description: str, start: dt.datetim
     """
     if not CONFIGURED:
         return None
-    token = await _access_token()
+    token = await access_token()
     if not token:
         return None
     body = {
@@ -133,7 +136,7 @@ async def update_event_time(event_id: str, start: dt.datetime, end: dt.datetime)
     on every reschedule."""
     if not CONFIGURED or not event_id:
         return False
-    token = await _access_token()
+    token = await access_token()
     if not token:
         return False
     try:
@@ -147,4 +150,25 @@ async def update_event_time(event_id: str, start: dt.datetime, end: dt.datetime)
         return True
     except Exception:
         log.exception("gcal: failed to move event %s", event_id)
+        return False
+
+
+async def delete_event(event_id: str) -> bool:
+    """Remove an event — used by the admin connection check to clean up the
+    throwaway event it creates."""
+    if not CONFIGURED or not event_id:
+        return False
+    token = await access_token()
+    if not token:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.delete(
+                f"{_EVENTS_URL}/{event_id}", params={"sendUpdates": "none"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            r.raise_for_status()
+        return True
+    except Exception:
+        log.exception("gcal: failed to delete event %s", event_id)
         return False
