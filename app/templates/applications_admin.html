@@ -168,14 +168,15 @@
     .sc-tab.is-on { border-color: var(--brand); background: var(--brand-wash); font-weight: 600; }
     .sc-status { font-size: 12px; color: var(--muted); min-width: 60px; text-align: right; }
     .sc-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 0; }
-    .sc-left { border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
+    .sc-left { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; }
     .sc-pane-head {
       display: flex; justify-content: space-between; align-items: center; gap: 12px;
       padding: 8px 14px; font-size: 13px; font-weight: 600; color: var(--muted);
       border-bottom: 1px solid var(--border);
     }
     .sc-pane-head a { color: var(--brand); text-decoration: none; font-weight: 600; }
-    .sc-cv { flex: 1; width: 100%; border: 0; background: #fff; min-height: 0; }
+    .sc-cv { display: block; width: 100%; height: calc(100vh - 120px); border: 0; background: #fff; }
+    .sc-left .sc-pane-head { position: sticky; top: 0; z-index: 1; background: var(--bg); }
     .sc-answer { padding: 16px 18px; overflow-y: auto; }
     .sc-prompt { font-weight: 600; margin: 0 0 12px; line-height: 1.5; }
     .sc-essay { max-height: none; }
@@ -202,7 +203,8 @@
       .sc-tabs { order: 3; flex: 1 0 100%; flex-wrap: nowrap; overflow-x: auto; }
       .sc-tab { white-space: nowrap; }
       .sc-body { display: block; }
-      .sc-left { border-right: none; border-bottom: 1px solid var(--border); height: 60vh; }
+      .sc-left { border-right: none; border-bottom: 1px solid var(--border); overflow: visible; }
+      .sc-cv { height: 65vh; }
       .sc-right { overflow: visible; }
     }
 
@@ -383,7 +385,7 @@
           <thead>
             <tr>
               <th>#</th><th>Applicant</th><th>Programme</th>
-              <th>CV score</th><th>Written score</th><th>Status</th>
+              <th>CV score</th><th>Interview</th><th>Status</th>
             </tr>
           </thead>
           <tbody>
@@ -402,7 +404,7 @@
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
-                {% if r.review.written_avg is not none %}{{ r.review.written_avg }}<span class="msp-muted">/{{ score_max }}</span>
+                {% if r.review.interview_avg is not none %}{{ r.review.interview_avg }}<span class="msp-muted">/{{ score_max }}</span>
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
@@ -604,20 +606,12 @@
             </div>
             {% endmacro %}
             {{ stat("CV", r.review.cv_avg, r.review.cv_n, r.review.cv_max) }}
-            {{ stat("Written response", r.review.written_avg, r.review.written_n, score_max,
-                    "Fast-tracked" if r.is_fast_tracked else None) }}
-            {{ stat("Estimation", r.review.estimation_avg, r.review.estimation_n, score_max,
-                    "Fast-tracked" if r.is_fast_tracked else None) }}
             {{ stat("Interview", r.review.interview_avg, r.review.interview_n, score_max,
                     None if can_interview else "After shortlisting") }}
           </div>
 
           <div class="apa-score-buttons">
-            <button type="button" class="btn primary" onclick="openScoring('{{ r.user_id }}', 'cv')">Score CV</button>
-            {% if not r.is_fast_tracked %}
-            <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'written')">Written response</button>
-            <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'estimation')">Estimation</button>
-            {% endif %}
+            <button type="button" class="btn primary" onclick="openScoring('{{ r.user_id }}', 'cv')">Score CV{% if not r.is_fast_tracked %} and answers{% endif %}</button>
             {% if can_interview %}
             <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'interview')">Interview</button>
             {% endif %}
@@ -629,8 +623,6 @@
             <li>
               <strong>{{ e.reviewer_name }}</strong>:
               CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("cv_score") is not none %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %},
-              written {{ e.get("written_score") if e.get("written_score") is not none else "–" }},
-              estimation {{ e.get("estimation_score") if e.get("estimation_score") is not none else "–" }},
               interview {{ e.get("interview_score") if e.get("interview_score") is not none else "–" }}
               {% if e.note %}<div class="apa-review-note">{{ e.note }}</div>{% endif %}
             </li>
@@ -649,15 +641,11 @@
             "cv_max": r.review.cv_max,
             "mine": {
               "cv_rubric": m.get("cv_rubric") or {},
-              "written_score": m.get("written_score"),
-              "estimation_score": m.get("estimation_score"),
               "interview_score": m.get("interview_score"),
               "note": m.get("note") or "",
             },
             "review": {
               "cv_avg": r.review.cv_avg, "cv_n": r.review.cv_n,
-              "written_avg": r.review.written_avg, "written_n": r.review.written_n,
-              "estimation_avg": r.review.estimation_avg, "estimation_n": r.review.estimation_n,
               "interview_avg": r.review.interview_avg, "interview_n": r.review.interview_n,
             },
           } | tojson }}</script>
@@ -910,22 +898,18 @@
     const RUBRIC = {{ cv_rubric | tojson }};
     const RESPONSE_KEYS = new Set({{ cv_response_keys | tojson }});
     const SCORE_MAX = {{ score_max }};
-    const PROMPTS = { written: {{ motivation_prompt | tojson }}, estimation: {{ estimation_prompt | tojson }} };
+    const PROMPTS = { motivation: {{ motivation_prompt | tojson }}, estimation: {{ estimation_prompt | tojson }} };
     const SECTIONS = [
       { key: "cv", label: "CV" },
-      { key: "written", label: "Written response" },
-      { key: "estimation", label: "Estimation" },
       { key: "interview", label: "Interview" },
     ];
-    const SCORE_FIELD = { written: "written_score", estimation: "estimation_score", interview: "interview_score" };
+    const SCORE_FIELD = { interview: "interview_score" };
     const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
     function sectionsFor(d) {
-      return SECTIONS.filter((s) =>
-        (s.key === "written" || s.key === "estimation") ? !d.fast
-        : s.key === "interview" ? d.interview : true);
+      return SECTIONS.filter((s) => s.key !== "interview" || d.interview);
     }
 
     function openScoring(uid, section) {
@@ -937,6 +921,7 @@
       $sc("scSub").textContent = sc.d.programme || "";
       $sc("scNote").value = sc.d.mine.note || "";
       $sc("scStatus").textContent = "";
+      delete $sc("scLeft").dataset.uid;
       $sc("scOverlay").classList.remove("hidden");
       document.body.style.overflow = "hidden";
       showSection(section);
@@ -966,35 +951,37 @@
       renderRight();
     }
 
+    // The left pane is the same for every section: the CV, then both
+    // written questions and answers below it (they're scored in the CV
+    // rubric). Built once per candidate, so moving between CV and Interview
+    // doesn't reload the PDF or lose the scroll position.
     function renderLeft() {
       const d = sc.d, left = $sc("scLeft");
-      if (sc.section === "written" || sc.section === "estimation") {
-        const text = sc.section === "written" ? d.motivation : d.estimation;
-        left.innerHTML = `
-          <div class="sc-pane-head"><span>${sc.section === "written" ? "Written response" : "Estimation"}</span></div>
-          <div class="sc-answer">
-            <p class="sc-prompt">${escHtml(PROMPTS[sc.section])}</p>
-            ${text ? `<div class="apa-essay apa-math sc-essay">${escHtml(text)}</div>`
-                   : `<div class="apa-essay is-empty">Nothing written.</div>`}
-          </div>`;
-        const el = left.querySelector(".apa-math");
-        if (el && window.renderMathInElement) {
+      if (left.dataset.uid === sc.uid) return;
+      left.dataset.uid = sc.uid;
+      const cv = d.cv_url
+        ? `<div class="sc-pane-head"><span>CV</span>
+             <a href="${d.cv_url}" target="_blank" rel="noopener">Open in a new tab ↗</a></div>
+           <iframe class="sc-cv" src="${d.cv_url}" title="CV"></iframe>`
+        : `<div class="sc-pane-head"><span>CV</span></div><p class="msp-muted sc-answer">No CV on file.</p>`;
+      const answer = (label, prompt, text) => `
+        <div class="sc-pane-head"><span>${label}</span></div>
+        <div class="sc-answer">
+          <p class="sc-prompt">${escHtml(prompt)}</p>
+          ${text ? `<div class="apa-essay apa-math sc-essay">${escHtml(text)}</div>`
+                 : `<div class="apa-essay is-empty">Nothing written.</div>`}
+        </div>`;
+      left.innerHTML = cv + (d.fast
+        ? `<div class="sc-pane-head"><span>Written answers</span></div>
+           <p class="msp-muted sc-answer">Fast-tracked: no written assessment.</p>`
+        : answer("Written response", PROMPTS.motivation, d.motivation)
+          + answer("Estimation", PROMPTS.estimation, d.estimation));
+      left.querySelectorAll(".apa-math").forEach((el) => {
+        if (window.renderMathInElement) {
           renderMathInElement(el, { delimiters: [{ left: "$$", right: "$$", display: true }, { left: "$", right: "$", display: false }], throwOnError: false });
         }
-        return;
-      }
-      if (!d.cv_url) {
-        left.innerHTML = `<div class="sc-pane-head"><span>CV</span></div><p class="msp-muted" style="padding:16px;">No CV on file.</p>`;
-        return;
-      }
-      // Keep the same frame when flipping between CV and Interview, rather
-      // than reloading the PDF every time.
-      if (left.dataset.cv === d.cv_url && left.querySelector("iframe")) return;
-      left.dataset.cv = d.cv_url;
-      left.innerHTML = `
-        <div class="sc-pane-head"><span>CV</span>
-          <a href="${d.cv_url}" target="_blank" rel="noopener">Open in a new tab ↗</a></div>
-        <iframe class="sc-cv" src="${d.cv_url}" title="CV"></iframe>`;
+      });
+      left.scrollTop = 0;
     }
 
     function avgLine(avg, n, outOf) {

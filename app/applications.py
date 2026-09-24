@@ -191,8 +191,9 @@ DECIDED = {S_ACCEPTED, S_REJECTED}
 # written response actually exist to be read, through to a final decision.
 SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 
-# Written and interview scores are on a 1-10 scale for now (their own
-# criteria are still to come). The CV is scored against CV_RUBRIC below.
+# The interview score is on a 1-10 scale for now (its own criteria are
+# still to come). The CV, written answers included, is scored against
+# CV_RUBRIC below.
 SCORE_MIN, SCORE_MAX = 1, 10
 NOTE_MAX_CHARS = 2000   # a reviewer's general comments on one applicant
 
@@ -307,12 +308,11 @@ class ReviewScore(BaseModel):
     each edit on its own), and sending null clears that field. The CV is
     scored criterion by criterion ({criterion key: points}); the CV score is
     their total once every criterion is scored. A bare cv_score is refused.
-    ``note`` is the reviewer's general comments on the applicant, shared by
-    every section."""
+    The written answers are scored inside the CV rubric (its two response
+    criteria), so there's no separate written score. ``note`` is the
+    reviewer's general comments on the applicant, shared by every section."""
     cv_rubric: Optional[Dict[str, Optional[int]]] = None
     cv_score: Optional[int] = None
-    written_score: Optional[int] = None
-    estimation_score: Optional[int] = None
     interview_score: Optional[int] = None
     note: Optional[str] = None
 
@@ -1285,19 +1285,15 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     def _avg(scores: List[int]) -> Optional[float]:
         return round(sum(scores) / len(scores), 1) if scores else None
 
-    written_scores, estimation_scores, interview_scores = (
-        _given("written_score"), _given("estimation_score"), _given("interview_score"))
+    interview_scores = _given("interview_score")
     return {
         "count": len(reviews),
         "cv_avg": _avg(cv_scores),
         "cv_max": _cv_max(application.get("event_ticket") == EVENT_TICKET_FAST_TRACK),
-        "written_avg": _avg(written_scores),
-        "estimation_avg": _avg(estimation_scores),
         "interview_avg": _avg(interview_scores),
         # How many reviewers each average is over — each section is scored
         # by whoever chose to score it, not necessarily everyone.
-        "cv_n": len(cv_scores), "written_n": len(written_scores),
-        "estimation_n": len(estimation_scores), "interview_n": len(interview_scores),
+        "cv_n": len(cv_scores), "interview_n": len(interview_scores),
         "entries": sorted(
             [{"reviewer_id": rid, **r} for rid, r in reviews.items()],
             key=lambda r: r.get("updated_at") or _now(),
@@ -1417,13 +1413,13 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     # — there is no auto-graded component any more, so this average *is* the
     # ranking. An application nobody has scored yet sorts to the bottom
     # rather than being read as a zero, since it hasn't had its turn.
-    # The CV rubric is out of 15 (11 for Fast-Track), the others out of 10,
-    # so the CV average is put on the same 10-point scale before combining.
+    # The CV rubric (which includes the written answers) is out of 15, or 11
+    # for Fast-Track, and the interview out of 10, so the CV average is put
+    # on the same 10-point scale before combining.
     def _combined(r: Dict[str, Any]) -> Optional[float]:
         review = r["review"]
         cv = review["cv_avg"] * SCORE_MAX / review["cv_max"] if review["cv_avg"] is not None else None
-        parts = [v for v in (cv, review["written_avg"], review["estimation_avg"], review["interview_avg"])
-                 if v is not None]
+        parts = [v for v in (cv, review["interview_avg"]) if v is not None]
         return round(sum(parts) / len(parts), 2) if parts else None
 
     for r in rows:
@@ -1516,8 +1512,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Written avg", "Estimation avg",
-        "Interview avg",
+        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Interview avg",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1545,8 +1540,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             return f"{e['cv_score']}/10 (old scale)"
 
         reviewer_notes = "; ".join(
-            f"{e['reviewer_name']}: CV {_cv(e)}, written {_score(e, 'written_score')}, "
-            f"estimation {_score(e, 'estimation_score')}, interview {_score(e, 'interview_score')}"
+            f"{e['reviewer_name']}: CV {_cv(e)}, interview {_score(e, 'interview_score')}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
         )
@@ -1560,8 +1554,6 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             r["programme"], r["status"],
             r["combined_score"] if r["combined_score"] is not None else "",
             r["review"]["cv_avg"] if r["review"]["cv_avg"] is not None else "",
-            r["review"]["written_avg"] if r["review"]["written_avg"] is not None else "",
-            r["review"]["estimation_avg"] if r["review"]["estimation_avg"] is not None else "",
             r["review"]["interview_avg"] if r["review"]["interview_avg"] is not None else "",
             r["review"]["count"], reviewer_notes,
             _dt(r["created_at"]), _dt(r["submitted_at"]), _dt(r["shortlisted_at"]),
@@ -1578,7 +1570,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         ])
 
     widths = [6, 14, 18, 24, 24, 16, 14, 20, 18, 12, 26,
-              16, 12, 14, 8, 12, 12, 12, 14, 40, 17, 17, 17, 17, 14, 24,
+              16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
               10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
@@ -1651,14 +1643,12 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
     sent = payload.model_fields_set
     if "cv_score" in sent and payload.cv_score is not None:
         raise HTTPException(400, "Score the CV using the criteria")
-    fields = sent & {"cv_rubric", "written_score", "estimation_score", "interview_score", "note"}
+    fields = sent & {"cv_rubric", "interview_score", "note"}
     if not fields:
         raise HTTPException(400, "Enter at least one score")
-    for key, label in (("written_score", "Written"), ("estimation_score", "Estimation"),
-                       ("interview_score", "Interview")):
-        value = getattr(payload, key)
-        if key in fields and value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
-            raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
+    value = payload.interview_score
+    if "interview_score" in fields and value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
+        raise HTTPException(400, f"Interview score must be between {SCORE_MIN} and {SCORE_MAX}")
 
     application = await _load(user_id)
     if application is None:
@@ -1681,9 +1671,8 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
             "cv_score": sum(cv_rubric.values()) if complete else None,
             "cv_max": _cv_max(fast_tracked),
         })
-    for key in ("written_score", "estimation_score", "interview_score"):
-        if key in fields:
-            entry[key] = getattr(payload, key)
+    if "interview_score" in fields:
+        entry["interview_score"] = payload.interview_score
     if "note" in fields:
         entry["note"] = (payload.note or "").strip()[:NOTE_MAX_CHARS]
     entry["updated_at"] = _now()
