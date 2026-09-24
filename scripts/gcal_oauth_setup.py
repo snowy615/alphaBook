@@ -40,7 +40,9 @@ import httpx
 # be pasted in by hand (see main()).
 WAIT_SECONDS = 15 * 60
 REDIRECT_PORT = 8765
-REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/"
+# 127.0.0.1 rather than "localhost": browsers may resolve localhost to IPv6
+# (::1) while this server listens on IPv4, which shows as "refused to connect".
+REDIRECT_URI = f"http://127.0.0.1:{REDIRECT_PORT}/"
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -73,7 +75,7 @@ def main() -> None:
     parser.add_argument("--client-secret", required=True)
     args = parser.parse_args()
 
-    server = http.server.HTTPServer(("localhost", REDIRECT_PORT), _CallbackHandler)
+    server = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), _CallbackHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     auth_url = AUTH_URL + "?" + urllib.parse.urlencode({
@@ -105,7 +107,7 @@ def main() -> None:
         # only last a few minutes, so do this promptly.
         pasted = input(
             "\nDidn't hear back from the browser. If you finished signing in, copy the full\n"
-            "address from the browser tab it ended on (starts with http://localhost:8765/?)\n"
+            "address from the browser tab it ended on (starts with http://127.0.0.1:8765/?)\n"
             "and paste it here, then press Enter:\n> "
         ).strip()
         code = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query).get("code", [None])[0]
