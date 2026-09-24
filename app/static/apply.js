@@ -527,7 +527,17 @@
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>.
       </p>
-      <div class="field-group">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <div class="field-group" style="flex:1 1 180px;">
+          <label>First name</label>
+          <input type="text" id="infoFirst" value="${esc(state.first_name || "")}" autocomplete="given-name" maxlength="100">
+        </div>
+        <div class="field-group" style="flex:1 1 180px;">
+          <label>Last name</label>
+          <input type="text" id="infoLast" value="${esc(state.last_name || "")}" autocomplete="family-name" maxlength="100">
+        </div>
+      </div>
+      <div class="field-group" style="margin-top:14px;">
         <label>College</label>
         <select id="infoCollege">
           <option value="">Choose one</option>
@@ -567,16 +577,23 @@
 
     $("#infoBack").addEventListener("click", () => { cvScreen = null; renderCv(state); });
     $("#infoNext").addEventListener("click", async (e) => {
+      const first_name = $("#infoFirst").value.trim();
+      const last_name = $("#infoLast").value.trim();
       const college = collegeSelect.value === "__other__" ? collegeOther.value.trim() : collegeSelect.value;
       const degree = $("#infoDegree").value.trim();
       const year_of_study = $("#infoYear").value;
+      if (!first_name || !last_name) {
+        flash("Enter your first and last name to continue.", true);
+        return;
+      }
       if (!college || !degree || !year_of_study) {
         flash("Fill in your college, degree and year of study to continue.", true);
         return;
       }
       e.target.disabled = true;
       try {
-        await api("/apply/cv-confirm", { college, degree, year_of_study, linkedin: $("#infoLinkedin").value.trim() });
+        await api("/apply/cv-confirm", { first_name, last_name, college, degree, year_of_study,
+                                         linkedin: $("#infoLinkedin").value.trim() });
         cvScreen = null;
         await refresh();
       } catch (err) {

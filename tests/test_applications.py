@@ -819,13 +819,13 @@ class TestNewApplicationAlwaysStartsAtCv:
     def test_only_cv_confirm_stamps_the_applications_own_snapshot(self, monkeypatch):
         store = self._patch(monkeypatch, {
             "email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER,
-            "cv_blob_path": "cvs/2027/Quant/u1.pdf",
+            "cv_blob_path": "cvs/2027/Quant/u1.pdf", "full_name": "Jo Bloggs",
         })
         user = User(id="u1", username="jo")
         asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
 
         asyncio.run(ap.confirm_cv(
-            ap.ConfirmCv(college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
+            ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
 
         assert store["u1"]["status"] == ap.S_OA_READY
         assert store["u1"]["cv_blob_path"] == "cvs/2027/Quant/u1.pdf"
@@ -1827,14 +1827,14 @@ class TestConfirmCvWithApplicantInfo:
         self._patch(monkeypatch, self._application())
         user = User(id="u1", username="jo")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.confirm_cv(ap.ConfirmCv(college="", degree="CS", year_of_study="2nd year"), user))
+            asyncio.run(ap.confirm_cv(ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="", degree="CS", year_of_study="2nd year"), user))
 
     def test_general_ticket_stores_info_and_moves_to_oa_ready(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="general"))
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.confirm_cv(
-            ap.ConfirmCv(college="Merton", degree="Computer Science", year_of_study="2nd year",
+            ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year",
                          linkedin="https://linkedin.com/in/jo"),
             user))
 
@@ -1852,7 +1852,7 @@ class TestConfirmCvWithApplicantInfo:
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.confirm_cv(
-            ap.ConfirmCv(college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
+            ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
 
         assert result["status"] == ap.S_SUBMITTED
         stored = fake_db.collections[ap.COLLECTION]["u1"]
@@ -1866,7 +1866,7 @@ class TestConfirmCvWithApplicantInfo:
     def test_fast_track_confirmation_email_is_sent_only_once(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="fast_track"))
         user = User(id="u1", username="jo")
-        payload = ap.ConfirmCv(college="Merton", degree="Computer Science", year_of_study="2nd year")
+        payload = ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year")
 
         asyncio.run(ap.confirm_cv(payload, user))
         # A second call while still "submitted" is a no-op per the existing
@@ -1880,7 +1880,7 @@ class TestConfirmCvWithApplicantInfo:
             fake_db, _ = self._patch(monkeypatch, self._application(event_ticket=ticket))
             user = User(id="u1", username="jo")
             result = asyncio.run(ap.confirm_cv(
-                ap.ConfirmCv(college="Merton", degree="CS", year_of_study="1st year"), user))
+                ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="CS", year_of_study="1st year"), user))
             assert result["status"] == ap.S_OA_READY
 
 
@@ -2517,3 +2517,49 @@ class TestWordingFixes:
     def test_the_state_says_whether_the_viewer_is_an_admin(self, monkeypatch):
         _flow_db(monkeypatch, users={"admin1": {"username": "root"}})
         assert asyncio.run(ap.state(User(id="admin1", username="root", is_admin=True)))["is_admin"] is True
+
+
+class TestApplicantName:
+    """The details step asks for a first and last name, and that's the name
+    reviewers and emails use."""
+
+    def _setup(self, monkeypatch, profile_name=""):
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST,
+                                 "status": ap.S_CV, "event_ticket": "none"}},
+            users={"u1": {"username": "jo", "cv_blob_path": "cvs/jo.pdf", "full_name": profile_name}},
+        )
+        return fake_db, User(id="u1", username="jo")
+
+    def _confirm(self, user, first, last):
+        return asyncio.run(ap.confirm_cv(ap.ConfirmCv(
+            first_name=first, last_name=last, college="Merton", degree="Maths", year_of_study="2nd year"), user))
+
+    @pytest.mark.parametrize("first,last", [("", "Bloggs"), ("Jo", ""), ("  ", "  ")])
+    def test_both_names_are_required(self, monkeypatch, first, last):
+        fake_db, user = self._setup(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            self._confirm(user, first, last)
+        assert "first and last name" in exc.value.detail
+        assert fake_db.collections[ap.COLLECTION]["u1"]["status"] == ap.S_CV
+
+    def test_the_entered_name_is_stored_and_used(self, monkeypatch):
+        fake_db, user = self._setup(monkeypatch, profile_name="jojo")
+        self._confirm(user, "  Jo ", " van  Bloggs ")
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert (stored["first_name"], stored["last_name"]) == ("Jo", "van Bloggs")
+        assert stored["full_name"] == "Jo van Bloggs"
+        assert ap._review_row("u1", stored)["full_name"] == "Jo van Bloggs"
+        # The profile already had a name, so it's left as the person set it.
+        assert fake_db.collections["users"]["u1"]["full_name"] == "jojo"
+
+    def test_a_blank_profile_name_is_filled_in(self, monkeypatch):
+        fake_db, user = self._setup(monkeypatch)
+        self._confirm(user, "Jo", "Bloggs")
+        assert fake_db.collections["users"]["u1"]["full_name"] == "Jo Bloggs"
+
+    def test_the_state_prefills_from_the_profile(self, monkeypatch):
+        _, user = self._setup(monkeypatch, profile_name="Jo van Bloggs")
+        out = asyncio.run(ap.state(user))
+        assert (out["first_name"], out["last_name"]) == ("Jo", "van Bloggs")

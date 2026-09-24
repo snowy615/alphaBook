@@ -229,6 +229,11 @@ class EventTicketChoice(BaseModel):
 
 
 class ConfirmCv(BaseModel):
+    # Both required (checked in confirm_cv): the account's own full_name is
+    # optional and often blank or just a username, and reviewers need a real
+    # name to put to the CV and to address emails to.
+    first_name: str = ""
+    last_name: str = ""
     college: str
     degree: str
     year_of_study: str
@@ -664,6 +669,9 @@ async def state(user: User = Depends(current_user)):
         out["event_signup"] = await outreach.ticket_of(uid)
         out["event"] = await outreach.event_summary()
         out["fast_track_used"] = _fast_track_used(application)
+        profile_first, _, profile_last = (data.get("full_name") or "").strip().partition(" ")
+        out["first_name"] = application.get("first_name") or profile_first
+        out["last_name"] = application.get("last_name") or profile_last.strip()
         out["college"] = application.get("college") or ""
         out["degree"] = application.get("degree") or ""
         out["year_of_study"] = application.get("year_of_study") or ""
@@ -934,6 +942,10 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
     if not data.get("cv_blob_path"):
         raise HTTPException(400, "Upload your CV before continuing")
 
+    first_name = " ".join((payload.first_name or "").split())[:100]
+    last_name = " ".join((payload.last_name or "").split())[:100]
+    if not first_name or not last_name:
+        raise HTTPException(400, "Enter your first and last name to continue")
     college = (payload.college or "").strip()[:200]
     degree = (payload.degree or "").strip()[:200]
     year_of_study = (payload.year_of_study or "").strip()[:50]
@@ -942,7 +954,14 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
 
     application["cv_blob_path"] = data["cv_blob_path"]
     application["cv_confirmed_at"] = _now()
-    application["full_name"] = data.get("full_name") or application.get("full_name", "")
+    # The name typed here is the one reviewers see and emails use — not the
+    # profile's, which may be blank or a nickname. It only fills the profile
+    # in when the profile has none, rather than overwriting someone's choice.
+    application["first_name"] = first_name
+    application["last_name"] = last_name
+    application["full_name"] = f"{first_name} {last_name}"
+    if not (data.get("full_name") or "").strip():
+        await db_module.db.collection("users").document(uid).update({"full_name": application["full_name"]})
     application["email"] = data.get("email") or application.get("email", "")
     application["college"] = college
     application["degree"] = degree
