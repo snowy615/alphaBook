@@ -3166,3 +3166,22 @@ def test_export_wraps_the_written_answers(monkeypatch):
         cell = ws.cell(row=2, column=headers.index(name) + 1)
         assert cell.alignment.wrap_text is True, name
     assert ws.cell(row=2, column=headers.index("Username") + 1).alignment.wrap_text is not True
+
+
+def test_the_interviewer_is_copied_on_the_proposal(monkeypatch):
+    """The interviewer hears about a proposed slot (and gets its invite)
+    when it's proposed, not only once the candidate confirms it."""
+    _, sent, _ = _flow_db(
+        monkeypatch,
+        applications={"u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+                             "oxford_email": "jo@merton.ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP,
+                             "status": ap.S_SHORTLISTED}},
+        users={"qa1": {"username": "priya", "full_name": "Priya Patel", "email": "priya@gmail.com",
+                       "membership": mb.M_QUANT_ANALYST}},
+    )
+    asyncio.run(ap.schedule_interview(
+        "u1", ap.ScheduleInterview(interviewer_id="qa1", when=dt.datetime(2026, 10, 2, 8, 30, tzinfo=dt.timezone.utc)),
+        User(id="qa1", username="priya")))
+    assert len(sent) == 1
+    assert sent[0]["to"] == "jo@merton.ox.ac.uk" and sent[0]["cc"] == "priya@gmail.com"
+    assert "copied in" in sent[0]["body_html"]

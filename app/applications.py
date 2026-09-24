@@ -2129,9 +2129,14 @@ def _meet_block(interview: dict) -> str:
 
 
 async def _send_interview_proposal_email(application: dict, interview: dict) -> None:
+    """To the candidate, with the interviewer cc'd, the same as the
+    confirmation: the interviewer gets the proposed slot (and its calendar
+    invite) straight away, rather than only hearing once it's confirmed."""
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
+    raw_interviewer_email = interview.get("interviewer_email") or ""
+    cc = raw_interviewer_email if raw_interviewer_email and raw_interviewer_email != to else None
     # Every value below is user- or reviewer-entered (names, the note, an
     # email address) — escaped so none of it can become markup in an email
     # sent from our own address.
@@ -2148,7 +2153,7 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
         f"<p>The committee would like to interview you for <strong>{programme}</strong>.</p>"
         f"<p><strong>Proposed time:</strong> {_fmt_when(interview['when'])}<br>"
         f"<strong>Interviewer:</strong> {interviewer_name} "
-        f"(<a href=\"mailto:{interviewer_email}\">{interviewer_email}</a>)</p>"
+        f"(<a href=\"mailto:{interviewer_email}\">{interviewer_email}</a>), copied in</p>"
         f"{_meet_block(interview)}"
         f"{note_block}"
         f"<p>A calendar invite for this slot is attached, so you can hold it while you decide.</p>"
@@ -2157,7 +2162,7 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
         f"directly to find another.</p>"
     )
     await mailer.send_email(
-        to=to, subject=f"Alpha Fund interview proposed for {_fmt_when(interview['when'])}",
+        to=to, cc=cc, subject=f"Alpha Fund interview proposed for {_fmt_when(interview['when'])}",
         title="Interview time proposed", body_html=body,
         cta_label="Review and confirm", cta_url=f"{BASE_URL}/apply",
         ics=_build_interview_ics(application, interview),
