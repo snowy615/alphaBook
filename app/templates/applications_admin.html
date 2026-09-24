@@ -748,7 +748,7 @@
           <div id="availAdminGrid-{{ r.user_id }}"></div>
           <script type="application/json" id="avail-data-{{ r.user_id }}">{{ r.availability | tojson }}</script>
           <p class="msp-muted" style="font-size:12.5px;margin:0 0 14px;">
-            Click a highlighted hour to fill in the time below — the grid is shown in London time; the field below fills in with your own local time for that same instant.
+            Click a highlighted 30-minute slot to fill in the time below. The grid is in London time; the field below shows the same moment in your own local time.
           </p>
           {% else %}
           <p class="msp-muted" style="margin:0 0 14px;">They haven't submitted their availability yet.</p>
