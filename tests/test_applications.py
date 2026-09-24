@@ -3184,3 +3184,13 @@ def test_the_interviewer_is_copied_on_the_proposal(monkeypatch):
     assert len(sent) == 1
     assert sent[0]["to"] == "jo@merton.ox.ac.uk" and sent[0]["cc"] == "priya@gmail.com"
     assert "copied in" in sent[0]["body_html"]
+
+
+def test_confirming_the_membership_password_keeps_the_rest_of_the_form():
+    """Confirming the analyst password saves the typed name, year and club
+    along with the membership, so the reload that follows doesn't wipe them."""
+    from pathlib import Path
+    html = (Path(ap.__file__).parent / "templates" / "profile.html").read_text()
+    confirm = html[html.index("async function confirmPassword()"):html.index("async function saveProfile()")]
+    assert "...formFields()" in confirm and "membership: pendingTrack" in confirm
+    assert "full_name: document.getElementById('fullName')" in html[html.index("function formFields()"):]

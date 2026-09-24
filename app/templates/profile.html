@@ -736,11 +736,14 @@
       const pw = document.getElementById('pwInput').value;
       // Verify password by attempting the save with the pending track
       try {
+        // Save what's in the form along with the membership, not the
+        // membership alone: the profile reloads afterwards, and anything typed
+        // but not yet saved (a full name, say) would otherwise be wiped.
         const res = await fetch('/me/profile', {
           method: 'PUT',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ membership: pendingTrack, analyst_password: pw }),
+          body: JSON.stringify({ ...formFields(), membership: pendingTrack, analyst_password: pw }),
         });
         if (res.status === 403) {
           document.getElementById('pwError').textContent = 'Incorrect password — try again.';
@@ -762,15 +765,22 @@
       }
     }
 
-    async function saveProfile() {
-      const track = document.getElementById('track').value;
+    // The editable identity fields as they stand in the form right now.
+    function formFields() {
       const gradRaw = document.getElementById('gradYear').value;
-      const gated = ANALYST_TRACKS.has(track) || BOOTCAMP_TRACKS.has(track);
-      const payload = {
+      return {
         full_name: document.getElementById('fullName').value.trim() || null,
         graduation_year: gradRaw ? parseInt(gradRaw) : null,
-        membership: track,
         club: document.getElementById('club').value || null,
+      };
+    }
+
+    async function saveProfile() {
+      const track = document.getElementById('track').value;
+      const gated = ANALYST_TRACKS.has(track) || BOOTCAMP_TRACKS.has(track);
+      const payload = {
+        ...formFields(),
+        membership: track,
         ...(gated && confirmedPassword ? { analyst_password: confirmedPassword } : {}),
       };
       try {
