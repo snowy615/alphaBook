@@ -233,6 +233,7 @@
     .sc-timer-head a { color: var(--brand); text-decoration: none; font-weight: 600; font-size: 13px; }
     .sc-timer-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
     .sc-clock { margin-left: auto; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .sc-part { margin: 10px 0 0; font-size: 13px; font-weight: 600; }
     .sc-cues { list-style: none; margin: 10px 0 6px; padding: 0; display: grid; gap: 2px; font-size: 13px; }
     .sc-cues li { padding: 4px 8px; border-left: 2px solid var(--border); color: var(--muted); }
     .sc-cues li b { display: inline-block; width: 38px; font-variant-numeric: tabular-nums; }
@@ -959,8 +960,8 @@
       { key: "interview", label: "Interview" },
     ];
     const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
-    const INTERVIEW_HINTS = {{ interview_hints | tojson }};
-    const QUESTION_SECONDS = {{ interview_question_seconds }};
+    const INTERVIEW_TIMERS = {{ interview_timers | tojson }};
+    const HARD_MIN_EASY = {{ hard_question_min_easy }};
     const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1094,22 +1095,16 @@
       renderInterview(box);
     }
 
-    // The two rules the server also applies: an easy score of 0-2 means the
-    // hard question isn't reached (0), and solving both with no hint
-    // (easy 4, hard 4) makes adaptability full marks (3).
-    // A score the rules filled in is cleared again once its rule stops
-    // applying (say the easy score is changed from 4 to 3), so it gets
-    // scored by hand rather than silently keeping the automatic value.
+    // The rule the server also applies: below HARD_MIN_EASY on the easy
+    // question, the hard question isn't reached (0). A score the rule filled
+    // in is cleared again once it stops applying (the easy score is raised),
+    // so it gets scored by hand rather than silently keeping the 0.
     function applyInterviewRules(rb, wasLocked = {}) {
       const out = { ...rb };
       const locked = {};
-      if (out.easy !== undefined && out.easy <= 2) {
+      if (out.easy !== undefined && out.easy < HARD_MIN_EASY) {
         out.hard = 0;
-        locked.hard = "Automatic: the easy question scored 0 to 2, so the hard question isn't reached.";
-      }
-      if (out.easy === 4 && out.hard === 4) {
-        out.adaptability = 3;
-        locked.adaptability = "Automatic: both questions solved with no hint, so there was nothing to adapt to.";
+        locked.hard = `Automatic: the easy question scored below ${HARD_MIN_EASY}, so the hard question isn't reached.`;
       }
       for (const key of Object.keys(wasLocked)) if (!locked[key]) delete out[key];
       return { rb: out, locked };
@@ -1186,11 +1181,13 @@
       wireTimer(box);
     }
 
-    // ── Question timer ──
-    // Runs on this page only (nothing saved), and keeps running if you switch
-    // tab or close the scoring view, so an accidental close mid-question
-    // doesn't lose the clock. Calls out each hint time from the schedule.
-    const timer = { uid: null, q: null, start: 0, id: null };
+    // ── Interview timer ──
+    // Three parts: the CV discussion, then the easy and hard questions, each
+    // with its own schedule of what's due when (hints, wrap-up). Runs on this
+    // page only (nothing saved), and keeps running if you switch tab or close
+    // the scoring view, so an accidental close mid-question doesn't lose it.
+    const timer = { uid: null, part: "cv", start: 0, id: null };
+    const partOf = (key) => INTERVIEW_TIMERS.find((t) => t.key === key) || INTERVIEW_TIMERS[0];
 
     function mmss(sec) {
       sec = Math.max(0, Math.floor(sec));
@@ -1201,49 +1198,55 @@
       return `
         <div class="sc-timer">
           <div class="sc-timer-head">
-            <strong>Question timer</strong>
+            <strong>Interview timer</strong>
             <a href="/apply/admin/interview-guide" target="_blank" rel="noopener">Interview guide ↗</a>
           </div>
           <div class="sc-timer-row">
-            <button type="button" class="btn" data-q="easy">Start easy question</button>
-            <button type="button" class="btn" data-q="hard">Start hard question</button>
+            ${INTERVIEW_TIMERS.map((t) => `<button type="button" class="btn" data-part="${t.key}">${escHtml(t.button)}</button>`).join("")}
             <button type="button" class="btn ghost" data-stop>Stop</button>
             <span class="sc-clock" data-clock>–</span>
           </div>
-          <ol class="sc-cues">
-            <li data-at="0"><b>0:00</b> No hints. Clarifying questions only.</li>
-            ${INTERVIEW_HINTS.map((h) => `<li data-at="${h.at}"><b>${mmss(h.at)}</b> <strong>${escHtml(h.label)}</strong>, ${escHtml(h.detail)}.</li>`).join("")}
-            <li data-at="${QUESTION_SECONDS}"><b>${mmss(QUESTION_SECONDS)}</b> Stop and move on.</li>
-          </ol>
-          <p class="sc-hint">Start when the question has been read out and any clarifying questions answered.
-            A hint is due only if they haven't reached its checkpoint, and never earlier.</p>
+          <p class="sc-part" data-part-label></p>
+          <ol class="sc-cues" data-cues></ol>
+          <p class="sc-hint">Start each question once it has been read out and any clarifying questions
+            answered. A hint is due only if they haven't reached its checkpoint, and never earlier.</p>
         </div>`;
     }
 
     function paintTimer() {
       const box = document.querySelector("#scScore .sc-timer");
       if (!box) return;
-      const running = timer.id && timer.uid === sc.uid;
+      const running = !!timer.id && timer.uid === sc.uid;
+      const part = partOf(timer.uid === sc.uid ? timer.part : "cv");
       const el = running ? (Date.now() - timer.start) / 1000 : null;
-      box.querySelector("[data-clock]").textContent = running
-        ? `${timer.q === "easy" ? "Easy" : "Hard"} ${mmss(el)}` : "–";
-      const cues = [...box.querySelectorAll(".sc-cues li")];
+      box.querySelector("[data-clock]").textContent = running ? mmss(el) : "–";
+      box.querySelector("[data-part-label]").textContent =
+        `${part.label}, ${Math.round(part.seconds / 60)} minutes${running ? "" : " (not started)"}`;
+      const list = box.querySelector("[data-cues]");
+      if (list.dataset.part !== part.key) {
+        list.dataset.part = part.key;
+        list.innerHTML = part.cues.map((c) =>
+          `<li data-at="${c.at}"><b>${mmss(c.at)}</b> <strong>${escHtml(c.label)}</strong>, ${escHtml(c.detail)}.</li>`).join("");
+      }
       let current = null;
-      cues.forEach((li) => {
-        const at = Number(li.dataset.at);
-        li.classList.toggle("is-past", running && el >= at);
-        if (running && el >= at) current = li;
+      list.querySelectorAll("li").forEach((li) => {
+        const due = running && el >= Number(li.dataset.at);
+        li.classList.toggle("is-past", due);
+        if (due) current = li;
       });
-      cues.forEach((li) => li.classList.toggle("is-now", li === current));
-      box.querySelectorAll("[data-q]").forEach((b) => b.classList.toggle("primary", running && b.dataset.q === timer.q));
+      list.querySelectorAll("li").forEach((li) => li.classList.toggle("is-now", li === current));
+      box.querySelectorAll("[data-part]").forEach((b) => {
+        if (b.tagName === "BUTTON") b.classList.toggle("primary", running && b.dataset.part === part.key);
+      });
     }
 
     function wireTimer(box) {
-      box.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => {
+      box.querySelectorAll("button[data-part]").forEach((b) => b.addEventListener("click", () => {
         clearInterval(timer.id);
-        Object.assign(timer, { uid: sc.uid, q: b.dataset.q, start: Date.now() });
+        const part = partOf(b.dataset.part);
+        Object.assign(timer, { uid: sc.uid, part: part.key, start: Date.now() });
         timer.id = setInterval(() => {
-          if ((Date.now() - timer.start) / 1000 >= QUESTION_SECONDS + 60) { clearInterval(timer.id); timer.id = null; }
+          if ((Date.now() - timer.start) / 1000 >= part.seconds + 120) { clearInterval(timer.id); timer.id = null; }
           paintTimer();
         }, 500);
         paintTimer();

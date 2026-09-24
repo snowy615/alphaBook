@@ -241,14 +241,34 @@ CV_RUBRIC: List[Dict[str, Any]] = [
 CV_RESPONSE_KEYS = {"motivation", "fermi"}
 
 
-# The interview: two questions from the question bank (easy, then hard), each
-# 8 minutes with two predefined hints on a fixed schedule (INTERVIEW_HINTS),
-# plus how the candidate comes across. Out of 15, adjusted by the CV-project
-# criterion (+2 to -8). Two rules are applied automatically (see
-# _checked_interview_rubric): the hard question scores 0 when the easy one
-# scored 0-2, since they never reach it, and adaptability is full marks when
-# both questions were solved with no hint at all, since there was no hint to
-# adapt to.
+# The interview, in three timed parts (INTERVIEW_TIMERS): the CV
+# discussion, then an easy and a hard question from the question bank, each
+# with two predefined hints on a fixed schedule. Problem solving is scored
+# on how far the candidate got and how much help it took, so there's no
+# separate adaptability score: using a hint well is part of the question's
+# own score. Out of 15, adjusted by the CV-project criterion (+2 to -8).
+# One rule is applied automatically (see _checked_interview_rubric): the
+# hard question is only reached with HARD_QUESTION_MIN_EASY or more on the
+# easy one, and scores 0 otherwise.
+HARD_QUESTION_MIN_EASY = 4
+
+
+def _problem_solving(top: int) -> List[Dict[str, Any]]:
+    """The shared levels for both questions, top score down. The hard
+    question is worth one more at every level, and has one extra level at
+    the bottom for not being reached at all."""
+    levels = [
+        "No hint, with clear reasoning.",
+        "Needed Hint 1, and used it well: built on it to get there.",
+        "Needed Hint 1 but couldn't make use of it.",
+        "Needed both hints.",
+        "Some progress, but didn't get there.",
+        "No meaningful progress.",
+    ]
+    # Listed lowest first, like every other criterion.
+    return [{"points": top - i, "label": label} for i, label in enumerate(levels)][::-1]
+
+
 INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
     {"key": "likability", "label": "Likability / easy to work with", "options": [
         {"points": 0, "label": "Poor attitude: dismissive, arrogant, unreceptive, or otherwise difficult to work with."},
@@ -260,26 +280,10 @@ INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
         {"points": 1, "label": "Communicates reasoning adequately; understandable, if at times unclear or unstructured."},
         {"points": 2, "label": "Exceptionally clear, well structured and concise; their thought process is easy to follow."},
     ]},
-    {"key": "easy", "label": "Problem solving: easy question", "options": [
-        {"points": 0, "label": "Little or no meaningful independent progress, even after some time."},
-        {"points": 1, "label": "Some independent progress or a relevant idea, but can't develop it far."},
-        {"points": 2, "label": "Good independent progress, but needs Hint 2 to finish."},
-        {"points": 3, "label": "Solves it with only Hint 1."},
-        {"points": 4, "label": "Solves it with no hint, with sound reasoning."},
-    ]},
+    {"key": "easy", "label": "Problem solving: easy question", "options": _problem_solving(5)},
     {"key": "hard", "label": "Problem solving: hard question", "options": [
-        {"points": 0, "label": "Not reached (easy question scored 0-2), or no meaningful progress."},
-        {"points": 1, "label": "Makes some meaningful independent progress."},
-        {"points": 2, "label": "Develops a sensible approach and makes good independent progress."},
-        {"points": 3, "label": "Gets close to a full solution independently, or solves it with only Hint 1."},
-        {"points": 4, "label": "Solves it with no hint, with strong reasoning or creativity."},
-    ]},
-    {"key": "adaptability", "label": "Adaptability / use of hints", "options": [
-        {"points": 0, "label": "Can't make meaningful use of the hints given, or needs the same guidance repeatedly."},
-        {"points": 1, "label": "Uses hints at a basic level, but needs continued guidance."},
-        {"points": 2, "label": "Uses hints well: gets the intended insight and carries on largely independently."},
-        {"points": 3, "label": "Takes the hint immediately and develops it well beyond (e.g. applies it in a new way). "
-                              "Automatic when both questions were solved with no hint."},
+        {"points": 0, "label": f"Not reached (the easy question scored below {HARD_QUESTION_MIN_EASY})."},
+        *_problem_solving(6),
     ]},
     # Any whole number from +2 to -8, at the interviewer's judgement; the
     # labelled points are anchors, and the unlabelled ones sit between them.
@@ -299,17 +303,32 @@ INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
 # for overstated experience, so a total can be over 15 or below 0.
 INTERVIEW_MAX = 15
 
-# The hint schedule, per question (each is 8 minutes). Timed from when the
-# question has been read out and any clarifying questions answered, and the
-# same for every candidate: a hint is given at its time only if the
-# candidate hasn't yet reached that hint's checkpoint (each question in the
-# bank lists Hint 1, Hint 2 and the checkpoint each one gets you to), and
-# never earlier, even if asked.
-INTERVIEW_QUESTION_SECONDS = 8 * 60
-INTERVIEW_HINTS = [
-    {"at": 3 * 60, "label": "Hint 1", "detail": "if they haven't reached Checkpoint 1"},
-    {"at": 5 * 60, "label": "Hint 2", "detail": "if they haven't reached Checkpoint 2"},
-    {"at": 7 * 60, "label": "Wrap up", "detail": "ask them to summarise where they've got to"},
+# The interview's three timed parts, in order, and what's due when. Each
+# question is timed from when it has been read out and any clarifying
+# questions answered, the same for every candidate: a hint is given at its
+# time only if the candidate hasn't yet reached that hint's checkpoint (each
+# question in the bank lists Hint 1, Hint 2 and the checkpoint each one gets
+# you to), and never earlier, even if asked. The scoring view's timer and
+# the interview guide both read this.
+def _question_cues(end: str) -> List[Dict[str, Any]]:
+    return [
+        {"at": 0, "label": "No hints", "detail": "clarifying questions only"},
+        {"at": 3 * 60, "label": "Hint 1", "detail": "if they haven't reached Checkpoint 1"},
+        {"at": 6 * 60, "label": "Hint 2", "detail": "if they haven't reached Checkpoint 2"},
+        {"at": 10 * 60, "label": "Wrap up", "detail": end},
+    ]
+
+
+INTERVIEW_TIMERS: List[Dict[str, Any]] = [
+    {"key": "cv", "button": "Start CV", "label": "CV discussion", "seconds": 8 * 60, "cues": [
+        {"at": 0, "label": "CV discussion", "detail": "talk through the projects on their CV"},
+        {"at": 8 * 60, "label": "Time", "detail": "move on to the easy question"},
+    ]},
+    {"key": "easy", "button": "Start easy", "label": "Easy question", "seconds": 10 * 60,
+     "cues": _question_cues(f"move on to the hard question only if the easy one scores "
+                            f"{HARD_QUESTION_MIN_EASY} or more")},
+    {"key": "hard", "button": "Start hard", "label": "Hard question", "seconds": 10 * 60,
+     "cues": _question_cues("ask them to summarise where they've got to")},
 ]
 
 
@@ -1581,8 +1600,8 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "note_max_chars": NOTE_MAX_CHARS,
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
-        "interview_hints": INTERVIEW_HINTS,
-        "interview_question_seconds": INTERVIEW_QUESTION_SECONDS,
+        "interview_timers": INTERVIEW_TIMERS,
+        "hard_question_min_easy": HARD_QUESTION_MIN_EASY,
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
@@ -1601,8 +1620,8 @@ async def interview_guide(request: Request, reviewer: User = Depends(require_rev
         "app_name": "AlphaBook",
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
-        "interview_hints": INTERVIEW_HINTS,
-        "question_minutes": INTERVIEW_QUESTION_SECONDS // 60,
+        "interview_timers": INTERVIEW_TIMERS,
+        "hard_question_min_easy": HARD_QUESTION_MIN_EASY,
     })
 
 
@@ -1755,15 +1774,11 @@ def _checked_cv_rubric(raw: Dict[str, Optional[int]], fast_tracked: bool) -> Dic
 
 
 def _checked_interview_rubric(raw: Dict[str, Optional[int]]) -> Dict[str, int]:
-    """Like _checked_cv_rubric, then the two automatic rules:
-
-    * the hard question is only reached with 3 or 4 on the easy one, so an
-      easy score of 0-2 makes the hard score 0;
-    * adaptability is judged on the hints actually given, so with no hint on
-      either question (easy 4 and hard 4) it's full marks, 3.
-
-    Applied here rather than trusted from the page, so every reviewer's
-    score follows them whatever was clicked."""
+    """Like _checked_cv_rubric, then the automatic rule: the hard question
+    is only reached with HARD_QUESTION_MIN_EASY or more on the easy one, so
+    a lower easy score makes the hard score 0. Applied here rather than
+    trusted from the page, so every reviewer's score follows it whatever
+    was clicked."""
     allowed = {c["key"]: {o["points"] for o in c["options"]} for c in INTERVIEW_RUBRIC}
     out: Dict[str, int] = {}
     for key, points in raw.items():
@@ -1774,10 +1789,8 @@ def _checked_interview_rubric(raw: Dict[str, Optional[int]]) -> Dict[str, int]:
         if points not in allowed[key]:
             raise HTTPException(400, f"That isn't one of the options for {key}")
         out[key] = int(points)
-    if out.get("easy") is not None and out["easy"] <= 2:
+    if out.get("easy") is not None and out["easy"] < HARD_QUESTION_MIN_EASY:
         out["hard"] = 0
-    if out.get("easy") == 4 and out.get("hard") == 4:
-        out["adaptability"] = 3
     return out
 
 

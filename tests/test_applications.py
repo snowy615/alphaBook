@@ -98,8 +98,8 @@ def rubric(total: int, fast_tracked: bool = False) -> dict:
 
 def iv(total: int) -> dict:
     """A complete interview rubric adding up to `total` (0-15), filled so
-    the automatic rules (hard gate, no-hint adaptability) don't change it."""
-    order = [("easy", 4), ("likability", 2), ("communication", 2), ("adaptability", 3), ("hard", 4)]
+    the automatic hard-question gate doesn't change it."""
+    order = [("easy", 5), ("likability", 2), ("communication", 2), ("hard", 6)]
     out = {"cv_project": 0}
     for key, top in order:
         out[key] = min(top, total)
@@ -463,7 +463,7 @@ class TestScoring:
         self._patch(monkeypatch, self._base())
         reviewer = User(id="r1", username="alice")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"easy": 5}), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"easy": 6}), reviewer))
         with pytest.raises(HTTPException):
             asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"cv_project": -9}), reviewer))
 
@@ -2997,8 +2997,9 @@ class TestScoringView:
 
 
 class TestInterviewRubric:
-    """The interview: six criteria out of 15, a penalty-only CV-project
-    criterion, and two rules applied automatically."""
+    """The interview: likability, communication, an easy question out of 5
+    and a hard one out of 6 (15 in all), plus a CV-project adjustment from
+    +2 to -8. The hard question is only reached with 4 or more on the easy."""
 
     def _patch(self, monkeypatch):
         fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": {
@@ -3013,50 +3014,54 @@ class TestInterviewRubric:
 
     def test_the_rubric_is_fifteen_plus_the_cv_project_adjustment(self):
         assert [c["key"] for c in ap.INTERVIEW_RUBRIC] == [
-            "likability", "communication", "easy", "hard", "adaptability", "cv_project"]
+            "likability", "communication", "easy", "hard", "cv_project"]
         base = [c for c in ap.INTERVIEW_RUBRIC if c["key"] != "cv_project"]
         assert sum(max(o["points"] for o in c["options"]) for c in base) == ap.INTERVIEW_MAX == 15
         project = next(c for c in ap.INTERVIEW_RUBRIC if c["key"] == "cv_project")
         assert [o["points"] for o in project["options"]] == list(range(2, -9, -1))   # every point, +2 to -8
 
+    def test_the_problem_solving_levels(self):
+        easy = {o["points"]: o["label"] for o in next(c for c in ap.INTERVIEW_RUBRIC if c["key"] == "easy")["options"]}
+        hard = {o["points"]: o["label"] for o in next(c for c in ap.INTERVIEW_RUBRIC if c["key"] == "hard")["options"]}
+        assert sorted(easy) == [0, 1, 2, 3, 4, 5] and sorted(hard) == [0, 1, 2, 3, 4, 5, 6]
+        assert easy[5] == hard[6] == "No hint, with clear reasoning."
+        assert "used it well" in easy[4] and "used it well" in hard[5]
+        assert "couldn't make use of it" in easy[3] and "couldn't make use of it" in hard[4]
+        assert "both hints" in easy[2] and "both hints" in hard[3]
+        assert "Some progress" in easy[1] and "Some progress" in hard[2]
+        assert "Not reached" in hard[0]
+        assert not any("adaptab" in c["key"] for c in ap.INTERVIEW_RUBRIC)
+
     def test_the_score_is_the_total(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
-        self._score({"likability": 1, "communication": 2, "easy": 3, "hard": 2, "adaptability": 2, "cv_project": 0})
+        self._score({"likability": 1, "communication": 2, "easy": 4, "hard": 3, "cv_project": 0})
         assert self._entry(fake_db)["interview_score"] == 10
 
-    def test_the_cv_project_penalty_takes_two_off(self, monkeypatch):
+    def test_the_cv_project_adjustment(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
-        self._score({"likability": 1, "communication": 1, "easy": 3, "hard": 2, "adaptability": 2, "cv_project": -2})
-        assert self._entry(fake_db)["interview_score"] == 7
-
-    def test_the_total_can_go_below_zero(self, monkeypatch):
-        fake_db = self._patch(monkeypatch)
-        self._score({"likability": 0, "communication": 1, "easy": 0, "hard": 0, "adaptability": 0, "cv_project": -8})
-        assert self._entry(fake_db)["interview_score"] == -7
-
-    def test_outstanding_cv_projects_can_add_two(self, monkeypatch):
-        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": 5, "hard": 4, "cv_project": -2})
+        assert self._entry(fake_db)["interview_score"] == 9
         self._score({**iv(15), "cv_project": 2})
         assert self._entry(fake_db)["interview_score"] == 17
 
-    @pytest.mark.parametrize("easy", [0, 1, 2])
-    def test_the_hard_question_is_zero_when_the_easy_one_scored_two_or_less(self, monkeypatch, easy):
+    def test_the_total_can_go_below_zero(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
-        self._score({"likability": 1, "communication": 1, "easy": easy, "hard": 3, "adaptability": 1, "cv_project": 0})
+        self._score({"likability": 0, "communication": 1, "easy": 0, "hard": 0, "cv_project": -8})
+        assert self._entry(fake_db)["interview_score"] == -7
+
+    @pytest.mark.parametrize("easy", [0, 1, 2, 3])
+    def test_the_hard_question_is_zero_below_four_on_the_easy_one(self, monkeypatch, easy):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": easy, "hard": 5, "cv_project": 0})
         entry = self._entry(fake_db)
         assert entry["interview_rubric"]["hard"] == 0
-        assert entry["interview_score"] == 3 + easy
+        assert entry["interview_score"] == 2 + easy
 
-    def test_no_hints_on_either_question_means_full_adaptability(self, monkeypatch):
+    @pytest.mark.parametrize("easy", [4, 5])
+    def test_the_hard_question_counts_from_four_on_the_easy_one(self, monkeypatch, easy):
         fake_db = self._patch(monkeypatch)
-        self._score({"likability": 1, "communication": 1, "easy": 4, "hard": 4, "adaptability": 0, "cv_project": 0})
-        entry = self._entry(fake_db)
-        assert entry["interview_rubric"]["adaptability"] == 3 and entry["interview_score"] == 13
-
-    def test_adaptability_is_still_judged_when_a_hint_was_given(self, monkeypatch):
-        fake_db = self._patch(monkeypatch)
-        self._score({"likability": 1, "communication": 1, "easy": 4, "hard": 3, "adaptability": 1, "cv_project": 0})
-        assert self._entry(fake_db)["interview_rubric"]["adaptability"] == 1
+        self._score({"likability": 1, "communication": 1, "easy": easy, "hard": 5, "cv_project": 0})
+        assert self._entry(fake_db)["interview_rubric"]["hard"] == 5
 
     def test_half_scored_is_kept_but_not_counted(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
@@ -3071,23 +3076,26 @@ class TestInterviewRubric:
         assert result["review"]["interview_avg"] == 10.5 and result["review"]["interview_n"] == 2
         assert result["review"]["interview_max"] == 15
 
-    def test_an_old_scale_interview_score_is_not_averaged_in(self):
-        summary = ap._review_summary({"reviews": {
-            "r1": {"reviewer_name": "Old", "interview_score": 8},
-            "r2": {"reviewer_name": "New", "interview_rubric": iv(12), "interview_score": 12},
-        }})
-        assert summary["interview_avg"] == 12.0
+    def test_the_timer_has_three_parts_on_the_agreed_schedule(self):
+        parts = {t["key"]: t for t in ap.INTERVIEW_TIMERS}
+        assert [t["button"] for t in ap.INTERVIEW_TIMERS] == ["Start CV", "Start easy", "Start hard"]
+        assert parts["cv"]["seconds"] == 8 * 60
+        for q in ("easy", "hard"):
+            cues = {c["label"]: c["at"] for c in parts[q]["cues"]}
+            assert parts[q]["seconds"] == 10 * 60
+            assert cues["Hint 1"] == 3 * 60 and cues["Hint 2"] == 6 * 60 and cues["Wrap up"] == 10 * 60
 
-    def test_the_guide_page_lists_the_rubric_and_hint_schedule(self, monkeypatch):
+    def test_the_guide_page_lists_the_rubric_and_schedule(self, monkeypatch):
         from starlette.requests import Request
         request = Request({"type": "http", "method": "GET", "path": "/apply/admin/interview-guide", "headers": [],
                            "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
         html = asyncio.run(ap.interview_guide(request, User(id="r1", username="al"))).body.decode()
         assert "Interview rubric (15 points)" in html
-        assert "Adaptability / use of hints" in html and "Checkpoint 1" in html
-        assert "3:00" in html and "5:00" in html and "No early hints" in html
+        assert "Problem solving: hard question" in html and "Checkpoint 1" in html
+        assert "CV discussion" in html and "8 minutes" in html and "10 minutes" in html
+        assert "3:00" in html and "6:00" in html and "10:00" in html and "No early hints" in html
+        assert "daptability" not in html
         assert "\u2014" not in html   # no em dashes in the guide
-
 
 class TestReviewListRanking:
     """The review list ranks by CV round score, the shortlist by the average

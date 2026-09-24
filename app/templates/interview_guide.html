@@ -26,6 +26,7 @@
     .ig-neg { color: var(--red); }
     .ig-table td.msp-muted { color: var(--muted); }
     .ig-total td { border-top: 1px solid var(--border-strong); font-weight: 700; }
+    .ig-part { margin: 14px 0 8px; font-weight: 600; font-size: 14px; }
     .ig-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 12px; }
     .ig-step { border: 1px solid var(--border); background: var(--panel); padding: 10px 12px; }
     .ig-step b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; color: var(--brand); }
@@ -59,8 +60,8 @@
   <div class="container" style="max-width: 980px;">
     <div class="msp-hero">
       <h2>Interview rubric ({{ interview_max }} points)</h2>
-      <p>Assessing problem solving, learning mindset, and fit for the team. Two questions from the
-        question bank, easy then hard, {{ question_minutes }} minutes each.</p>
+      <p>Assessing problem solving, learning mindset, and fit for the team. A CV discussion, then two
+        questions from the question bank, easy then hard.</p>
     </div>
 
     <div class="ig-section">
@@ -90,20 +91,22 @@
     </div>
 
     <div class="ig-section">
-      <p class="ig-section-title">When to give hints</p>
+      <p class="ig-section-title">Timing and hints</p>
+      {% for t in interview_timers %}
+      <p class="ig-part">{{ t.label }} <span class="msp-muted">({{ t.seconds // 60 }} minutes)</span></p>
       <div class="ig-schedule">
-        <div class="ig-step"><b>0:00 to {{ (interview_hints[0].at // 60) }}:00</b><span>No hints. Answer clarifying questions only.</span></div>
-        {% for h in interview_hints %}
-        <div class="ig-step"><b>{{ h.at // 60 }}:00</b><span><strong>{{ h.label }}</strong>, {{ h.detail }}.</span></div>
+        {% for c in t.cues %}
+        <div class="ig-step"><b>{{ c.at // 60 }}:{{ "%02d" | format(c.at % 60) }}</b><span><strong>{{ c.label }}</strong>, {{ c.detail }}.</span></div>
         {% endfor %}
-        <div class="ig-step"><b>{{ question_minutes }}:00</b><span>Stop and move on.</span></div>
       </div>
+      {% endfor %}
       <ul class="ig-list">
-        <li><strong>Start the clock</strong> once the question has been read out and any clarifying questions
-          answered. The scoring view has a timer that calls out each step.</li>
+        <li><strong>Start the clock</strong> for each question once it has been read out and any clarifying
+          questions answered. The Interview tab of the scoring view has a timer (Start CV, Start easy, Start hard)
+          that calls out each step.</li>
         <li><strong>Checkpoints decide whether a hint is needed.</strong> Each question in the bank lists Hint 1,
           Hint 2, and the checkpoint each hint gets the candidate to. At 3:00, give Hint 1 only if they haven't
-          reached Checkpoint 1; at 5:00, give Hint 2 only if they haven't reached Checkpoint 2. That's the whole
+          reached Checkpoint 1; at 6:00, give Hint 2 only if they haven't reached Checkpoint 2. That's the whole
           test: not how confident they seem, or whether they ask.</li>
         <li><strong>No early hints.</strong> If a candidate asks before a hint is due, tell them the next one comes at
           its time if they still need it. Give each hint at the next natural pause after its time, within about
@@ -118,12 +121,11 @@
     <div class="ig-section">
       <p class="ig-section-title">Scoring rules</p>
       <ul class="ig-list">
-        <li><strong>Hard-question gate.</strong> Move on to the hard question only if the easy question scored 3 or 4.
-          With 0, 1 or 2, the hard question scores 0 automatically.</li>
-        <li><strong>Adaptability is scored on the hints actually given.</strong> If the candidate solved both questions
-          with no hint at all (easy 4 and hard 4), adaptability is 3 automatically: there was nothing to adapt to, and
-          needing no help is the best possible outcome. If hints were given on only one question, score how they used
-          those.</li>
+        <li><strong>Hard-question gate.</strong> Move on to the hard question only if the easy question scored
+          {{ hard_question_min_easy }} or more (solved with no hint, or with Hint 1 built on well). Below that, the
+          hard question scores 0 automatically.</li>
+        <li><strong>How they use a hint is part of the question's score.</strong> Needing Hint 1 and building on it
+          scores above needing Hint 1 and not being able to use it, which scores above needing both hints.</li>
         <li><strong>Score what they achieved in the time with the hints due,</strong> not whether they eventually reach
           the answer with extra guidance.</li>
         <li><strong>Likability and communication:</strong> most candidates should get 1. Keep 2 for genuinely stand-out
