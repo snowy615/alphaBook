@@ -72,7 +72,7 @@ async def _send_branded_verification_email(email: str, username: str) -> None:
         title="Welcome to AlphaBook",
         body_html=(
             f"<p>Hi {html.escape(username)},</p>"
-            f"<p>One last step — confirm this is your email address so we know where to reach you.</p>"
+            f"<p>One last step: confirm this is your email address so we know where to reach you.</p>"
         ),
         cta_label="Verify my email",
         cta_url=link,

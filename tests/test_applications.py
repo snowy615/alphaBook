@@ -177,15 +177,34 @@ class TestEstimationSection:
         assert oa["estimation"]["submitted_at"] is not None
 
 
-class TestSessionDeadline:
-    def test_the_session_length_is_a_hard_stop(self):
+class TestNoOverallClock:
+    """Each question is timed on its own; there is no overall session clock
+    that can cut the second one short."""
+
+    def test_part_two_keeps_its_full_time_however_late_it_opened(self):
+        # Well past what used to be the session deadline, but part two only
+        # opened 5 seconds ago on its own clock, so it's still live.
         application = make_app(section="estimation",
                                started_seconds_ago=ap.SESSION_SECONDS + 1,
                                estimation_seconds_ago=5, estimation_text="in progress")
+        assert ap.resolve(application) is False
+        assert application["status"] == ap.S_OA_ACTIVE
+
+    def test_part_two_starts_at_part_ones_deadline_not_when_next_read(self):
+        # Tab closed during part one; nothing read the sitting until 60s
+        # after part one ran out. Part two has been running for those 60s.
+        application = make_app(started_seconds_ago=ap.MOTIVATION_SECONDS + 60)
         assert ap.resolve(application) is True
-        assert application["status"] == ap.S_SUBMITTED
-        assert application["oa"]["finish_reason"] == "session_expired"
-        assert application["oa"]["estimation"]["text"] == "in progress"
+        oa = application["oa"]
+        assert oa["section"] == "estimation"
+        left = ap._left(oa["estimation_started_at"], ap.ESTIMATION_SECONDS)
+        assert ap.ESTIMATION_SECONDS - 61 <= left <= ap.ESTIMATION_SECONDS - 59
+
+    def test_the_view_has_no_overall_clock(self):
+        application = make_app(started_seconds_ago=10)
+        view = ap._oa_view(application)
+        assert "session_seconds_left" not in view
+        assert view["motivation"]["seconds_total"] == ap.MOTIVATION_SECONDS
 
     def test_an_expired_sitting_left_in_the_motivation_section_still_closes(self):
         application = make_app(started_seconds_ago=ap.SESSION_SECONDS + 30,
@@ -301,7 +320,7 @@ class TestSubmissionEmail:
         saved, sent = self._patch_io(monkeypatch)
         application = make_app(
             section="estimation", started_seconds_ago=ap.SESSION_SECONDS + 1,
-            estimation_seconds_ago=5, estimation_text="in progress")
+            estimation_seconds_ago=ap.ESTIMATION_SECONDS + 1, estimation_text="in progress")
         application["oxford_email"] = "jo@merton.ox.ac.uk"
 
         assert asyncio.run(ap._resolve_and_notify("u1", application)) is True
@@ -1433,10 +1452,21 @@ class TestAvailabilityWindow:
         out = ap._valid_availability_slots(["2026-10-05T08:00:00+00:00"])
         assert out == ["2026-10-05T08:00:00+00:00"]
 
-    def test_drops_a_slot_not_on_the_hour(self, monkeypatch):
+    def test_drops_a_slot_not_on_the_half_hour(self, monkeypatch):
         self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
-        out = ap._valid_availability_slots(["2026-10-05T08:30:00+00:00"])
+        out = ap._valid_availability_slots(["2026-10-05T08:15:00+00:00"])
         assert out == []
+
+    def test_keeps_half_hour_slots_through_to_six_thirty(self, monkeypatch):
+        # Interviews are 30 minutes, so each slot is one: 09:00 and 09:30
+        # London are separate choices, and 18:30 is the last (ends 19:00).
+        self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
+        out = ap._valid_availability_slots([
+            "2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00",   # 09:00, 09:30 London
+            "2026-10-05T17:30:00+00:00",                                # 18:30 London
+        ])
+        assert out == ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00",
+                       "2026-10-05T17:30:00+00:00"]
 
     def test_drops_a_slot_outside_7am_7pm_london(self, monkeypatch):
         self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
@@ -1542,11 +1572,13 @@ class TestAvailabilityEndpoint:
         application = self._shortlisted()
         store = self._patch(monkeypatch, application)
         user = User(id="u1", username="jo")
-        slots = ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00", "not-a-date"]
+        slots = ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00",
+                 "2026-10-05T08:15:00+00:00", "not-a-date"]
 
         result = asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=slots), user))
 
-        assert result["availability"] == ["2026-10-05T08:00:00+00:00"]
+        assert result["availability"] == ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00"]
+        assert store["u1"]["availability_slot_minutes"] == 30
         assert "availability_updated_at" in store["u1"]
 
 
@@ -1577,8 +1609,20 @@ class TestAvailabilityInState:
 
         result = asyncio.run(ap.state(user))
 
-        assert result["availability"] == ["2026-10-05T08:00:00+00:00"]
+        # Saved before the half-hour grid: one entry meant the whole hour, so
+        # it reads back as both of that hour's half-hour slots.
+        assert result["availability"] == ["2026-10-05T08:00:00+00:00", "2026-10-05T08:30:00+00:00"]
         assert result["availability_locked"] is False
+
+    def test_half_hour_availability_reads_back_as_saved(self, monkeypatch):
+        application = {
+            "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_ANALYST,
+            "shortlisted_at": dt.datetime(2026, 9, 16, 12, 0, tzinfo=dt.timezone.utc),
+            "availability": ["2026-10-05T08:30:00+00:00"], "availability_slot_minutes": 30,
+        }
+        self._patch(monkeypatch, application)
+        result = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert result["availability"] == ["2026-10-05T08:30:00+00:00"]
 
     def test_locked_once_confirmed(self, monkeypatch):
         application = {
@@ -2563,3 +2607,69 @@ class TestApplicantName:
         _, user = self._setup(monkeypatch, profile_name="Jo van Bloggs")
         out = asyncio.run(ap.state(user))
         assert (out["first_name"], out["last_name"]) == ("Jo", "van Bloggs")
+
+
+class TestNoDashesInEmails:
+    """No em or en dashes anywhere an applicant or interviewer reads: every
+    email's subject and body, and the calendar invite attached to it."""
+
+    DASHES = ("—", "–")
+
+    def _capture(self, monkeypatch):
+        fake_db, _, _ = _flow_db(monkeypatch)
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            from app import mailer
+            sent.append((subject, mailer._wrap(title, body_html, cta_label, cta_url),
+                         (ics or b"").decode("utf-8")))
+            return True
+
+        monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+        return fake_db, sent
+
+    def test_every_email(self, monkeypatch):
+        fake_db, sent = self._capture(monkeypatch)
+        admin = User(id="admin1", username="root", is_admin=True)
+        application = {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+                       "oxford_email": "jo@merton.ox.ac.uk", "programme": mb.M_QUANT_ANALYST}
+        interview = {"interviewer_name": "Priya", "interviewer_email": "p@ox.ac.uk", "message": "Hi",
+                     "candidate_note": "Busy", "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)}
+
+        asyncio.run(ap._send_submission_confirmation(application))
+        asyncio.run(ap._send_fast_track_confirmation(application))
+        for status in (ap.S_SHORTLISTED, ap.S_ACCEPTED, ap.S_REJECTED):
+            asyncio.run(ap._send_decision_email(application, status))
+        asyncio.run(ap._send_decision_email({**application, "programme": mb.M_QUANT_BOOTCAMP}, ap.S_REJECTED))
+        asyncio.run(ap._send_interview_proposal_email(application, interview))
+        asyncio.run(ap._send_interview_confirmed_emails(application, interview))
+        asyncio.run(ap._send_interview_declined_email(application, interview))
+        for status in (ap.S_CV, ap.S_OA_READY):
+            fake_db.collections[ap.COLLECTION]["u1"] = {**application, "status": status}
+            asyncio.run(ap.remind("u1", ap.RemindRequest(note="Soon"), admin))
+
+        assert len(sent) == 11
+        for subject, body, ics in sent:
+            for dash in self.DASHES:
+                assert dash not in subject, subject
+                assert dash not in body, (subject, body)
+                assert dash not in ics, (subject, ics)
+
+    def test_the_sign_up_verification_email(self, monkeypatch):
+        from app import auth
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, **kw):
+            sent.append(subject + title + body_html + (cta_label or ""))
+            return True
+
+        monkeypatch.setattr(auth.mailer, "send_email", fake_send)
+        monkeypatch.setattr(auth.fb_auth, "generate_email_verification_link", lambda *a, **k: "https://x")
+        asyncio.run(auth._send_branded_verification_email("jo@ox.ac.uk", "jo"))
+        assert sent and not any(d in sent[0] for d in self.DASHES)
+
+
+def test_the_faq_has_no_dashes():
+    from pathlib import Path
+    faq = (Path(ap.__file__).parent / "templates" / "faq.html").read_text()
+    assert "—" not in faq and "–" not in faq

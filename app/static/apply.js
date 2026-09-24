@@ -75,7 +75,6 @@
   let pollTimer = null;
   let tickTimer = null;
   let drawnKey = "";          // what the DOM currently shows
-  let sessionLeft = 0;        // local mirror of the session clock
   let sectionLeft = 0;        // local mirror of the motivation / estimation clock
   let autoFiredKey = "";      // guards against firing the same auto-submit twice
   let busy = false;
@@ -614,7 +613,8 @@
       </p>
 
       <ul class="apl-rules">
-        <li><strong>${Math.round((r.session_seconds || CFG.sessionMinutes * 60) / 60)} minutes in total</strong>, in one sitting. One attempt, two questions.</li>
+        <li><strong>Two questions, each with its own timer</strong>, one straight after the
+            other. One attempt.</li>
         <li><strong>Part one — ${Math.round((r.motivation_seconds || CFG.motivationMinutes * 60) / 60)} minutes.</strong>
             A behavioural question — something you've pursued seriously, and what it taught you.</li>
         <li><strong>Part two — ${Math.round((r.estimation_seconds || CFG.estimationMinutes * 60) / 60)} minutes.</strong>
@@ -842,9 +842,9 @@
         body += `
           <div style="border-top:1px solid var(--border);margin-top:18px;padding-top:16px;">
             <p class="apl-hint" style="margin:0 0 10px;font-size:13px;">
-              <strong style="color:var(--text);">Your availability</strong> — click every hour,
-              7am-7pm London time, when you could do a 30-minute interview. An analyst will
-              pick one of these and confirm it with you.
+              <strong style="color:var(--text);">Your availability.</strong> Each box is a
+              30-minute interview slot between 7am and 7pm. Click every slot you could make,
+              and an analyst will pick one and confirm it with you.
             </p>
             <div id="availGrid">${renderAvailabilityGrid(availabilitySelected)}</div>
             <p class="apl-hint" id="availSavedNote">Times shown are London time. Saved automatically.</p>
@@ -1082,12 +1082,11 @@
       drawnKey = key;
       autoFiredKey = "";
       sectionLeft = w.seconds_left;
-      sessionLeft = oa.session_seconds_left;
       $("#steps").innerHTML = "";
       $("#app").innerHTML = panel("Part one — behavioural", `
         <div class="apl-clocks">
           <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
-          <span class="apl-clock-sub">Part 1 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
+          <span class="apl-clock-sub">Part 1 of 2</span>
         </div>
         <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
         <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
@@ -1107,7 +1106,6 @@
     } else {
       // Only nudge the clocks forward — never touch what they are typing.
       sectionLeft = Math.max(sectionLeft, w.seconds_left);
-      sessionLeft = Math.max(sessionLeft, oa.session_seconds_left);
     }
   }
 
@@ -1118,12 +1116,11 @@
       drawnKey = key;
       autoFiredKey = "";
       sectionLeft = w.seconds_left;
-      sessionLeft = oa.session_seconds_left;
       $("#steps").innerHTML = "";
       $("#app").innerHTML = panel("Part two — estimation", `
         <div class="apl-clocks">
           <span class="apl-clock-main" id="clockMain">${mmss(sectionLeft)}</span>
-          <span class="apl-clock-sub">Part 2 of 2 · <span id="clockSession">${mmss(sessionLeft)}</span> left overall</span>
+          <span class="apl-clock-sub">Part 2 of 2</span>
         </div>
         <div class="apl-progress"><span id="bar" style="width:100%"></span></div>
         <p class="apl-q-prompt">${esc(w.prompt || "")}</p>
@@ -1138,7 +1135,6 @@
       startTicking();
     } else {
       sectionLeft = Math.max(sectionLeft, w.seconds_left);
-      sessionLeft = Math.max(sessionLeft, oa.session_seconds_left);
     }
   }
 
@@ -1148,11 +1144,9 @@
     stopTicking();
     tickTimer = setInterval(() => {
       sectionLeft = Math.max(0, sectionLeft - 0.25);
-      sessionLeft = Math.max(0, sessionLeft - 0.25);
 
       const main = $("#clockMain");
       const bar = $("#bar");
-      const sess = $("#clockSession");
       const inMotivation = drawnKey === "motivation";
       const span = (inMotivation ? CFG.motivationMinutes : CFG.estimationMinutes) * 60;
       const lowThreshold = inMotivation ? 30 : 60;   // more warning on the longer question
@@ -1165,7 +1159,6 @@
         bar.style.width = Math.max(0, Math.min(100, (sectionLeft / span) * 100)) + "%";
         bar.classList.toggle("is-low", sectionLeft <= lowThreshold);
       }
-      if (sess) sess.textContent = mmss(sessionLeft);
 
       if (sectionLeft <= 0 && autoFiredKey !== drawnKey) {
         autoFiredKey = drawnKey;

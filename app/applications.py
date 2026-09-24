@@ -38,9 +38,10 @@ The shape of the assessment:
   connection looks the same as a second monitor.
 
 Everything is resolved on read, the same approach ``interview_oa`` uses: the
-state endpoint expires the current section and force-finishes a session past
-its deadline (``SESSION_SECONDS``). A candidate who closes the tab at the
-buzzer still gets an honest, un-strandable result.
+state endpoint expires whichever question's own timer has run out, and
+finishes the sitting when the last one does. There is no separate overall
+clock. A candidate who closes the tab at the buzzer still gets an honest,
+un-strandable result.
 
 Results are admin-only. A candidate sees a plain "submitted" screen, never a
 score, so applicants can't compare notes on how they were rated.
@@ -139,7 +140,10 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
 # behavioural and estimation questions.
 MOTIVATION_SECONDS = 5 * 60         # the behavioural question
 ESTIMATION_SECONDS = 3 * 60         # the estimation question
-SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 480 — 8 minutes total
+# Not a clock: each question has its own timer and nothing else ends the
+# sitting. This is only the most time the two can take together, used where
+# the copy tells people how long to set aside.
+SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 480, 8 minutes
 
 # How late a part-one submit may arrive and still be banked into the part-one
 # answer once the server clock has already moved on to part two. The browser
@@ -200,7 +204,7 @@ INTERVIEW_DECLINED = "declined"
 INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 
 # The availability grid a shortlisted candidate fills in: a fixed window on
-# the calendar, in whole London hours. Fixed (not anchored to when someone
+# the calendar, in half-hour London slots (one slot = one interview). Fixed (not anchored to when someone
 # was shortlisted) so every viewer — the candidate, and every analyst on the
 # admin page — computes exactly the same set of slots regardless of when
 # each of them happens to load the page; the only thing that moves it is the
@@ -208,9 +212,10 @@ INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 # two dates below for the next admissions cycle.
 AVAILABILITY_WINDOW_START = dt.date(2026, 10, 1)
 AVAILABILITY_WINDOW_END = dt.date(2026, 10, 23)     # inclusive
-AVAILABILITY_START_HOUR = 7     # London wall-clock, inclusive
-AVAILABILITY_END_HOUR = 18      # London wall-clock, inclusive — last slot is 18:00-19:00
-AVAILABILITY_MAX_SLOTS = 300    # generous ceiling against a malformed payload
+AVAILABILITY_START_HOUR = 7     # London wall-clock, first slot 07:00
+AVAILABILITY_END_HOUR = 18      # London wall-clock, last slot 18:30 (ends 19:00)
+AVAILABILITY_SLOT_MINUTES = INTERVIEW_MINUTES   # 30: a slot is exactly one interview
+AVAILABILITY_MAX_SLOTS = 700    # generous ceiling against a malformed payload
 LONDON_TZ = ZoneInfo("Europe/London")
 
 
@@ -345,8 +350,8 @@ def _parse_slot(value: str) -> Optional[dt.datetime]:
 
 def _valid_availability_slots(raw: List[str]) -> List[str]:
     """
-    Keep only whole-hour slots that land on 7am-7pm London time inside the
-    fixed availability window, deduplicated and sorted. Silently drops
+    Keep only half-hour slots (on :00 or :30) that land on 7am-7pm London
+    time inside the fixed availability window, deduplicated and sorted. Silently drops
     anything malformed or out-of-window rather than rejecting the whole
     submission — the grid on the frontend only ever generates well-formed
     slots, so this is a backstop against a stale or tampered client, not the
@@ -360,7 +365,7 @@ def _valid_availability_slots(raw: List[str]) -> List[str]:
         if slot is None:
             continue
         london = slot.astimezone(LONDON_TZ)
-        if london.minute or london.second or london.microsecond:
+        if london.minute % AVAILABILITY_SLOT_MINUTES or london.second or london.microsecond:
             continue
         if not (AVAILABILITY_START_HOUR <= london.hour <= AVAILABILITY_END_HOUR):
             continue
@@ -377,12 +382,32 @@ def _valid_availability_slots(raw: List[str]) -> List[str]:
     return out
 
 
+def _availability_of(application: Dict[str, Any]) -> List[str]:
+    """The candidate's free slots as half-hour slot starts.
+
+    Availability saved before the grid moved to half-hour slots was one
+    entry per whole hour; each of those meant "free for the whole hour", so
+    it reads back as both of that hour's half-hour slots. New saves are
+    stamped ``availability_slot_minutes`` and read back as they are."""
+    slots = list(application.get("availability") or [])
+    if application.get("availability_slot_minutes") == AVAILABILITY_SLOT_MINUTES:
+        return slots
+    out: List[str] = []
+    for value in slots:
+        start = _parse_slot(value)
+        if start is None:
+            continue
+        out.append(start.isoformat())
+        out.append((start + dt.timedelta(minutes=30)).isoformat())
+    return sorted(set(out))
+
+
 def _fmt_slot(value: Any) -> str:
     slot = _as_utc(value)
     if slot is None:
         return str(value)
     london = slot.astimezone(LONDON_TZ)
-    end = london + dt.timedelta(hours=1)
+    end = london + dt.timedelta(minutes=AVAILABILITY_SLOT_MINUTES)
     return f"{london.strftime('%a %d %b %Y, %H:%M')}–{end.strftime('%H:%M')} London"
 
 
@@ -421,11 +446,21 @@ def _close_section(oa: dict, key: str, started: Any, limit_s: float) -> None:
     section["word_count"] = len(section["text"].split())
 
 
-def _close_motivation(oa: dict) -> None:
-    """Bank the motivation answer and open the estimation question."""
+def _close_motivation(oa: dict, expired: bool = False) -> None:
+    """Bank the motivation answer and open the estimation question.
+
+    Submitted early, the estimation clock starts now. Run out, it starts at
+    the motivation deadline itself, not whenever the server next happens to
+    look: the clock runs whether the tab is open or not, so someone who
+    closes the tab mid-question and comes back later finds part two has been
+    running since part one ended, exactly as if they'd stayed."""
     _close_section(oa, "motivation", oa.get("started_at"), MOTIVATION_SECONDS)
     oa["section"] = "estimation"
-    oa["estimation_started_at"] = _now()
+    started = _as_utc(oa.get("started_at"))
+    if expired and started is not None:
+        oa["estimation_started_at"] = started + dt.timedelta(seconds=MOTIVATION_SECONDS)
+    else:
+        oa["estimation_started_at"] = _now()
 
 
 def _close_estimation(oa: dict) -> None:
@@ -450,38 +485,35 @@ def resolve(application: dict) -> bool:
     """
     Bring a stored application up to date with the wall clock.
 
-    Called on every read. It expires the motivation question into the
-    estimation one, and force-finishes a session past SESSION_SECONDS — so a
-    candidate who closes the tab at the buzzer still gets an honest result,
-    and one who leaves it open all afternoon does not get an afternoon's
-    worth of thinking time.
+    Called on every read. Each question has its own timer and nothing else:
+    an expired motivation question closes into the estimation one (whose
+    clock started at the motivation deadline, see _close_motivation), and an
+    expired estimation question finishes the sitting. Both can happen in one
+    call, so a candidate who closes the tab at the start still gets an
+    honest, finished result the next time anything reads it, and one who
+    leaves it open all afternoon does not get an afternoon's thinking time.
 
     Returns True if anything changed and the document needs writing back.
     """
     if application.get("status") != S_OA_ACTIVE:
         return False
     oa = application.get("oa") or {}
-
-    # The hard stop. Nothing below it can extend the sitting.
-    if _left(oa.get("started_at"), SESSION_SECONDS) <= 0:
-        _finish(application, "session_expired")
-        return True
+    changed = False
 
     if oa.get("section") == "motivation":
-        if _left(oa.get("started_at"), MOTIVATION_SECONDS) <= 0:
-            _close_motivation(oa)
-            return True
-        return False
+        if _left(oa.get("started_at"), MOTIVATION_SECONDS) > 0:
+            return False
+        _close_motivation(oa, expired=True)
+        changed = True
 
     if oa.get("section") == "estimation":
-        # Estimation is the last question — running out on it is the same as
-        # running out on the sitting as a whole.
+        # Estimation is the last question, so running out on it finishes the
+        # sitting as a whole.
         if _left(oa.get("estimation_started_at"), ESTIMATION_SECONDS) <= 0:
             _finish(application, "completed")
             return True
-        return False
 
-    return False
+    return changed
 
 
 async def _send_submission_confirmation(application: dict) -> None:
@@ -493,7 +525,7 @@ async def _send_submission_confirmation(application: dict) -> None:
     programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
-        subject=f"Alpha Fund — your {programme} application is in",
+        subject=f"Alpha Fund: your {programme} application is in",
         title="Application received",
         body_html=(
             f"<p>Hi {name},</p>"
@@ -514,12 +546,12 @@ async def _send_fast_track_confirmation(application: dict) -> None:
     programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
-        subject=f"Alpha Fund — your {programme} application is in",
+        subject=f"Alpha Fund: your {programme} application is in",
         title="Application received",
         body_html=(
             f"<p>Hi {name},</p>"
             f"<p>This confirms your CV for <strong>{programme}</strong> has been submitted. "
-            f"As a Fast-Track applicant there's no written assessment — the committee reviews "
+            f"As a Fast-Track applicant there's no written assessment. The committee reviews "
             f"your CV directly, and we will be in touch with a decision.</p>"
         ),
     )
@@ -562,8 +594,6 @@ def _oa_view(application: dict) -> Dict[str, Any]:
     oa = application["oa"]
     out: Dict[str, Any] = {
         "section": oa["section"],
-        "session_seconds_left": round(_left(oa.get("started_at"), SESSION_SECONDS), 1),
-        "session_seconds": SESSION_SECONDS,
     }
     if oa["section"] == "motivation":
         out["motivation"] = {
@@ -688,7 +718,7 @@ async def state(user: User = Depends(current_user)):
         if interview:
             out["interview"] = _interview_view(interview)
         if application["status"] == S_SHORTLISTED:
-            out["availability"] = application.get("availability") or []
+            out["availability"] = _availability_of(application)
             out["availability_locked"] = bool(interview and interview.get("status") == INTERVIEW_CONFIRMED)
         if application["status"] in DECIDED:
             # A decided application doesn't disappear — the candidate keeps
@@ -1150,6 +1180,7 @@ async def submit_availability(req: AvailabilitySubmit, user: User = Depends(curr
         raise HTTPException(400, "Your interview is already confirmed — there's nothing left to set")
 
     application["availability"] = _valid_availability_slots(req.slots)
+    application["availability_slot_minutes"] = AVAILABILITY_SLOT_MINUTES
     application["availability_updated_at"] = _now()
     await _save(uid, application)
     return {"ok": True, "availability": application["availability"]}
@@ -1255,7 +1286,7 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "is_my_pending_interview": is_my_pending_interview,
         "shortlisted_at": _as_utc(application.get("shortlisted_at")),
         "shortlisted_by": application.get("shortlisted_by") or "",
-        "availability": application.get("availability") or [],
+        "availability": _availability_of(application),
         "availability_updated_at": _as_utc(application.get("availability_updated_at")),
         "previous_application": (
             {**application["previous_application"],
@@ -1564,7 +1595,7 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     if not moved:
         candidate_email = application.get("oxford_email") or application.get("email") or ""
         created = await gcal.create_meet_event(
-            summary=f"Alpha Fund interview — {application.get('full_name') or application.get('username')}",
+            summary=f"Alpha Fund interview with {application.get('full_name') or application.get('username')}",
             description=f"{application.get('programme') or 'Alpha Fund'} interview.",
             start=when, end=end,
             attendee_emails=[e for e in (candidate_email, interviewer["email"]) if e],
@@ -1612,14 +1643,14 @@ async def _cancel_interview_event(application: dict) -> None:
 # a status with no gap to close (mid-assessment, already decided).
 _REMINDER_COPY: Dict[str, Dict[str, str]] = {
     S_CV: {
-        "subject": "Alpha Fund — finish the CV step of your application",
-        "body": ("<p>You started an application to <strong>{programme}</strong> — sign in to "
+        "subject": "Alpha Fund: finish the CV step of your application",
+        "body": ("<p>You started an application to <strong>{programme}</strong>. Sign in to "
                  "finish the CV step of your application (upload or confirm your CV and add "
                  "your details), and you can carry straight on from there.</p>"),
         "cta": "Continue your application",
     },
     S_OA_READY: {
-        "subject": "Alpha Fund — your assessment is ready when you are",
+        "subject": "Alpha Fund: your assessment is ready when you are",
         "body": ("<p>Your CV is in for <strong>{programme}</strong>, and your {minutes}-minute "
                  "assessment is ready. There's no deadline on starting it, but once you do "
                  "it runs straight through in one sitting, so pick a quiet {minutes} minutes.</p>"),
@@ -1672,7 +1703,7 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
 # note is deliberately open — an interview is still to come.
 _DECISION_COPY: Dict[str, Dict[str, str]] = {
     S_SHORTLISTED: {
-        "subject": "Alpha Fund — you've been shortlisted for interview",
+        "subject": "Alpha Fund: you've been shortlisted for interview",
         "title": "Shortlisted for interview",
         "body": ("<p>Your <strong>{programme}</strong> application has been shortlisted.</p>"
                  "<p>Please enter your availability on the portal so the committee can schedule "
@@ -1681,13 +1712,13 @@ _DECISION_COPY: Dict[str, Dict[str, str]] = {
         "cta_url": "/apply",
     },
     S_ACCEPTED: {
-        "subject": "Alpha Fund — you're in",
+        "subject": "Alpha Fund: you're in",
         "title": "Application accepted",
-        "body": ("<p>Congratulations — you've been accepted onto <strong>{programme}</strong>. "
+        "body": ("<p>Congratulations! You've been accepted onto <strong>{programme}</strong>. "
                  "Welcome to Alpha Fund.</p>"),
     },
     S_REJECTED: {
-        "subject": "Alpha Fund — an update on your application",
+        "subject": "Alpha Fund: an update on your application",
         "title": "Application decision",
         "body": ("<p>Thank you for applying to <strong>{programme}</strong>. On this occasion "
                  "we won't be taking your application further, but we'd encourage you to keep "
@@ -1758,12 +1789,12 @@ def _build_interview_ics(application: dict, interview: dict) -> bytes:
         description += f"\nJoin with Google Meet: {meet_link}"
     return mailer.build_ics_invite(
         uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
-        summary=f"Alpha Fund interview — {candidate_name}",
+        summary=f"Alpha Fund interview with {candidate_name}",
         description=description,
         start=when, end=end,
         organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.sender() or "",
         attendee_name=candidate_name, attendee_email=candidate_to,
-        location=meet_link or "Online — details to follow",
+        location=meet_link or "Online, details to follow",
     )
 
 
@@ -1806,7 +1837,7 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
         f"directly to find another.</p>"
     )
     await mailer.send_email(
-        to=to, subject=f"Alpha Fund — interview proposed: {_fmt_when(interview['when'])}",
+        to=to, subject=f"Alpha Fund interview proposed for {_fmt_when(interview['when'])}",
         title="Interview time proposed", body_html=body,
         cta_label="Review and confirm", cta_url=f"{BASE_URL}/apply",
         ics=_build_interview_ics(application, interview),
@@ -1844,7 +1875,7 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
         f" directly.</p>"
     )
     await mailer.send_email(
-        to=to, cc=cc, subject=f"Alpha Fund — interview confirmed: {_fmt_when(when)}",
+        to=to, cc=cc, subject=f"Alpha Fund interview confirmed for {_fmt_when(when)}",
         title="Interview confirmed", body_html=body,
         ics=_build_interview_ics(application, interview),
     )
@@ -1867,12 +1898,12 @@ async def _send_interview_declined_email(application: dict, interview: dict) -> 
         f"<p><strong>{html.escape(candidate_name)}</strong> can't make the proposed interview time "
         f"({_fmt_when(interview['when'])}).</p>"
         f"{note_block}"
-        f"<p>Reach out directly to arrange another time — their email is "
+        f"<p>Please reach out directly to arrange another time. Their email is "
         f"<a href=\"mailto:{e_email}\">{e_email}</a>.</p>"
     )
     await mailer.send_email(
         to=interviewer_email,
-        subject=f"Alpha Fund — {candidate_name} needs a different interview time",
+        subject=f"Alpha Fund: {candidate_name} needs a different interview time",
         title="Interview time declined", body_html=body,
     )
 

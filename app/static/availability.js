@@ -1,7 +1,7 @@
 /* Shared grid math for the interview-availability picker.
  *
  * The window is fixed to this admissions cycle's dates and fixed to London
- * hours (7am-7pm) — not the viewer's own browser timezone — so a candidate
+ * half hours (7am to 7pm), not the viewer's own browser timezone, so a candidate
  * and every analyst looking at the admin page always agree on exactly the
  * same set of slots, labelled the same way, regardless of where either of
  * them happens to be. Keep these two constants in step with
@@ -13,8 +13,9 @@ window.AlphaAvailability = (function () {
   const TZ = "Europe/London";
   const WINDOW_START = { y: 2026, m: 10, d: 1 };    // October 1, 2026
   const WINDOW_END = { y: 2026, m: 10, d: 23 };      // October 23, 2026 (inclusive)
-  const START_HOUR = 7;    // London wall-clock, inclusive
-  const END_HOUR = 18;     // London wall-clock, inclusive — last slot is 18:00-19:00 (7pm)
+  const START_HOUR = 7;    // London wall-clock, first slot 07:00
+  const END_HOUR = 18;     // London wall-clock, last slot 18:30 (ends 7pm)
+  const SLOT_MINUTES = 30; // one slot is one interview; keep in step with AVAILABILITY_SLOT_MINUTES
 
   function cmp(a, b) {
     if (a.y !== b.y) return a.y - b.y;
@@ -54,8 +55,8 @@ window.AlphaAvailability = (function () {
 
   // A London wall-clock moment (e.g. "9am on 5 October 2026") to its
   // absolute UTC epoch millisecond.
-  function londonWallClockToUtcMs(p, hour) {
-    const guess = Date.UTC(p.y, p.m - 1, p.d, hour, 0, 0);
+  function londonWallClockToUtcMs(p, hour, minute) {
+    const guess = Date.UTC(p.y, p.m - 1, p.d, hour, minute || 0, 0);
     return guess - londonOffsetMsAt(guess);
   }
 
@@ -78,8 +79,10 @@ window.AlphaAvailability = (function () {
     while (cmp(cur, WINDOW_END) <= 0) {
       const slots = [];
       for (let h = START_HOUR; h <= END_HOUR; h++) {
-        const ts = londonWallClockToUtcMs(cur, h);
-        slots.push({ ts, key: new Date(ts).toISOString(), label: hourLabel(ts) });
+        for (let m = 0; m < 60; m += SLOT_MINUTES) {
+          const ts = londonWallClockToUtcMs(cur, h, m);
+          slots.push({ ts, key: new Date(ts).toISOString(), label: hourLabel(ts) });
+        }
       }
       days.push({ label: dayLabel(cur), slots });
       cur = addDays(cur, 1);
