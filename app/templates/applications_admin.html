@@ -961,7 +961,6 @@
     ];
     const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
     const INTERVIEW_TIMERS = {{ interview_timers | tojson }};
-    const HARD_MIN_EASY = {{ hard_question_min_easy }};
     const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1095,24 +1094,16 @@
       renderInterview(box);
     }
 
-    // The rule the server also applies: below HARD_MIN_EASY on the easy
-    // question, the hard question isn't reached (0). A score the rule filled
-    // in is cleared again once it stops applying (the easy score is raised),
-    // so it gets scored by hand rather than silently keeping the 0.
-    function applyInterviewRules(rb, wasLocked = {}) {
-      const out = { ...rb };
-      const locked = {};
-      if (out.easy !== undefined && out.easy < HARD_MIN_EASY) {
-        out.hard = 0;
-        locked.hard = `Automatic: the easy question scored below ${HARD_MIN_EASY}, so the hard question isn't reached.`;
-      }
-      for (const key of Object.keys(wasLocked)) if (!locked[key]) delete out[key];
-      return { rb: out, locked };
+    // No criterion is filled in automatically any more (every candidate
+    // attempts both questions), so there's nothing to lock. Kept as the one
+    // place a future automatic rule would go.
+    function applyInterviewRules(rb) {
+      return { rb: { ...rb }, locked: {} };
     }
 
     const signed = (n) => n > 0 ? `+${n}` : n < 0 ? `\u2212${-n}` : "0";
 
-    // A criterion scored anywhere on a range (CV project, +2 to -8): one
+    // A criterion scored anywhere on a range (CV project, 0 to -5): one
     // button per point, with the labelled anchors listed underneath.
     function scaleHtml(c) {
       return `
@@ -1183,7 +1174,7 @@
 
     // ── Interview timer ──
     // Three parts: the CV discussion, then the easy and hard questions, each
-    // with its own schedule of what's due when (hints, wrap-up). Runs on this
+    // with its own schedule of what's due when (one minute left, stop). Runs on this
     // page only (nothing saved), and keeps running if you switch tab or close
     // the scoring view, so an accidental close mid-question doesn't lose it.
     const timer = { uid: null, part: "cv", start: 0, id: null };
@@ -1209,7 +1200,7 @@
           <p class="sc-part" data-part-label></p>
           <ol class="sc-cues" data-cues></ol>
           <p class="sc-hint">Start each question once it has been read out and any clarifying questions
-            answered. A hint is due only if they haven't reached its checkpoint, and never earlier.</p>
+            answered. No hints; stop at 10 minutes whether or not they've finished.</p>
         </div>`;
     }
 

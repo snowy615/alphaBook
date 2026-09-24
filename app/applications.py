@@ -241,81 +241,61 @@ CV_RUBRIC: List[Dict[str, Any]] = [
 CV_RESPONSE_KEYS = {"motivation", "fermi"}
 
 
-# The interview, in three timed parts (INTERVIEW_TIMERS): the CV
-# discussion, then an easy and a hard question from the question bank, each
-# with two predefined hints on a fixed schedule. Problem solving is scored
-# on how far the candidate got and how much help it took, so there's no
-# separate adaptability score: using a hint well is part of the question's
-# own score. Out of 15, adjusted by the CV-project criterion (+2 to -8).
-# One rule is applied automatically (see _checked_interview_rubric): the
-# hard question is only reached with HARD_QUESTION_MIN_EASY or more on the
-# easy one, and scores 0 otherwise.
-HARD_QUESTION_MIN_EASY = 4
-
-
-def _problem_solving(top: int) -> List[Dict[str, Any]]:
-    """The shared levels for both questions, top score down. The hard
-    question is worth one more at every level, and has one extra level at
-    the bottom for not being reached at all."""
-    levels = [
-        "No hint, with clear reasoning.",
-        "Needed Hint 1, and used it well: built on it to get there.",
-        "Needed Hint 1 but couldn't make use of it.",
-        "Needed both hints.",
-        "Some progress, but didn't get there.",
-        "No meaningful progress.",
+# The interview (the standard rubric): likability, communication, and two
+# questions from the question bank, easy then hard, 10 minutes each. Every
+# candidate attempts both, and there are no hints (clarifying questions
+# only), so each question is scored purely on how far the candidate got
+# within its time. Out of 15 (3 + 2 + 5 + 5), less a CV-project penalty of
+# 0 to -5.
+def _problem_solving() -> List[Dict[str, Any]]:
+    """The levels both questions share, lowest first."""
+    return [
+        {"points": 0, "label": "Little or no meaningful progress (e.g. no relevant ideas even after some time)."},
+        {"points": 1, "label": "Some progress or identifies a relevant idea, but can't develop it far."},
+        {"points": 2, "label": "Develops a sensible approach and makes moderate progress, but still significant gaps."},
+        {"points": 3, "label": "Makes strong progress and gets close to a complete solution; only minor errors or gaps remain."},
+        {"points": 4, "label": "Almost complete solution; only very small mistakes or missing details."},
+        {"points": 5, "label": "Fully solves the problem independently within 10 minutes, with correct reasoning."},
     ]
-    # Listed lowest first, like every other criterion.
-    return [{"points": top - i, "label": label} for i, label in enumerate(levels)][::-1]
 
 
 INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
     {"key": "likability", "label": "Likability / easy to work with", "options": [
-        {"points": 0, "label": "Poor attitude: dismissive, arrogant, unreceptive, or otherwise difficult to work with."},
-        {"points": 1, "label": "Neutral, normal interaction: professional and reasonably easy to work with."},
-        {"points": 2, "label": "Particularly pleasant, collaborative and receptive; someone you'd actively enjoy working with."},
+        {"points": 0, "label": "Poor attitude: dismissive, arrogant, unprofessional, unreceptive, or otherwise difficult to work with."},
+        {"points": 1, "label": "Some concerns about attitude or collaboration (e.g. somewhat closed-off, limited engagement), but nothing severe."},
+        {"points": 2, "label": "Normal, positive interaction: professional, respectful and easy to work with. This should be the typical score."},
+        {"points": 3, "label": "Exceptionally likable, collaborative and receptive; someone you'd particularly want on the team."},
     ]},
     {"key": "communication", "label": "Communication", "options": [
-        {"points": 0, "label": "Has significant difficulty articulating thoughts; hard to follow even with prompting."},
-        {"points": 1, "label": "Communicates reasoning adequately; understandable, if at times unclear or unstructured."},
-        {"points": 2, "label": "Exceptionally clear, well structured and concise; their thought process is easy to follow."},
+        {"points": 0, "label": "Has significant difficulty articulating thoughts; explanations are unclear or hard to follow."},
+        {"points": 1, "label": "Communicates reasoning adequately; generally understandable, but may be somewhat unstructured."},
+        {"points": 2, "label": "Exceptionally clear, concise and well structured; makes their thought process easy to follow."},
     ]},
-    {"key": "easy", "label": "Problem solving: easy question", "options": _problem_solving(5)},
-    {"key": "hard", "label": "Problem solving: hard question", "options": [
-        {"points": 0, "label": f"Not reached (the easy question scored below {HARD_QUESTION_MIN_EASY})."},
-        *_problem_solving(6),
-    ]},
-    # Any whole number from +2 to -8, at the interviewer's judgement; the
-    # labelled points are anchors, and the unlabelled ones sit between them.
-    {"key": "cv_project", "label": "CV project discussion (+2 to −8)", "scale": True, "options": [
-        {"points": 2, "label": "Really impressive experience, and they can back it up in detail."},
-        {"points": 1, "label": ""},
-        {"points": 0, "label": "Explains the project(s) on their CV clearly: motivation, their role, methods, results, what they learned."},
-        {"points": -1, "label": ""},
-        {"points": -2, "label": "Can't explain them well: unclear on their own contribution, struggles with methods or results, "
-                               "or gives vague answers."},
-        *({"points": p, "label": ""} for p in range(-3, -8, -1)),
-        {"points": -8, "label": "Overstated their experience and doesn't understand what they claim to have done."},
+    {"key": "easy", "label": "Problem solving: easy question (10 minutes)", "options": _problem_solving()},
+    {"key": "hard", "label": "Problem solving: hard question (10 minutes)", "options": _problem_solving()},
+    # A penalty only, any whole number from 0 to -5 at the interviewer's
+    # judgement; the labelled points are anchors, the others sit between.
+    {"key": "cv_project", "label": "CV project discussion (penalty, 0 to −5)", "scale": True, "options": [
+        {"points": 0, "label": "Clearly understands and can explain the project(s) listed on their CV. Minor forgotten details are fine."},
+        {"points": -1, "label": "Some gaps or minor inconsistencies, but generally understands what they did and their contribution."},
+        {"points": -2, "label": ""},
+        {"points": -3, "label": "Materially overstated their contribution, or claimed substantial work they can't adequately explain."},
+        {"points": -4, "label": ""},
+        {"points": -5, "label": "Clear evidence that a significant claim about the project was fabricated or falsely attributed to themselves."},
     ]},
 ]
-# The interview is out of 15. The CV-project criterion adjusts that: up to
-# 2 on top for outstanding, well-backed-up experience, or as much as 8 off
-# for overstated experience, so a total can be over 15 or below 0.
+# The interview is out of 15; the CV-project penalty can take up to 5 off.
 INTERVIEW_MAX = 15
 
 # The interview's three timed parts, in order, and what's due when. Each
 # question is timed from when it has been read out and any clarifying
-# questions answered, the same for every candidate: a hint is given at its
-# time only if the candidate hasn't yet reached that hint's checkpoint (each
-# question in the bank lists Hint 1, Hint 2 and the checkpoint each one gets
-# you to), and never earlier, even if asked. The scoring view's timer and
-# the interview guide both read this.
+# questions answered, and stops at its time whether or not it's finished.
+# The scoring view's timer and the interview guide both read this.
 def _question_cues(end: str) -> List[Dict[str, Any]]:
     return [
-        {"at": 0, "label": "No hints", "detail": "clarifying questions only"},
-        {"at": 3 * 60, "label": "Hint 1", "detail": "if they haven't reached Checkpoint 1"},
-        {"at": 6 * 60, "label": "Hint 2", "detail": "if they haven't reached Checkpoint 2"},
-        {"at": 10 * 60, "label": "Wrap up", "detail": end},
+        {"at": 0, "label": "Start", "detail": "clarifying questions only, no hints"},
+        {"at": 9 * 60, "label": "One minute left", "detail": "they should be pulling their answer together"},
+        {"at": 10 * 60, "label": "Stop", "detail": end},
     ]
 
 
@@ -325,10 +305,9 @@ INTERVIEW_TIMERS: List[Dict[str, Any]] = [
         {"at": 8 * 60, "label": "Time", "detail": "move on to the easy question"},
     ]},
     {"key": "easy", "button": "Start easy", "label": "Easy question", "seconds": 10 * 60,
-     "cues": _question_cues(f"move on to the hard question only if the easy one scores "
-                            f"{HARD_QUESTION_MIN_EASY} or more")},
+     "cues": _question_cues("move on to the hard question, whatever happened on this one")},
     {"key": "hard", "button": "Start hard", "label": "Hard question", "seconds": 10 * 60,
-     "cues": _question_cues("ask them to summarise where they've got to")},
+     "cues": _question_cues("the interview's questions are done")},
 ]
 
 
@@ -1601,7 +1580,6 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
         "interview_timers": INTERVIEW_TIMERS,
-        "hard_question_min_easy": HARD_QUESTION_MIN_EASY,
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
@@ -1621,7 +1599,6 @@ async def interview_guide(request: Request, reviewer: User = Depends(require_rev
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
         "interview_timers": INTERVIEW_TIMERS,
-        "hard_question_min_easy": HARD_QUESTION_MIN_EASY,
     })
 
 
@@ -1774,11 +1751,8 @@ def _checked_cv_rubric(raw: Dict[str, Optional[int]], fast_tracked: bool) -> Dic
 
 
 def _checked_interview_rubric(raw: Dict[str, Optional[int]]) -> Dict[str, int]:
-    """Like _checked_cv_rubric, then the automatic rule: the hard question
-    is only reached with HARD_QUESTION_MIN_EASY or more on the easy one, so
-    a lower easy score makes the hard score 0. Applied here rather than
-    trusted from the page, so every reviewer's score follows it whatever
-    was clicked."""
+    """Like _checked_cv_rubric: the criteria scored so far, each with one of
+    its own options' points; a null value un-scores that criterion."""
     allowed = {c["key"]: {o["points"] for o in c["options"]} for c in INTERVIEW_RUBRIC}
     out: Dict[str, int] = {}
     for key, points in raw.items():
@@ -1789,8 +1763,6 @@ def _checked_interview_rubric(raw: Dict[str, Optional[int]]) -> Dict[str, int]:
         if points not in allowed[key]:
             raise HTTPException(400, f"That isn't one of the options for {key}")
         out[key] = int(points)
-    if out.get("easy") is not None and out["easy"] < HARD_QUESTION_MIN_EASY:
-        out["hard"] = 0
     return out
 
 

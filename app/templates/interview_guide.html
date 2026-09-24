@@ -59,9 +59,9 @@
 
   <div class="container" style="max-width: 980px;">
     <div class="msp-hero">
-      <h2>Interview rubric ({{ interview_max }} points)</h2>
-      <p>Assessing problem solving, learning mindset, and fit for the team. A CV discussion, then two
-        questions from the question bank, easy then hard.</p>
+      <h2>Interview rubric ({{ interview_max }} points + CV penalty)</h2>
+      <p>Assessing problem-solving ability and overall fit for the team. A CV discussion, then two
+        questions from the question bank, easy then hard, 10 minutes each.</p>
     </div>
 
     <div class="ig-section">
@@ -77,21 +77,21 @@
             {% if loop.first %}<td class="ig-name" rowspan="{{ rows_n }}">{{ c.label }}</td>{% endif %}
             <td class="ig-pts{% if o.points < 0 %} ig-neg{% endif %}">{{ "+" if o.points > 0 and c.scale }}{{ o.points | string | replace("-", "−") }}</td>
             <td>{{ o.label }}</td>
-            {% if loop.first %}<td class="ig-max" rowspan="{{ rows_n }}">{% if c.scale %}+{% endif %}{{ c.options | map(attribute="points") | max }}</td>{% endif %}
+            {% if loop.first %}<td class="ig-max" rowspan="{{ rows_n }}">{% if c.scale %}0<br><span class="msp-muted" style="font-size:11px;font-weight:400;">penalty only</span>{% else %}{{ c.options | map(attribute="points") | max }}{% endif %}</td>{% endif %}
           </tr>
           {% endfor %}
           {% if c.scale %}
-          <tr><td class="ig-pts">…</td><td class="msp-muted">Or any whole number in between, at your judgement.</td></tr>
+          <tr><td class="ig-pts">…</td><td class="msp-muted">−2 and −4 sit between these, at your judgement.</td></tr>
           {% endif %}
         </tbody>
         {% endfor %}
-        <tbody><tr class="ig-total"><td colspan="3">Total: 15, plus or minus the CV-project adjustment (so it can be above 15 or below 0)</td>
+        <tbody><tr class="ig-total"><td colspan="3">Total: up to 15 (3 + 2 + 5 + 5), less the CV-project penalty of 0 to 5</td>
           <td class="ig-max">{{ interview_max }}</td></tr></tbody>
       </table>
     </div>
 
     <div class="ig-section">
-      <p class="ig-section-title">Timing and hints</p>
+      <p class="ig-section-title">Timing</p>
       {% for t in interview_timers %}
       <p class="ig-part">{{ t.label }} <span class="msp-muted">({{ t.seconds // 60 }} minutes)</span></p>
       <div class="ig-schedule">
@@ -100,38 +100,26 @@
         {% endfor %}
       </div>
       {% endfor %}
-      <ul class="ig-list">
-        <li><strong>Start the clock</strong> for each question once it has been read out and any clarifying
-          questions answered. The Interview tab of the scoring view has a timer (Start CV, Start easy, Start hard)
-          that calls out each step.</li>
-        <li><strong>Checkpoints decide whether a hint is needed.</strong> Each question in the bank lists Hint 1,
-          Hint 2, and the checkpoint each hint gets the candidate to. At 3:00, give Hint 1 only if they haven't
-          reached Checkpoint 1; at 6:00, give Hint 2 only if they haven't reached Checkpoint 2. That's the whole
-          test: not how confident they seem, or whether they ask.</li>
-        <li><strong>No early hints.</strong> If a candidate asks before a hint is due, tell them the next one comes at
-          its time if they still need it. Give each hint at the next natural pause after its time, within about
-          30 seconds, rather than cutting them off mid-sentence.</li>
-        <li><strong>Only the official wording.</strong> Read Hint 1 and Hint 2 as written in the question bank. Don't
-          give extra hints, rephrase them into bigger ones, or lead with questions that amount to a hint.</li>
-        <li><strong>Clarification isn't a hint.</strong> Answering a question about wording or assumptions is allowed
-          and doesn't affect the score.</li>
-      </ul>
     </div>
 
     <div class="ig-section">
-      <p class="ig-section-title">Scoring rules</p>
+      <p class="ig-section-title">Key rules for interviewers</p>
       <ul class="ig-list">
-        <li><strong>Hard-question gate.</strong> Move on to the hard question only if the easy question scored
-          {{ hard_question_min_easy }} or more (solved with no hint, or with Hint 1 built on well). Below that, the
-          hard question scores 0 automatically.</li>
-        <li><strong>How they use a hint is part of the question's score.</strong> Needing Hint 1 and building on it
-          scores above needing Hint 1 and not being able to use it, which scores above needing both hints.</li>
-        <li><strong>Score what they achieved in the time with the hints due,</strong> not whether they eventually reach
-          the answer with extra guidance.</li>
-        <li><strong>Likability and communication:</strong> most candidates should get 1. Keep 2 for genuinely stand-out
-          cases.</li>
-        <li><strong>Same structure and timing for every candidate,</strong> as closely as possible. Use the descriptions
-          as guidelines alongside your overall impression of the interview.</li>
+        <li><strong>Two questions, 10 minutes each.</strong> Give the candidate 10 minutes for the easy question and
+          10 minutes for the hard one, timed from when each has been read out and any clarifying questions answered.
+          At 10 minutes, stop the question and move on. The Interview tab of the scoring view has a timer (Start CV,
+          Start easy, Start hard) that calls out each step.</li>
+        <li><strong>Everyone attempts both questions,</strong> whatever happened on the easy one.</li>
+        <li><strong>Use the score criteria.</strong> Score on the candidate's progress and reasoning within the time
+          limit. Don't give extra time to let them finish.</li>
+        <li><strong>Clarification is allowed.</strong> Answering questions about wording or assumptions is fine and
+          doesn't affect the score. Don't give hints beyond clarification.</li>
+        <li><strong>Likability:</strong> 2 should be the typical score. Keep 3 for someone you'd particularly want on
+          the team.</li>
+        <li><strong>Be consistent.</strong> Follow the same structure, timing and level of guidance for every
+          candidate.</li>
+        <li><strong>Overall impression.</strong> Use the descriptions as guidelines, alongside your overall impression
+          of the interview.</li>
       </ul>
     </div>
   </div>
