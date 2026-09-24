@@ -169,7 +169,7 @@
         <input type="radio" name="programme" value="${esc(p)}" ${isDisabled ? "disabled" : ""}>
         <strong>${esc(p)}</strong>
         <span class="apl-blurb">${esc(PROGRAMME_BLURB[p] || "")}</span>
-        ${isDisabled ? '<span class="apl-soon">Not available right now — will become available next term.</span>' : ""}
+        ${isDisabled ? '<span class="apl-soon">Applications use a separate form, not currently open on this platform.</span>' : ""}
       </label>`;
     }).join("");
 
@@ -1278,7 +1278,8 @@
         <strong>Quant Bootcamp</strong> — a term of sessions on probability, market
         making and systematic trading — and a <strong>Quant Analyst</strong> track, where
         you run your own ideas and go into the CV book firms read. Both are open to
-        current University of Oxford students; a Fundamental track opens next term.
+        current University of Oxford students. Fundamental applications use a separate
+        form, not currently open on this platform.
       </p>
       <p class="msp-muted">
         Applying takes an up-to-date CV and a short written assessment — no prior

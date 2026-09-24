@@ -760,8 +760,8 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     if not mb.is_programme_open(req.programme):
         raise HTTPException(
             400,
-            f"{req.programme} isn't taking applications right now — it will become "
-            "available next term.",
+            f"{req.programme} applications use a separate form, which isn't currently "
+            "open on this platform.",
         )
 
     # General public applicants aren't Alpha Fund members yet, so nothing else
