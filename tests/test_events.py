@@ -478,3 +478,43 @@ class TestLinkedToTheApplication:
         assert "u1" in run(outreach.fast_track_holders())
         store["event_signups"].pop(f"{OUT}_u1")
         assert "u1" not in run(outreach.fast_track_holders())
+
+
+class TestFastTrackMidApplication:
+    """An application on the ordinary route can't take a Fast-Track place
+    from the events page once it's past the CV step."""
+
+    def test_an_applicant_at_oa_ready_cannot_switch_to_fast_track(self, store):
+        _seed_outreach(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "oa_ready", "event_ticket": "general"}}
+        run(outreach.set_ticket("u1", "jo", "general"))
+        holders_before = run(outreach.fast_track_holders())
+
+        with pytest.raises(HTTPException) as exc:
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+
+        assert exc.value.status_code == 400
+        assert "already chosen your ticket" in exc.value.detail
+        assert run(outreach.fast_track_holders()) == holders_before
+        assert store["event_signups"][f"{OUT}_u1"]["ticket"] == "general"
+
+    def test_moving_between_general_and_not_attending_is_still_fine(self, store):
+        _seed_outreach(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "submitted", "event_ticket": "general"}}
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="none"), JO))
+        assert f"{OUT}_u1" not in store["event_signups"]
+
+    def test_a_decided_applicant_can_sign_up_again(self, store):
+        _seed_outreach(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "rejected", "event_ticket": "general"}}
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert store["event_signups"][f"{OUT}_u1"]["ticket"] == "fast_track"
+
+    def test_a_reapplicant_who_already_used_fast_track_cannot_take_it_here(self, store):
+        _seed_outreach(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "cv",
+                                        "previous_application": {"event_ticket": "fast_track"}}}
+        with pytest.raises(HTTPException) as exc:
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        assert "only be used once" in exc.value.detail

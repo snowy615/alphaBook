@@ -110,9 +110,39 @@ async def ensure_event() -> None:
     })
 
 
+def _as_utc(value: Any) -> Optional[dt.datetime]:
+    """Firestore hands back an aware datetime; tests and older docs may hold
+    a naive one or an ISO string. Anything unreadable is None."""
+    if isinstance(value, str):
+        try:
+            value = dt.datetime.fromisoformat(value)
+        except ValueError:
+            return None
+    if not isinstance(value, dt.datetime):
+        return None
+    return value.replace(tzinfo=dt.timezone.utc) if value.tzinfo is None else value
+
+
+def _has_ended(data: Dict[str, Any]) -> bool:
+    ends = _as_utc(data.get("ends_at"))
+    return bool(ends and ends <= _now())
+
+
+async def event_has_ended() -> bool:
+    """True once the event's ``ends_at`` has passed. Both tickets are only
+    worth anything at the event itself — Fast-Track in particular is the CV
+    clinic *on the night* — so once it's over, "not attending" is the only
+    honest choice left, on the application just as on the events page. An
+    event that doesn't exist (or has no end time) never counts as ended."""
+    doc = await db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID).get()
+    return doc.exists and _has_ended(doc.to_dict() or {})
+
+
 async def event_summary() -> Optional[Dict[str, Any]]:
     """Title and time of the event, for the application to show alongside the
-    choice. None if it doesn't exist (the application then just omits it)."""
+    choice. None if it doesn't exist (the application then just omits it).
+    ``is_past`` lets the choice screen stop offering tickets for an event
+    that has already happened."""
     doc = await db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID).get()
     if not doc.exists:
         return None
@@ -122,6 +152,7 @@ async def event_summary() -> Optional[Dict[str, Any]]:
         "title": data.get("title", "Quant Outreach"),
         "when_label": when_label(starts, ends) if starts and ends else "",
         "location": data.get("location", ""),
+        "is_past": _has_ended(data),
     }
 
 

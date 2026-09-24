@@ -132,14 +132,23 @@
       </p>`);
   }
 
-  // Quant Analyst is the ceiling — nothing left to apply for. The apply page
-  // retires itself and points straight at the review page instead of ever
-  // showing a stale "accepted" screen.
-  function renderAnalyst() {
-    $("#app").innerHTML = panel("You're a Quant Analyst", `
+  // Analyst (either track) is the ceiling — nothing left to apply for. The
+  // apply page retires itself and points straight at the review page instead
+  // of ever showing a stale "accepted" screen. An admin lands here too, so the
+  // heading says what they actually are rather than assuming Quant Analyst.
+  function renderAnalyst(state) {
+    const membership = (state && state.membership) || "";
+    let title = "You're already an Analyst";
+    let why = "you're already at the top of the programme";
+    if (membership === "Quant Analyst") title = "You're a Quant Analyst";
+    else if (membership !== "Fundamental Analyst" && state && state.is_admin) {
+      title = "You're an admin";
+      why = "admins review applications rather than submit them";
+    }
+    $("#app").innerHTML = panel(title, `
       <p class="msp-muted" style="margin-top:0;">
-        There's nothing left here to apply for — you're already at the top of
-        the programme. Help review this round's applicants instead.
+        There's nothing left here to apply for — ${why}. Help review this
+        round's applicants instead.
       </p>
       <a class="btn primary" href="/apply/admin">Open the review page →</a>`);
   }
@@ -272,25 +281,48 @@
     // The choice *is* the sign-up for the Quant Outreach event — the same one
     // as on the events page. If they've already signed up there, it arrives
     // here pre-selected and they can just continue.
-    const existing = state.event_signup || null;
-    pickedTicket = existing;
     const ev = state.event || {};
+    // Once the event has happened there's nothing to attend, and the server
+    // refuses both tickets (Fast-Track especially mustn't skip the assessment
+    // any more) — so skip the step entirely: record "not attending" and move
+    // straight on to the CV.
+    if (ev.is_past) {
+      $("#app").innerHTML = panel(esc(ev.title || "Quant Outreach"),
+        `<p class="msp-muted" style="margin-top:0;">The outreach event has already taken place — continuing to your CV…</p>`);
+      api("/apply/event-ticket", { ticket: "none" })
+        .then(() => refresh())
+        .catch((err) => flash(err.message, true));
+      return;
+    }
+    // Fast-Track is once only: a reapplication after a fast-tracked one (or
+    // an application an admin sent back through the assessment) can't use it.
+    const fastUsed = !!state.fast_track_used;
+    let existing = state.event_signup || null;
+    if (fastUsed && existing === "fast_track") existing = null;   // nothing valid to pre-select
+    pickedTicket = existing;
     const eventName = ev.title || "Quant Outreach";
     const capacity = state.fast_track_capacity || 50;
     const fastFull = !!state.fast_track_full && existing !== "fast_track";
-    const fastBlurb = fastFull
-      ? "Limit reached — no longer available."
+    const fastDisabled = fastFull || fastUsed;
+    const fastNote = fastUsed
+      ? "You've already used Fast-Track on an earlier application — it can only be used once."
+      : "Limit reached — no longer available.";
+    const placesLine = existing === "fast_track"
+      ? "Your place is held."
+      : `${state.fast_track_remaining} of ${capacity} places left.`;
+    const fastBlurb = fastDisabled
+      ? fastNote
       : `Have your CV reviewed in person by an analyst at the event, and skip the written ` +
         `assessment entirely — you'll go straight into the same CV-scoring and interview process ` +
-        `as everyone else. ${state.fast_track_remaining} of ${capacity} places left.`;
+        `as everyone else. ${placesLine}`;
     const TICKET_NAME = { fast_track: "CV clinic + Fast-Track", general: "General attendance" };
 
-    const card = (key, title, blurb, disabled) => `
+    const card = (key, title, blurb, disabled, note) => `
       <label class="apl-choice${disabled ? " is-disabled" : ""}${pickedTicket === key ? " is-picked" : ""}" data-ticket="${key}">
         <input type="radio" name="eventTicket" value="${key}" ${disabled ? "disabled" : ""} ${pickedTicket === key ? "checked" : ""}>
         <strong>${title}</strong>
         <span class="apl-blurb">${esc(blurb)}</span>
-        ${disabled ? '<span class="apl-soon">Limit reached — no longer available.</span>' : ""}
+        ${disabled && note ? `<span class="apl-soon">${esc(note)}</span>` : ""}
       </label>`;
 
     $("#app").innerHTML = panel(esc(eventName), `
@@ -302,7 +334,8 @@
       ${existing ? `<p class="apl-hint" style="margin:0 0 12px;">
         You're already signed up for ${esc(eventName)} — <strong>${esc(TICKET_NAME[existing] || existing)}</strong>.
         Continue with that, or change it below (it changes your event sign-up too).</p>` : ""}
-      ${card("fast_track", "Sign up for the CV clinic + Fast-Track", fastBlurb, fastFull)}
+      ${card("fast_track", "Sign up for the CV clinic + Fast-Track", fastBlurb, fastDisabled,
+        fastUsed ? "Already used" : "Limit reached — no longer available.")}
       ${card("general", "Attend — general (no Fast-Track)",
         "Come to the presentation and meet the team, then apply online in the usual way, " +
         "including the written assessment.", false)}
@@ -808,8 +841,8 @@
            directly, and you'll hear a decision from there.</p>`;
     } else {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
-           assessment has been submitted. The committee reads your CV, your written answer
-           and your score together — nothing else is needed from you.</p>
+           assessment has been submitted. The committee reads your CV and your written answers
+           together — nothing else is needed from you.</p>
          <p class="msp-muted">You will not see your own score. That is deliberate: it keeps
            the questions usable for the people applying after you.</p>`;
     }
@@ -1001,7 +1034,9 @@
       draftTimer = null;
       const essay = $("#essay");
       if (!essay) return;
-      try { await api("/apply/oa/written", { text: essay.value, final: false }); }
+      // Say which question this is: if the server clock has moved on since,
+      // it must not land in the next question's box.
+      try { await api("/apply/oa/written", { text: essay.value, final: false, section: drawnKey }); }
       catch { /* the next autosave or the final submit carries it */ }
     }, 8000);
   }
@@ -1014,7 +1049,10 @@
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
     const essay = $("#essay");
     try {
-      await api("/apply/oa/written", { text: essay ? essay.value : "", final: !!final });
+      // The section matters most here: the zero-second auto-submit of part one
+      // often arrives just after a poll has opened part two, and without it
+      // the server would take this as part two's final answer.
+      await api("/apply/oa/written", { text: essay ? essay.value : "", final: !!final, section: drawnKey });
     } catch { /* the next poll reconciles */ }
     busy = false;
     await refresh();
@@ -1242,7 +1280,7 @@
   // Leaving the page mid-assessment is counted, not punished — a reviewer sees
   // the number next to the score and reads it alongside everything else.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && drawnKey && (drawnKey === "written" || drawnKey.startsWith("q"))) {
+    if (document.hidden && (drawnKey === "motivation" || drawnKey === "estimation")) {
       api("/apply/oa/flag", { kind: "left_page" }).catch(() => {});
     }
   });

@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import html
 import io
 import logging
 import os
@@ -139,6 +140,14 @@ async def require_reviewer(user: User = Depends(current_user)) -> User:
 MOTIVATION_SECONDS = 5 * 60         # the behavioural question
 ESTIMATION_SECONDS = 3 * 60         # the estimation question
 SESSION_SECONDS = MOTIVATION_SECONDS + ESTIMATION_SECONDS  # 480 — 8 minutes total
+
+# How late a part-one submit may arrive and still be banked into the part-one
+# answer once the server clock has already moved on to part two. The browser
+# fires its own submit the instant its local clock hits zero, but the
+# once-a-second poll often reaches the server first and closes the question;
+# the few seconds between the two would otherwise lose everything typed since
+# the last autosave. Short enough to buy nobody any real thinking time.
+LATE_SUBMIT_GRACE_SECONDS = 5
 
 MOTIVATION_PROMPT = (
     "Tell us about something you have pursued seriously because you were genuinely "
@@ -240,6 +249,12 @@ class RemindRequest(BaseModel):
 class WrittenSubmit(BaseModel):
     text: str = ""
     final: bool = False
+    # Which question the text belongs to ("motivation" / "estimation"), as
+    # drawn on the candidate's screen. Optional so an old client still works,
+    # but without it a submit that races the server clock across the
+    # motivation -> estimation boundary lands in the wrong box — see
+    # submit_written.
+    section: Optional[str] = None
 
 
 class FlagEvent(BaseModel):
@@ -469,8 +484,8 @@ async def _send_submission_confirmation(application: dict) -> None:
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
-    name = application.get("full_name") or application.get("username") or "there"
-    programme = application.get("programme", "the programme")
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
         subject=f"Alpha Fund — your {programme} application is in",
@@ -490,8 +505,8 @@ async def _send_fast_track_confirmation(application: dict) -> None:
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
-    name = application.get("full_name") or application.get("username") or "there"
-    programme = application.get("programme", "the programme")
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
         subject=f"Alpha Fund — your {programme} application is in",
@@ -606,6 +621,9 @@ async def state(user: User = Depends(current_user)):
         # Analyst (either track) is the ceiling — someone already there has
         # nothing left to apply for, so the page points them at reviewing.
         "is_reviewer": is_reviewer,
+        # Lets the "nothing to apply for" screen say "You're an admin"
+        # rather than assuming every reviewer is a Quant Analyst.
+        "is_admin": bool(user.is_admin),
         "rules": {
             "session_seconds": SESSION_SECONDS,
             "motivation_seconds": MOTIVATION_SECONDS,
@@ -645,6 +663,7 @@ async def state(user: User = Depends(current_user)):
         # choice step can show it and let them simply continue.
         out["event_signup"] = await outreach.ticket_of(uid)
         out["event"] = await outreach.event_summary()
+        out["fast_track_used"] = _fast_track_used(application)
         out["college"] = application.get("college") or ""
         out["degree"] = application.get("degree") or ""
         out["year_of_study"] = application.get("year_of_study") or ""
@@ -788,9 +807,55 @@ async def start_application(req: StartApplication, user: User = Depends(current_
             "programme": existing.get("programme"),
             "status": existing["status"],
             "decided_at": existing.get("decided_at"),
+            # Remembered so Fast-Track can't be used a second time: the
+            # outreach sign-up outlives the decision, and would otherwise
+            # carry straight into this fresh application (see
+            # _fast_track_used).
+            "event_ticket": existing.get("event_ticket"),
         }
     await _save(uid, application)
     return {"ok": True, "status": application["status"], "programme": req.programme}
+
+
+def _fast_track_used(application: dict) -> bool:
+    """True when this person's previous (decided) application already went
+    through Fast-Track. It's a one-off route past the written assessment, not
+    a standing pass — someone who used it and was turned down sits the
+    assessment like everyone else next time. The same goes for an application
+    an admin sent back through a redo (see redo_application): it has been
+    moved onto the written route and mustn't be able to pick Fast-Track again
+    from the CV step."""
+    previous = application.get("previous_application") or {}
+    return (previous.get("event_ticket") == EVENT_TICKET_FAST_TRACK
+            or application.get("redo_previous_ticket") == EVENT_TICKET_FAST_TRACK)
+
+
+async def fast_track_refusal(uid: str) -> Optional[str]:
+    """Why the events page must not hand this person a Fast-Track place, or
+    None if it may. Two cases, both about an application still in flight:
+
+    * It has already chosen its ticket and moved past the CV step on the
+      ordinary route. Taking a place then would count against the 50 and put
+      them on the Fast-Track roster while their application still requires
+      the assessment.
+    * It's a reapplication after one that already used Fast-Track — the same
+      once-only rule choose_event_ticket enforces, which the events page
+      would otherwise get around (a sign-up made here carries into the
+      application's choice screen).
+
+    Moving between General and not attending stays allowed — neither changes
+    the route. Kept here, next to event_ticket_locked, so events.py doesn't
+    need to know the statuses."""
+    application = await _load(uid)
+    if not application or application.get("status") in DECIDED:
+        return None
+    if application.get("event_ticket") == EVENT_TICKET_FAST_TRACK:
+        return None
+    if application.get("status") != S_CV:
+        return "You've already chosen your ticket in your application."
+    if _fast_track_used(application):
+        return "Fast-Track can only be used once — choose General attendance or Not attending."
+    return None
 
 
 async def event_ticket_locked(uid: str) -> bool:
@@ -830,6 +895,14 @@ async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(curre
         raise HTTPException(400, "Event registration is only available before you confirm your CV")
     if req.ticket not in EVENT_TICKETS:
         raise HTTPException(400, "Unknown ticket type")
+    if req.ticket != EVENT_TICKET_NONE and await outreach.event_has_ended():
+        # Same rule as the events page: once the event is over there's no
+        # ticket left to take — and Fast-Track in particular must not become
+        # a way past the written assessment after the CV clinic has happened.
+        raise HTTPException(400, "The Quant Outreach event has already taken place")
+    if req.ticket == EVENT_TICKET_FAST_TRACK and _fast_track_used(application):
+        raise HTTPException(400, "Fast-Track can only be used once — choose General attendance "
+                                 "or Not attending.")
 
     # The choice *is* the event sign-up (shared with the events page), so it
     # lands there too. Capacity is checked inside — only for claiming a new
@@ -954,13 +1027,23 @@ async def submit_written(req: WrittenSubmit, user: User = Depends(current_user))
     if application is None or application.get("status") != S_OA_ACTIVE:
         raise HTTPException(400, "No assessment in progress")
 
-    if await _resolve_and_notify(uid, application):
-        # The clock beat this submission; whatever was last autosaved stands.
-        return {"ok": True, "status": application["status"],
-                "section": (application.get("oa") or {}).get("section")}
+    changed = await _resolve_and_notify(uid, application)
+    oa = application.get("oa") or {}
+    section = oa.get("section")
 
-    oa = application["oa"]
-    section = oa["section"]
+    if req.section and req.section != section:
+        # Written for a question the server has already closed — typically
+        # the browser's zero-second auto-submit of part one landing just after
+        # a poll moved the sitting on to part two. Never let it fill in (let
+        # alone finish) the question that's open now; at most it tops up the
+        # part-one answer it was actually written for.
+        await _bank_late_motivation(uid, application, req)
+        return {"ok": True, "status": application["status"], "section": section, "stale": True}
+
+    if changed:
+        # The clock beat this submission; whatever was last autosaved stands.
+        return {"ok": True, "status": application["status"], "section": section}
+
     if section not in ("motivation", "estimation"):
         return {"ok": True, "status": application["status"], "section": section}
 
@@ -978,6 +1061,32 @@ async def submit_written(req: WrittenSubmit, user: User = Depends(current_user))
 
     await _save(uid, application)
     return {"ok": True, "status": application["status"], "section": oa["section"]}
+
+
+async def _bank_late_motivation(uid: str, application: dict, req: WrittenSubmit) -> None:
+    """
+    Keep a part-one answer that arrived a moment after its own deadline.
+
+    Only when the question was closed *by the clock* (it used its full
+    allotment — a candidate who submitted early has already said that was
+    their answer, and a stale draft mustn't overwrite it) and only within
+    LATE_SUBMIT_GRACE_SECONDS of that deadline. The text is replaced and its
+    word count recomputed; ``seconds_used`` and every clock stay exactly as
+    they were, so this never buys extra time on either question.
+    """
+    if req.section != "motivation":
+        return
+    oa = application.get("oa") or {}
+    motivation = oa.get("motivation") or {}
+    if "submitted_at" not in motivation:
+        return
+    if (motivation.get("seconds_used") or 0) < MOTIVATION_SECONDS:
+        return
+    if _overdue(oa.get("started_at"), MOTIVATION_SECONDS) > LATE_SUBMIT_GRACE_SECONDS:
+        return
+    motivation["text"] = (req.text or "")[:20000]
+    motivation["word_count"] = len(motivation["text"].split())
+    await _save(uid, application)
 
 
 @router.post("/oa/flag")
@@ -1275,9 +1384,14 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         return v.strftime("%Y-%m-%d %H:%M UTC") if v else ""
 
     for r in rows:
+        def _score(e: Dict[str, Any], key: str) -> Any:
+            # A key that exists with a None value (scored CV, not yet the
+            # interview) reads as a dash, not the word "None".
+            return "—" if e.get(key) is None else e[key]
+
         reviewer_notes = "; ".join(
-            f"{e['reviewer_name']}: CV {e.get('cv_score', '—')}, written {e.get('written_score', '—')}, "
-            f"interview {e.get('interview_score', '—')}"
+            f"{e['reviewer_name']}: CV {_score(e, 'cv_score')}, written {_score(e, 'written_score')}, "
+            f"interview {_score(e, 'interview_score')}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
         )
@@ -1414,11 +1528,20 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
 
     # A re-proposal (a different time for the same pending interview) moves
     # the existing Calendar event instead of minting a fresh Meet link and
-    # leaving the old event stray on the calendar.
+    # leaving the old event stray on the calendar. Only with the same
+    # interviewer, though: moving the event changes its time, not its guest
+    # list, so a new interviewer would never be invited and the old one would
+    # keep a slot they're no longer in. Then the old event goes and a fresh
+    # one is made with the right people on it.
     previous = application.get("interview") or {}
     meet_link = previous.get("meet_link")
     gcal_event_id = previous.get("gcal_event_id")
-    moved = bool(gcal_event_id) and await gcal.update_event_time(gcal_event_id, when, end)
+    same_interviewer = previous.get("interviewer_id") == interviewer["id"]
+    moved = False
+    if gcal_event_id and same_interviewer:
+        moved = await gcal.update_event_time(gcal_event_id, when, end)
+    elif gcal_event_id:
+        await _cancel_interview_event(application)
     if not moved:
         candidate_email = application.get("oxford_email") or application.get("email") or ""
         created = await gcal.create_meet_event(
@@ -1450,14 +1573,30 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     return {"ok": True, "interview": interview}
 
 
+async def _cancel_interview_event(application: dict) -> None:
+    """Take the interview's Calendar event (and its Meet link) off the
+    calendar, if it has one — on a rejection, a redo or a deletion, where the
+    interview is no longer going to happen and a live invite would just
+    mislead both sides. Not on accept: that interview has already been held.
+    Best effort: a Google failure is logged and never blocks the decision."""
+    event_id = (application.get("interview") or {}).get("gcal_event_id")
+    if not event_id:
+        return
+    try:
+        if not await gcal.delete_event(event_id):
+            log.warning("applications: couldn't remove interview event %s", event_id)
+    except Exception:
+        log.exception("applications: failed to remove interview event %s", event_id)
+
+
 # What a reminder says, by where the applicant is stuck. Nothing to send for
 # a status with no gap to close (mid-assessment, already decided).
 _REMINDER_COPY: Dict[str, Dict[str, str]] = {
     S_CV: {
-        "subject": "Alpha Fund — upload your CV to continue your application",
-        "body": ("<p>You started an application to <strong>{programme}</strong>, but we don't "
-                 "have a CV on file yet. Upload one on your AlphaBook profile and you can "
-                 "carry straight on to the assessment.</p>"),
+        "subject": "Alpha Fund — finish the CV step of your application",
+        "body": ("<p>You started an application to <strong>{programme}</strong> — sign in to "
+                 "finish the CV step of your application (upload or confirm your CV and add "
+                 "your details), and you can carry straight on from there.</p>"),
         "cta": "Continue your application",
     },
     S_OA_READY: {
@@ -1490,11 +1629,12 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
     if not to:
         raise HTTPException(400, "This applicant has no email address on file")
 
-    name = application.get("full_name") or application.get("username") or "there"
-    programme = application.get("programme") or "the programme"
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    programme = html.escape(application.get("programme") or "the programme")
     body = f"<p>Hi {name},</p>" + copy["body"].format(programme=programme, minutes=SESSION_SECONDS // 60)
     if payload.note:
-        body += f'<p style="color:#555;">A note from the committee: {payload.note.strip()[:400]}</p>'
+        body += (f'<p style="color:#555;">A note from the committee: '
+                 f'{html.escape(payload.note.strip()[:400])}</p>')
 
     sent = await mailer.send_email(
         to=to, subject=copy["subject"], title="A nudge on your application",
@@ -1551,12 +1691,12 @@ async def _send_decision_email(application: dict, status: str) -> None:
     copy = _DECISION_COPY.get(status)
     if not to or not copy:
         return
-    name = application.get("full_name") or application.get("username") or "there"
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
     programme = application.get("programme") or "the programme"
     body_template = copy["body"]
     if status == S_REJECTED and programme in mb.ANALYST_MEMBERSHIPS:
         body_template = _REJECTED_BODY_ANALYST
-    body = f"<p>Hi {name},</p>" + body_template.format(programme=programme)
+    body = f"<p>Hi {name},</p>" + body_template.format(programme=html.escape(programme))
     cta_url = copy.get("cta_url")
     await mailer.send_email(
         to=to, subject=copy["subject"], title=copy["title"], body_html=body,
@@ -1608,31 +1748,42 @@ def _build_interview_ics(application: dict, interview: dict) -> bytes:
     )
 
 
+def _meet_block(interview: dict) -> str:
+    """The "Meeting link" line, when there is one. The link comes from
+    Google, but it's escaped all the same — it lands inside an attribute."""
+    link = interview.get("meet_link")
+    if not link:
+        return ""
+    link = html.escape(link)
+    return f'<p><strong>Meeting link:</strong> <a href="{link}">{link}</a></p>'
+
+
 async def _send_interview_proposal_email(application: dict, interview: dict) -> None:
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
-    name = application.get("full_name") or application.get("username") or "there"
-    programme = application.get("programme") or "the programme"
+    # Every value below is user- or reviewer-entered (names, the note, an
+    # email address) — escaped so none of it can become markup in an email
+    # sent from our own address.
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    programme = html.escape(application.get("programme") or "the programme")
+    interviewer_name = html.escape(interview.get("interviewer_name") or "")
+    interviewer_email = html.escape(interview.get("interviewer_email") or "")
     note_block = ""
     if interview.get("message"):
-        note_block = (f'<p style="color:#555;">A note from {interview["interviewer_name"]}: '
-                      f'&ldquo;{interview["message"]}&rdquo;</p>')
-    meet_block = ""
-    if interview.get("meet_link"):
-        meet_block = (f'<p><strong>Meeting link:</strong> '
-                      f'<a href="{interview["meet_link"]}">{interview["meet_link"]}</a></p>')
+        note_block = (f'<p style="color:#555;">A note from {interviewer_name}: '
+                      f'&ldquo;{html.escape(interview["message"])}&rdquo;</p>')
     body = (
         f"<p>Hi {name},</p>"
         f"<p>The committee would like to interview you for <strong>{programme}</strong>.</p>"
         f"<p><strong>Proposed time:</strong> {_fmt_when(interview['when'])}<br>"
-        f"<strong>Interviewer:</strong> {interview['interviewer_name']} "
-        f"(<a href=\"mailto:{interview['interviewer_email']}\">{interview['interviewer_email']}</a>)</p>"
-        f"{meet_block}"
+        f"<strong>Interviewer:</strong> {interviewer_name} "
+        f"(<a href=\"mailto:{interviewer_email}\">{interviewer_email}</a>)</p>"
+        f"{_meet_block(interview)}"
         f"{note_block}"
         f"<p>A calendar invite for this slot is attached, so you can hold it while you decide.</p>"
         f"<p>Sign in and open your application to confirm this time. If it doesn't work, "
-        f"you can say so there too, and {interview['interviewer_name']} will be in touch "
+        f"you can say so there too, and {interviewer_name} will be in touch "
         f"directly to find another.</p>"
     )
     await mailer.send_email(
@@ -1660,17 +1811,15 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
         return
     cc = interviewer_email if (candidate_to and interviewer_email and interviewer_email != to) else None
 
-    meet_block = ""
-    if interview.get("meet_link"):
-        meet_block = (f'<p><strong>Meeting link:</strong> '
-                      f'<a href="{interview["meet_link"]}">{interview["meet_link"]}</a></p>')
+    # Escaped for the body only — the raw values still address the email.
+    e_candidate, e_interviewer = html.escape(candidate_name), html.escape(interviewer_name)
     body = (
-        f"<p>Hi {candidate_name} and {interviewer_name},</p>"
-        f"<p>This confirms the <strong>{programme}</strong> interview for "
+        f"<p>Hi {e_candidate} and {e_interviewer},</p>"
+        f"<p>This confirms the <strong>{html.escape(programme)}</strong> interview for "
         f"<strong>{_fmt_when(when)}</strong>.</p>"
-        f"<p>{candidate_name}: {candidate_to or 'no email on file'}<br>"
-        f"{interviewer_name}: {interviewer_email or 'no email on file'}</p>"
-        f"{meet_block}"
+        f"<p>{e_candidate}: {html.escape(candidate_to or 'no email on file')}<br>"
+        f"{e_interviewer}: {html.escape(interviewer_email or 'no email on file')}</p>"
+        f"{_meet_block(interview)}"
         f"<p>A calendar invite is attached. Reply-all on this email to "
         f"{'sort out any last details' if interview.get('meet_link') else 'share a call link or sort out any last details'}"
         f" directly.</p>"
@@ -1691,14 +1840,16 @@ async def _send_interview_declined_email(application: dict, interview: dict) -> 
     candidate_email = application.get("oxford_email") or application.get("email") or ""
     note_block = ""
     if interview.get("candidate_note"):
-        note_block = f'<p style="color:#555;">Their note: &ldquo;{interview["candidate_note"]}&rdquo;</p>'
+        note_block = (f'<p style="color:#555;">Their note: '
+                      f'&ldquo;{html.escape(interview["candidate_note"])}&rdquo;</p>')
+    e_email = html.escape(candidate_email)
     body = (
-        f"<p>Hi {interviewer_name},</p>"
-        f"<p><strong>{candidate_name}</strong> can't make the proposed interview time "
+        f"<p>Hi {html.escape(interviewer_name)},</p>"
+        f"<p><strong>{html.escape(candidate_name)}</strong> can't make the proposed interview time "
         f"({_fmt_when(interview['when'])}).</p>"
         f"{note_block}"
         f"<p>Reach out directly to arrange another time — their email is "
-        f"<a href=\"mailto:{candidate_email}\">{candidate_email}</a>.</p>"
+        f"<a href=\"mailto:{e_email}\">{e_email}</a>.</p>"
     )
     await mailer.send_email(
         to=interviewer_email,
@@ -1799,6 +1950,8 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["decision_note"] = (payload.note or "").strip()[:500]
     await _save(user_id, application)
     await _send_decision_email(application, application["status"])
+    if application["status"] == S_REJECTED:
+        await _cancel_interview_event(application)
 
     if application["status"] == S_ACCEPTED:
         programme = application.get("programme")
@@ -1841,6 +1994,16 @@ async def redo_application(user_id: str, admin: User = Depends(require_admin)):
     if application.get("status") in (S_CV, S_OA_READY):
         raise HTTPException(400, "They haven't started the assessment yet — nothing to redo")
 
+    await _cancel_interview_event(application)
+    if application.get("event_ticket") == EVENT_TICKET_FAST_TRACK:
+        # A redo sends them through the written assessment, which a
+        # Fast-Track application never had. Left as fast_track, the review
+        # page and export would keep saying "no written assessment" and hide
+        # the answers they're about to write — so the application now reads
+        # as the ordinary route, with the original ticket kept for the record.
+        application["redo_previous_ticket"] = EVENT_TICKET_FAST_TRACK
+        application["event_ticket"] = EVENT_TICKET_GENERAL
+
     for field in _OA_PRODUCED_FIELDS:
         application.pop(field, None)
     application["status"] = S_OA_READY if application.get("cv_blob_path") else S_CV
@@ -1865,5 +2028,6 @@ async def delete_application(user_id: str, admin: User = Depends(require_admin))
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
+    await _cancel_interview_event(application)
     await db_module.db.collection(COLLECTION).document(user_id).delete()
     return {"ok": True}

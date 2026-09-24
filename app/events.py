@@ -43,7 +43,9 @@ from app import db as db_module
 from app import membership as mb
 from app import outreach
 from app.admin import require_admin
-from app.applications import event_ticket_locked, require_reviewer, sync_event_ticket
+from app.applications import (
+    event_ticket_locked, fast_track_refusal, require_reviewer, sync_event_ticket,
+)
 from app.auth import current_user, http_bearer
 from app.models import User
 
@@ -353,6 +355,13 @@ async def _set_outreach_ticket(user: User, ticket: str) -> None:
     if ticket != outreach.EVENT_TICKET_FAST_TRACK and await event_ticket_locked(uid):
         raise HTTPException(400, "You've already been fast-tracked through your application, "
                                  "so this ticket can't be changed here")
+    # ...and one that took the ordinary route can't grab a Fast-Track place
+    # from here partway through (it wouldn't skip anything, only use up one
+    # of the 50).
+    if ticket == outreach.EVENT_TICKET_FAST_TRACK:
+        refusal = await fast_track_refusal(uid)
+        if refusal:
+            raise HTTPException(400, refusal)
     await outreach.set_ticket(uid, user.username, ticket)
     await sync_event_ticket(uid, ticket)
 

@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, os, datetime as dt, logging
+import asyncio, os, datetime as dt, html, logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
@@ -71,7 +71,7 @@ async def _send_branded_verification_email(email: str, username: str) -> None:
         subject="Verify your email",
         title="Welcome to AlphaBook",
         body_html=(
-            f"<p>Hi {username},</p>"
+            f"<p>Hi {html.escape(username)},</p>"
             f"<p>One last step — confirm this is your email address so we know where to reach you.</p>"
         ),
         cta_label="Verify my email",

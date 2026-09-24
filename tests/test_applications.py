@@ -2002,3 +2002,518 @@ class TestChoiceIsTheEventSignup:
         user = User(id="u1", username="jo")
         result = asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), user))
         assert result["event_ticket"] == "fast_track"
+
+
+# ── Regression tests for the application-flow bug sweep ─────────────────────
+# Each class below pins one fix. They share one fake-Firestore setup: the real
+# _load/_save go through it, and every outbound side effect (email, Calendar)
+# is captured instead of sent.
+
+def _flow_db(monkeypatch, applications=None, users=None, events=None, signups=None):
+    fake_db = _FakeDB()
+    fake_db.collections[ap.COLLECTION] = applications or {}
+    fake_db.collections["users"] = users or {}
+    fake_db.collections["events"] = events or {}
+    fake_db.collections["event_signups"] = signups or {}
+    monkeypatch.setattr(ap.db_module, "db", fake_db)
+
+    sent, gcal_calls = [], []
+
+    async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+        sent.append({"to": to, "cc": cc, "subject": subject, "body_html": body_html})
+        return True
+
+    async def fake_create(**kwargs):
+        gcal_calls.append(("create", kwargs))
+        return {"event_id": f"ev{len(gcal_calls)}", "meet_link": f"https://meet.google.com/new-{len(gcal_calls)}"}
+
+    async def fake_update(event_id, start, end):
+        gcal_calls.append(("update", event_id))
+        return True
+
+    async def fake_delete(event_id):
+        gcal_calls.append(("delete", event_id))
+        return True
+
+    monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+    monkeypatch.setattr(ap.gcal, "create_meet_event", fake_create)
+    monkeypatch.setattr(ap.gcal, "update_event_time", fake_update)
+    monkeypatch.setattr(ap.gcal, "delete_event", fake_delete)
+    return fake_db, sent, gcal_calls
+
+
+class _Clock:
+    """A hand-wound ap._now, so a test can step across the motivation
+    deadline to the tenth of a second."""
+
+    def __init__(self, monkeypatch):
+        self.now = dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc)
+        monkeypatch.setattr(ap, "_now", lambda: self.now)
+
+    def advance(self, seconds):
+        self.now += dt.timedelta(seconds=seconds)
+
+
+class TestStalePartOneSubmit:
+    """Fix 1: a part-one submit that reaches the server after a poll has
+    already moved the sitting on to part two must not become part two's
+    answer — let alone finish the assessment."""
+
+    def _start(self, monkeypatch):
+        clock = _Clock(monkeypatch)
+        fake_db, sent, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST,
+                                 "status": ap.S_OA_READY, "oxford_email": "jo@merton.ox.ac.uk",
+                                 "flags": {"paste": 0, "left_page": 0}}},
+            users={"u1": {"username": "jo", "cv_blob_path": "cvs/jo.pdf"}},
+        )
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.start_oa(user))
+        return clock, fake_db, sent, user
+
+    def _written(self, user, text, final, section):
+        return asyncio.run(ap.submit_written(ap.WrittenSubmit(text=text, final=final, section=section), user))
+
+    def test_the_reported_race_keeps_part_two_empty_and_live(self, monkeypatch):
+        clock, fake_db, sent, user = self._start(monkeypatch)
+        clock.advance(292)
+        self._written(user, "draft", False, "motivation")
+        clock.advance(8.3)
+        asyncio.run(ap.oa_state(user))   # the poll wins the race and opens part two
+
+        result = self._written(user, "draft plus more", True, "motivation")
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["status"] == ap.S_OA_ACTIVE
+        assert stored["oa"]["section"] == "estimation"
+        assert stored["oa"]["estimation"]["text"] == ""
+        assert result["section"] == "estimation" and result["stale"] is True
+        assert sent == []   # nothing was finished, so no confirmation email
+
+    def test_a_submit_inside_the_grace_period_keeps_the_last_sentence(self, monkeypatch):
+        clock, fake_db, _, user = self._start(monkeypatch)
+        clock.advance(292)
+        self._written(user, "draft", False, "motivation")
+        clock.advance(8.3)
+        asyncio.run(ap.oa_state(user))
+        estimation_started = fake_db.collections[ap.COLLECTION]["u1"]["oa"]["estimation_started_at"]
+
+        self._written(user, "draft plus more", True, "motivation")
+
+        oa = fake_db.collections[ap.COLLECTION]["u1"]["oa"]
+        assert oa["motivation"]["text"] == "draft plus more"
+        assert oa["motivation"]["word_count"] == 3
+        # No clock moves: part one still used exactly its allotment, and
+        # part two's started where the poll started it.
+        assert oa["motivation"]["seconds_used"] == ap.MOTIVATION_SECONDS
+        assert oa["estimation_started_at"] == estimation_started
+
+    def test_a_submit_after_the_grace_period_is_ignored(self, monkeypatch):
+        clock, fake_db, _, user = self._start(monkeypatch)
+        clock.advance(292)
+        self._written(user, "draft", False, "motivation")
+        clock.advance(8 + ap.LATE_SUBMIT_GRACE_SECONDS + 1)
+        asyncio.run(ap.oa_state(user))
+
+        self._written(user, "draft plus much later", True, "motivation")
+
+        oa = fake_db.collections[ap.COLLECTION]["u1"]["oa"]
+        assert oa["motivation"]["text"] == "draft"
+        assert oa["estimation"]["text"] == ""
+
+    def test_a_stale_draft_never_lands_in_the_part_two_box(self, monkeypatch):
+        clock, fake_db, _, user = self._start(monkeypatch)
+        clock.advance(ap.MOTIVATION_SECONDS + 1)
+        asyncio.run(ap.oa_state(user))
+
+        self._written(user, "part one words", False, "motivation")
+
+        oa = fake_db.collections[ap.COLLECTION]["u1"]["oa"]
+        assert oa["estimation"]["text"] == ""
+        assert fake_db.collections[ap.COLLECTION]["u1"]["status"] == ap.S_OA_ACTIVE
+
+    def test_a_late_draft_cannot_overwrite_an_answer_submitted_early(self, monkeypatch):
+        # Submitted part one early: that *is* the answer. A draft still in
+        # flight from before the click mustn't replace it.
+        clock, fake_db, _, user = self._start(monkeypatch)
+        clock.advance(100)
+        self._written(user, "my considered final answer", True, "motivation")
+        clock.advance(1)
+
+        self._written(user, "an older draft", False, "motivation")
+
+        oa = fake_db.collections[ap.COLLECTION]["u1"]["oa"]
+        assert oa["motivation"]["text"] == "my considered final answer"
+        assert oa["estimation"]["text"] == ""
+
+    def test_a_normal_final_submit_still_works_for_both_sections(self, monkeypatch):
+        clock, fake_db, sent, user = self._start(monkeypatch)
+        clock.advance(120)
+        result = self._written(user, "why me", True, "motivation")
+        assert result["section"] == "estimation"
+        clock.advance(60)
+        result = self._written(user, "about a million", True, "estimation")
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert result["status"] == ap.S_SUBMITTED
+        assert stored["oa"]["motivation"]["text"] == "why me"
+        assert stored["oa"]["estimation"]["text"] == "about a million"
+        assert stored["oa"]["estimation"]["seconds_used"] == 60
+        assert len(sent) == 1
+
+    def test_an_old_client_without_a_section_behaves_as_before(self, monkeypatch):
+        clock, fake_db, _, user = self._start(monkeypatch)
+        clock.advance(30)
+        self._written(user, "no section sent", False, None)
+        assert fake_db.collections[ap.COLLECTION]["u1"]["oa"]["motivation"]["text"] == "no section sent"
+
+
+class TestApplyJsClientFixes:
+    """Fixes 1, 2 and 12 on the client. There's no JS test runner in this
+    repo, so these pin the specific lines rather than the behaviour."""
+
+    @pytest.fixture(scope="class")
+    def js(self):
+        from pathlib import Path
+        return (Path(ap.__file__).parent / "static" / "apply.js").read_text()
+
+    def test_left_page_is_flagged_during_either_question(self, js):
+        assert 'drawnKey === "motivation" || drawnKey === "estimation"' in js
+        assert 'drawnKey.startsWith("q")' not in js
+
+    def test_written_submits_say_which_question_they_are_for(self, js):
+        assert js.count("section: drawnKey") == 2
+
+    def test_the_submitted_screen_no_longer_mentions_a_score(self, js):
+        assert "and your score" not in js
+
+    def test_the_event_choice_handles_a_past_event_and_a_held_place(self, js):
+        assert "ev.is_past" in js
+        assert "Your place is held" in js
+
+
+class TestEventTicketAfterTheEvent:
+    """Fix 3: once Quant Outreach is over, the application offers no ticket
+    — in particular no Fast-Track past the assessment."""
+
+    def _events(self, ended):
+        ends = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=-1 if ended else 10)
+        return {"quant-outreach": {"title": "Quant Outreach", "starts_at": ends - dt.timedelta(hours=1),
+                                   "ends_at": ends, "location": "Cohen Quad"}}
+
+    def _cv_stage(self):
+        return {"u1": {"user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST, "status": ap.S_CV}}
+
+    @pytest.mark.parametrize("ticket", ["fast_track", "general"])
+    def test_attending_is_refused_once_the_event_has_ended(self, monkeypatch, ticket):
+        fake_db, _, _ = _flow_db(monkeypatch, applications=self._cv_stage(), events=self._events(True))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket=ticket), User(id="u1", username="jo")))
+        assert exc.value.status_code == 400
+        assert "already taken place" in exc.value.detail
+        assert "event_ticket" not in fake_db.collections[ap.COLLECTION]["u1"]
+
+    def test_not_attending_still_works_after_the_event(self, monkeypatch):
+        fake_db, _, _ = _flow_db(monkeypatch, applications=self._cv_stage(), events=self._events(True))
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), User(id="u1", username="jo")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "none"
+
+    def test_fast_track_still_works_before_the_event(self, monkeypatch):
+        fake_db, _, _ = _flow_db(monkeypatch, applications=self._cv_stage(), events=self._events(False))
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), User(id="u1", username="jo")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "fast_track"
+
+    def test_the_state_says_whether_the_event_is_past(self, monkeypatch):
+        _flow_db(monkeypatch, applications=self._cv_stage(), events=self._events(True))
+        assert asyncio.run(ap.state(User(id="u1", username="jo")))["event"]["is_past"] is True
+        _flow_db(monkeypatch, applications=self._cv_stage(), events=self._events(False))
+        assert asyncio.run(ap.state(User(id="u1", username="jo")))["event"]["is_past"] is False
+
+
+class TestFastTrackOnlyOnce:
+    """Fix 4: a rejected Fast-Track applicant who reapplies sits the
+    assessment — the surviving outreach sign-up doesn't carry them past it."""
+
+    def _rejected_fast_track(self, monkeypatch):
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "status": ap.S_REJECTED, "programme": mb.M_QUANT_BOOTCAMP,
+                                 "event_ticket": "fast_track", "decided_at": dt.datetime.now(dt.timezone.utc)}},
+            users={"u1": {"username": "jo", "membership": mb.M_PUBLIC, "email": "jo@merton.ox.ac.uk"}},
+            signups={"quant-outreach_u1": {"event_id": "quant-outreach", "user_id": "u1",
+                                           "status": "confirmed", "ticket": "fast_track"}},
+        )
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.start_application(
+            ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP, confirms_oxford_student=True), user))
+        return fake_db, user
+
+    def test_the_breadcrumb_remembers_the_old_ticket(self, monkeypatch):
+        fake_db, _ = self._rejected_fast_track(monkeypatch)
+        assert fake_db.collections[ap.COLLECTION]["u1"]["previous_application"]["event_ticket"] == "fast_track"
+
+    def test_fast_track_is_refused_on_the_reapplication(self, monkeypatch):
+        fake_db, user = self._rejected_fast_track(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), user))
+        assert exc.value.status_code == 400
+        assert "only be used once" in exc.value.detail
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="general"), user))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "general"
+
+    def test_the_state_tells_the_client_fast_track_is_used(self, monkeypatch):
+        _, user = self._rejected_fast_track(monkeypatch)
+        assert asyncio.run(ap.state(user))["fast_track_used"] is True
+
+    def test_a_first_application_can_still_use_it(self, monkeypatch):
+        _flow_db(monkeypatch, applications={"u1": {"user_id": "u1", "status": ap.S_CV,
+                                                    "programme": mb.M_QUANT_BOOTCAMP}})
+        user = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(user))["fast_track_used"] is False
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"), user))
+
+
+class TestReProposeWithADifferentInterviewer:
+    """Fix 6: moving an event only changes its time, so a new interviewer
+    gets a fresh event and the old one is removed."""
+
+    def _proposed(self, interviewer_id):
+        return {"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": mb.M_QUANT_ANALYST, "status": ap.S_SHORTLISTED,
+            "interview": {"interviewer_id": interviewer_id, "status": ap.INTERVIEW_PROPOSED,
+                          "when": dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2),
+                          "meet_link": "https://meet.google.com/old", "gcal_event_id": "ev-old"},
+        }}
+
+    def _users(self):
+        return {"qaA": {"username": "priya", "full_name": "Priya A", "email": "a@ox.ac.uk",
+                        "membership": mb.M_QUANT_ANALYST},
+                "qaB": {"username": "ben", "full_name": "Ben B", "email": "b@ox.ac.uk",
+                        "membership": mb.M_QUANT_ANALYST}}
+
+    def test_a_new_interviewer_gets_a_new_event_and_the_old_one_goes(self, monkeypatch):
+        fake_db, _, calls = _flow_db(monkeypatch, applications=self._proposed("qaA"), users=self._users())
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=4)
+
+        result = asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qaB", when=when), User(id="qaA", username="priya")))
+
+        assert calls[0] == ("delete", "ev-old")
+        kind, kwargs = calls[1]
+        assert kind == "create" and "b@ox.ac.uk" in kwargs["attendee_emails"]
+        assert "a@ox.ac.uk" not in kwargs["attendee_emails"]
+        assert len(calls) == 2   # no update_event_time on the old event
+        assert result["interview"]["meet_link"] != "https://meet.google.com/old"
+        assert fake_db.collections[ap.COLLECTION]["u1"]["interview"]["gcal_event_id"] != "ev-old"
+
+    def test_the_same_interviewer_still_just_moves_the_event(self, monkeypatch):
+        _, _, calls = _flow_db(monkeypatch, applications=self._proposed("qaA"), users=self._users())
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=4)
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qaA", when=when), User(id="qaA", username="priya")))
+        assert calls == [("update", "ev-old")]
+
+
+class TestInterviewEventCleanup:
+    """Fix 7: reject, redo and delete take the Meet event off the calendar;
+    accept leaves it alone."""
+
+    def _app(self, status=ap.S_SHORTLISTED):
+        return {"u1": {"user_id": "u1", "username": "jo", "oxford_email": "jo@merton.ox.ac.uk",
+                       "programme": mb.M_QUANT_ANALYST, "status": status, "cv_blob_path": "cvs/jo.pdf",
+                       "interview": {"status": ap.INTERVIEW_CONFIRMED, "gcal_event_id": "ev-live"}}}
+
+    ADMIN = User(id="admin1", username="root", is_admin=True)
+
+    def test_reject_removes_the_event(self, monkeypatch):
+        _, _, calls = _flow_db(monkeypatch, applications=self._app())
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), self.ADMIN))
+        assert calls == [("delete", "ev-live")]
+
+    def test_accept_leaves_the_event(self, monkeypatch):
+        _, _, calls = _flow_db(monkeypatch, applications=self._app(), users={"u1": {"username": "jo"}})
+        asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), self.ADMIN))
+        assert calls == []
+
+    def test_redo_removes_the_event(self, monkeypatch):
+        _, _, calls = _flow_db(monkeypatch, applications=self._app())
+        asyncio.run(ap.redo_application("u1", self.ADMIN))
+        assert calls == [("delete", "ev-live")]
+
+    def test_delete_removes_the_event(self, monkeypatch):
+        _, _, calls = _flow_db(monkeypatch, applications=self._app())
+        asyncio.run(ap.delete_application("u1", self.ADMIN))
+        assert calls == [("delete", "ev-live")]
+
+    def test_a_calendar_failure_does_not_block_the_decision(self, monkeypatch):
+        fake_db, _, _ = _flow_db(monkeypatch, applications=self._app())
+
+        async def boom(event_id):
+            raise RuntimeError("google is down")
+
+        monkeypatch.setattr(ap.gcal, "delete_event", boom)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), self.ADMIN))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["status"] == ap.S_REJECTED
+
+    def test_no_event_means_nothing_to_remove(self, monkeypatch):
+        apps = self._app()
+        apps["u1"].pop("interview")
+        _, _, calls = _flow_db(monkeypatch, applications=apps)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), self.ADMIN))
+        assert calls == []
+
+
+class TestRedoOnAFastTrackApplication:
+    """Fix 8: after a redo the applicant has written answers, and reviewers
+    must see them rather than "Fast-tracked — no written assessment"."""
+
+    def test_the_answers_show_after_a_redo(self, monkeypatch):
+        from openpyxl import load_workbook
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST,
+                                 "status": ap.S_SUBMITTED, "event_ticket": "fast_track",
+                                 "cv_blob_path": "cvs/jo.pdf"}},
+        )
+        admin = User(id="admin1", username="root", is_admin=True)
+        asyncio.run(ap.redo_application("u1", admin))
+
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["event_ticket"] == "general"
+        assert stored["redo_previous_ticket"] == "fast_track"
+
+        # They now sit the assessment...
+        stored.update({"status": ap.S_SUBMITTED, "oa": {
+            "motivation": {"text": "My motivation", "seconds_used": 200},
+            "estimation": {"text": "My estimate", "seconds_used": 100}}})
+
+        row = ap._review_row("u1", stored)
+        assert row["is_fast_tracked"] is False
+        assert row["motivation_text"] == "My motivation"
+
+        wb = load_workbook(_read_streaming(asyncio.run(ap.export_applications(admin))))
+        ws = wb.active
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        values = {headers[i]: c.value for i, c in enumerate(next(ws.iter_rows(min_row=2, max_row=2)))}
+        assert values["Motivation text"] == "My motivation"
+        assert values["Estimation text"] == "My estimate"
+
+    def test_a_redone_fast_track_application_cannot_pick_fast_track_again(self, monkeypatch):
+        # Redo with no CV on file lands back at the CV step, where the ticket
+        # endpoint is open again — it must not become a second Fast-Track.
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST,
+                                 "status": ap.S_SUBMITTED, "event_ticket": "fast_track"}},
+        )
+        admin = User(id="admin1", username="root", is_admin=True)
+        assert asyncio.run(ap.redo_application("u1", admin))["status"] == ap.S_CV
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="fast_track"),
+                                               User(id="u1", username="jo")))
+
+
+EVIL_NAME = 'Zed<a href="https://evil.example">click to verify</a>'
+
+
+class TestEmailEscaping:
+    """Fix 9: names, notes and messages typed by users or reviewers can't
+    become markup in an email sent from our own address."""
+
+    def _assert_escaped(self, body):
+        assert "&lt;a href=" in body
+        assert '<a href="https://evil.example">' not in body
+
+    def test_submission_confirmation(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        asyncio.run(ap._send_submission_confirmation(
+            {"full_name": EVIL_NAME, "oxford_email": "z@ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP}))
+        self._assert_escaped(sent[0]["body_html"])
+
+    def test_fast_track_confirmation(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        asyncio.run(ap._send_fast_track_confirmation(
+            {"full_name": EVIL_NAME, "oxford_email": "z@ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP}))
+        self._assert_escaped(sent[0]["body_html"])
+
+    def test_decision_email(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        asyncio.run(ap._send_decision_email(
+            {"full_name": EVIL_NAME, "oxford_email": "z@ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP},
+            ap.S_REJECTED))
+        self._assert_escaped(sent[0]["body_html"])
+
+    def test_reminder_escapes_the_name_and_the_admin_note(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "full_name": EVIL_NAME, "oxford_email": "z@ox.ac.uk", "status": ap.S_CV}})
+        asyncio.run(ap.remind("u1", ap.RemindRequest(note="<b>soon</b>"),
+                              User(id="admin1", username="root", is_admin=True)))
+        body = sent[0]["body_html"]
+        self._assert_escaped(body)
+        assert "&lt;b&gt;soon&lt;/b&gt;" in body
+
+    def test_interview_emails_escape_names_messages_and_notes(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        application = {"user_id": "u1", "full_name": EVIL_NAME, "oxford_email": "z@ox.ac.uk",
+                       "programme": mb.M_QUANT_ANALYST}
+        interview = {"interviewer_name": "Eve<script>x</script>", "interviewer_email": "e@ox.ac.uk",
+                     "message": '<img src=x onerror="alert(1)">', "candidate_note": EVIL_NAME,
+                     "when": dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)}
+        asyncio.run(ap._send_interview_proposal_email(application, interview))
+        asyncio.run(ap._send_interview_confirmed_emails(application, interview))
+        asyncio.run(ap._send_interview_declined_email(application, interview))
+
+        proposal, confirmed, declined = (m["body_html"] for m in sent)
+        for body in (proposal, confirmed, declined):
+            assert "<script>" not in body
+        assert "<img" not in proposal and "&lt;img" in proposal
+        self._assert_escaped(confirmed)
+        self._assert_escaped(declined)
+
+    def test_the_plain_text_part_reads_normally(self, monkeypatch):
+        # mailer.deliver derives a text part from the HTML; the escaped name
+        # should come out as the literal characters, not as entities.
+        from app import mailer
+        captured = {}
+
+        async def fake_gmail(to, subject, html_body, text, ics, cc):
+            captured["text"] = text
+            return True
+
+        monkeypatch.setattr(mailer, "gmail_enabled", lambda: True)
+        monkeypatch.setattr(mailer, "_send_via_gmail", fake_gmail)
+        asyncio.run(mailer.deliver("z@ox.ac.uk", "s", "t", "<p>Hi Zed&lt;b&gt;</p>"))
+        assert captured["text"] == "Hi Zed<b>"
+
+
+class TestExportNoneScores:
+    """Fix 10: a score stored as None reads as a dash, not "None"."""
+
+    def test_reviewer_notes_show_a_dash(self, monkeypatch):
+        from openpyxl import load_workbook
+        _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST, "status": ap.S_SUBMITTED,
+            "reviews": {"r1": {"reviewer_name": "Priya", "cv_score": 8,
+                               "written_score": None, "interview_score": None}}}})
+        wb = load_workbook(_read_streaming(asyncio.run(
+            ap.export_applications(User(id="admin1", username="root", is_admin=True)))))
+        ws = wb.active
+        headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
+        notes = next(ws.iter_rows(min_row=2, max_row=2))[headers.index("Reviewer notes")].value
+        assert "None" not in notes
+        assert notes == "Priya: CV 8, written —, interview —"
+
+
+class TestWordingFixes:
+    """Fix 12, server side."""
+
+    def test_the_cv_reminder_no_longer_claims_there_is_no_cv(self):
+        body = ap._REMINDER_COPY[ap.S_CV]["body"]
+        assert "don't have a CV on file" not in body
+        assert "finish the CV step of your application" in body
+
+    def test_the_state_says_whether_the_viewer_is_an_admin(self, monkeypatch):
+        _flow_db(monkeypatch, users={"admin1": {"username": "root"}})
+        assert asyncio.run(ap.state(User(id="admin1", username="root", is_admin=True)))["is_admin"] is True

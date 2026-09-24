@@ -263,9 +263,12 @@ async def deliver(to: str, subject: str, title: str, body_html: str,
     html = _wrap(title, body_html, cta_label, cta_url)
     # A plain-text fallback derived from the label/body, not a full HTML strip
     # — every caller's body_html here is short enough that this reads fine.
+    # Entities are decoded after the tags go, so a name escaped for the HTML
+    # part (see applications.py) reads normally here rather than as "&lt;".
     import re
+    from html import unescape
     text = re.sub(r"<[^>]+>", " ", body_html)
-    text = re.sub(r"\s+", " ", text).strip()
+    text = unescape(re.sub(r"\s+", " ", text).strip())
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
 
