@@ -340,3 +340,13 @@ class TestGmailRoute:
         monkeypatch.setattr(mailer, "CONFIGURED", False)
         assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) is None
         assert mailer.sender() is None
+
+
+def test_the_email_shell_has_no_logo_header():
+    # A remote logo is blocked by default in most clients and rendered as an
+    # empty bordered box — the shell is just title, body and button now.
+    from app import mailer
+    html = mailer._wrap("Welcome", "<p>Hi Jo,</p>", "Verify my email", "https://alphabook.uk/x")
+    assert "<img" not in html
+    assert "&middot; Alpha Fund" not in html
+    assert "Welcome" in html and "Hi Jo," in html and "Verify my email" in html

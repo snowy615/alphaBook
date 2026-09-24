@@ -57,25 +57,15 @@ SMTP_USE_STARTTLS = os.getenv("SMTP_USE_STARTTLS", "true").lower() not in ("0", 
 
 CONFIGURED = bool(SMTP_HOST and SMTP_FROM)
 
-# Where the logo image is fetched from — must be an absolute URL since email
-# clients render with no page context to resolve a relative one against.
-# This is a *separate* asset from the one used on the site: the current
-# wordmark flattened onto an opaque white background (228x84, 2x the display
-# size below) rather than left transparent, because Outlook's desktop
-# renderer (the Word engine) is unreliable with alpha-transparent PNGs and
-# can fail to display them at all.
-BASE_URL = os.getenv("APP_BASE_URL", "https://alphabook.uk").rstrip("/")
-LOGO_URL = f"{BASE_URL}/static/alphabook_email.png"
-LOGO_W, LOGO_H = 114, 42
 
 
 def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: Optional[str] = None) -> str:
-    """A minimal, inbox-safe HTML shell.
+    """A minimal, inbox-safe HTML shell: the title, the body, and an optional
+    button — nothing else.
 
-    The header is a <table>, not a flex div — Outlook's desktop renderer
-    doesn't support flexbox at all, so a flex row can silently collapse or
-    reorder there. A <table> with valign is the one layout primitive every
-    mail client, Outlook included, has always supported.
+    There's deliberately no logo header. The image is remote, so most clients
+    block it by default and show an empty bordered box with alt text in its
+    place, which looked broken; the sender name already says who it's from.
     """
     cta = ""
     if cta_label and cta_url:
@@ -89,17 +79,6 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     return f"""
     <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
                 max-width:520px;margin:0 auto;color:#1a1a1a;">
-      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin-bottom:22px;">
-        <tr>
-          <td style="padding:0;">
-            <img src="{LOGO_URL}" alt="AlphaBook" width="{LOGO_W}" height="{LOGO_H}"
-                 style="width:{LOGO_W}px;height:{LOGO_H}px;display:block;border:0;">
-          </td>
-          <td style="padding:0 0 0 10px;font-weight:400;font-size:13px;color:#888;vertical-align:middle;">
-            &middot; Alpha Fund
-          </td>
-        </tr>
-      </table>
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>
       {cta}
