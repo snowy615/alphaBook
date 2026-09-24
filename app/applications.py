@@ -242,8 +242,8 @@ CV_RESPONSE_KEYS = {"motivation", "fermi"}
 
 # The interview: two questions from the question bank (easy, then hard), each
 # 8 minutes with two predefined hints on a fixed schedule (INTERVIEW_HINTS),
-# plus how the candidate comes across. Out of 15; the CV-project criterion
-# only ever takes points away. Two rules are applied automatically (see
+# plus how the candidate comes across. Out of 15, adjusted by the CV-project
+# criterion (+2 to -8). Two rules are applied automatically (see
 # _checked_interview_rubric): the hard question scores 0 when the easy one
 # scored 0-2, since they never reach it, and adaptability is full marks when
 # both questions were solved with no hint at all, since there was no hint to
@@ -280,12 +280,22 @@ INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
         {"points": 3, "label": "Takes the hint immediately and develops it well beyond (e.g. applies it in a new way). "
                               "Automatic when both questions were solved with no hint."},
     ]},
-    {"key": "cv_project", "label": "CV project discussion (penalty only)", "options": [
+    # Any whole number from +2 to -8, at the interviewer's judgement; the
+    # labelled points are anchors, and the unlabelled ones sit between them.
+    {"key": "cv_project", "label": "CV project discussion (+2 to −8)", "scale": True, "options": [
+        {"points": 2, "label": "Really impressive experience, and they can back it up in detail."},
+        {"points": 1, "label": ""},
         {"points": 0, "label": "Explains the project(s) on their CV clearly: motivation, their role, methods, results, what they learned."},
+        {"points": -1, "label": ""},
         {"points": -2, "label": "Can't explain them well: unclear on their own contribution, struggles with methods or results, "
-                               "or gives vague or inaccurate answers."},
+                               "or gives vague answers."},
+        *({"points": p, "label": ""} for p in range(-3, -8, -1)),
+        {"points": -8, "label": "Overstated their experience and doesn't understand what they claim to have done."},
     ]},
 ]
+# The interview is out of 15. The CV-project criterion adjusts that: up to
+# 2 on top for outstanding, well-backed-up experience, or as much as 8 off
+# for overstated experience, so a total can be over 15 or below 0.
 INTERVIEW_MAX = 15
 
 # The hint schedule, per question (each is 8 minutes). Timed from when the
@@ -675,7 +685,8 @@ async def _send_submission_confirmation(application: dict) -> None:
 
 async def _send_fast_track_confirmation(application: dict) -> None:
     """The Fast-Track counterpart to _send_submission_confirmation: no
-    written assessment to mention, since there wasn't one."""
+    written assessment to mention, since there wasn't one, and they go
+    straight to interview, so it asks for their availability."""
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
@@ -683,14 +694,17 @@ async def _send_fast_track_confirmation(application: dict) -> None:
     programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
-        subject=f"Alpha Fund: your {programme} application is in",
-        title="Application received",
+        subject=f"Alpha Fund: you're through to interview for {programme}",
+        title="Through to interview",
         body_html=(
             f"<p>Hi {name},</p>"
             f"<p>This confirms your CV for <strong>{programme}</strong> has been submitted. "
-            f"As a Fast-Track applicant there's no written assessment. The committee reviews "
-            f"your CV directly, and we will be in touch with a decision.</p>"
+            f"As a Fast-Track applicant there's no written assessment: you go straight "
+            f"through to interview.</p>"
+            f"<p>Please enter your availability on the portal so the committee can schedule "
+            f"your interview.</p>"
         ),
+        cta_label="Enter your availability", cta_url=f"{BASE_URL}/apply",
     )
 
 
@@ -1136,14 +1150,20 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
     application["linkedin"] = (payload.linkedin or "").strip()[:300] or None
 
     if application.get("event_ticket") == EVENT_TICKET_FAST_TRACK:
-        application["status"] = S_SUBMITTED
-        application["submitted_at"] = _now()
+        # Fast-Track is the route straight to interview: no written
+        # assessment and no CV-screen decision, so the application lands
+        # shortlisted and the candidate can give their availability now.
+        now = _now()
+        application["status"] = S_SHORTLISTED
+        application["submitted_at"] = now
+        application["shortlisted_at"] = now
+        application["shortlisted_by"] = "Fast-Track"
         await _save(uid, application)
         if not application.get("confirmation_sent_at"):
             await _send_fast_track_confirmation(application)
             application["confirmation_sent_at"] = _now()
             await _save(uid, application)
-        return {"ok": True, "status": S_SUBMITTED}
+        return {"ok": True, "status": S_SHORTLISTED}
 
     application["status"] = S_OA_READY
     await _save(uid, application)
@@ -1337,9 +1357,7 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     interview itself.
     """
     reviews = application.get("reviews") or {}
-    # Only rubric scores count toward the CV average. A CV score entered
-    # before the rubric was on a different (1-10) scale, so averaging it in
-    # would be meaningless; it's still listed, marked as the old scale.
+    # A score only exists once its rubric is complete (see submit_score).
     cv_scores = [r["cv_score"] for r in reviews.values()
                  if r.get("cv_rubric") and r.get("cv_score") is not None]
 
@@ -1349,8 +1367,6 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     def _avg(scores: List[int]) -> Optional[float]:
         return round(sum(scores) / len(scores), 1) if scores else None
 
-    # As with the CV, only rubric scores count: an interview score entered
-    # before the rubric was out of 10, not 15.
     interview_scores = [r["interview_score"] for r in reviews.values()
                         if r.get("interview_rubric") and r.get("interview_score") is not None]
     return {
@@ -1472,35 +1488,41 @@ async def _list_reviewers() -> List[Dict[str, str]]:
 
 
 async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
-    """Every applicant, strongest reviewer-scored average first — shared by
-    the admin page and the Excel export so the two never disagree."""
+    """Every applicant, ranked by CV round score (the CV screen's ranking) —
+    shared by the admin page and the Excel export so the two never disagree.
+
+    Two scores per row, both on a 10-point scale so applicants scored out of
+    different totals compare fairly (the CV round is out of 15, or 11 for
+    Fast-Track; the interview out of 15):
+
+    * ``cv_rank_score``: the CV round alone. What ``rank`` is by.
+    * ``combined_score``: the average of the CV round and the interview
+      round, which the page ranks the shortlist by. With no interview
+      scored yet it's just the CV round.
+
+    Someone nobody has finished scoring sorts to the bottom rather than
+    reading as a zero, since they haven't had their turn.
+    """
     docs = await db_module.db.collection(COLLECTION).get()
     rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=viewer_id) for d in docs]
 
-    # Ranked by the average of the CV, written and interview reviewer scores
-    # — there is no auto-graded component any more, so this average *is* the
-    # ranking. An application nobody has scored yet sorts to the bottom
-    # rather than being read as a zero, since it hasn't had its turn.
-    # The CV rubric (which includes the written answers) is out of 15, or 11
-    # for Fast-Track, and the interview out of 15, so both are put on the
-    # same 10-point scale before combining.
-    def _combined(r: Dict[str, Any]) -> Optional[float]:
-        review = r["review"]
-        cv = review["cv_avg"] * SCORE_MAX / review["cv_max"] if review["cv_avg"] is not None else None
-        interview = (review["interview_avg"] * SCORE_MAX / review["interview_max"]
-                     if review["interview_avg"] is not None else None)
-        parts = [v for v in (cv, interview) if v is not None]
-        return round(sum(parts) / len(parts), 2) if parts else None
+    def _on_ten(avg: Optional[float], out_of: int) -> Optional[float]:
+        return round(avg * SCORE_MAX / out_of, 2) if avg is not None else None
 
     for r in rows:
-        r["combined_score"] = _combined(r)
+        review = r["review"]
+        cv = _on_ten(review["cv_avg"], review["cv_max"])
+        interview = _on_ten(review["interview_avg"], review["interview_max"])
+        parts = [v for v in (cv, interview) if v is not None]
+        r["cv_rank_score"] = cv
+        r["combined_score"] = round(sum(parts) / len(parts), 2) if parts else None
     rows.sort(key=lambda r: (
-        r["combined_score"] is None,
-        -(r["combined_score"] or 0),
+        r["cv_rank_score"] is None,
+        -(r["cv_rank_score"] or 0),
         (r["username"] or "").lower(),
     ))
     for i, r in enumerate(rows, start=1):
-        r["rank"] = i if r["combined_score"] is not None else None
+        r["rank"] = i if r["cv_rank_score"] is not None else None
     return rows
 
 
@@ -1623,16 +1645,12 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         def _cv(e: Dict[str, Any]) -> str:
             if e.get("cv_score") is None:
                 return "—"
-            if e.get("cv_rubric"):
-                return f"{e['cv_score']}/{e.get('cv_max') or r['review']['cv_max']}"
-            return f"{e['cv_score']}/10 (old scale)"
+            return f"{e['cv_score']}/{e.get('cv_max') or r['review']['cv_max']}"
 
         def _interview(e: Dict[str, Any]) -> str:
             if e.get("interview_score") is None:
                 return "—"
-            if e.get("interview_rubric"):
-                return f"{e['interview_score']}/{INTERVIEW_MAX}"
-            return f"{e['interview_score']}/10 (old scale)"
+            return f"{e['interview_score']}/{INTERVIEW_MAX}"
 
         reviewer_notes = "; ".join(
             f"{e['reviewer_name']}: CV {_cv(e)}, interview {_interview(e)}"
@@ -1797,9 +1815,7 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
         complete = len(interview_rubric) == len(INTERVIEW_RUBRIC)
         entry.update({
             "interview_rubric": interview_rubric,
-            # Floored at 0: the CV-project penalty can't take a total below
-            # nothing.
-            "interview_score": max(0, sum(interview_rubric.values())) if complete else None,
+            "interview_score": sum(interview_rubric.values()) if complete else None,
             "interview_max": INTERVIEW_MAX,
         })
     if "note" in fields:

@@ -24,6 +24,7 @@
     .ig-pts { width: 56px; text-align: center !important; font-weight: 700; font-variant-numeric: tabular-nums; }
     .ig-max { width: 60px; text-align: center !important; font-weight: 700; color: var(--brand); font-variant-numeric: tabular-nums; }
     .ig-neg { color: var(--red); }
+    .ig-table td.msp-muted { color: var(--muted); }
     .ig-total td { border-top: 1px solid var(--border-strong); font-weight: 700; }
     .ig-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 12px; }
     .ig-step { border: 1px solid var(--border); background: var(--panel); padding: 10px 12px; }
@@ -67,19 +68,23 @@
       <table class="ig-table">
         <thead><tr><th>Criterion</th><th class="ig-pts">Score</th><th>What it looks like</th><th class="ig-max">Max</th></tr></thead>
         {% for c in interview_rubric %}
-        {% set top = c.options | map(attribute="points") | max %}
+        {% set shown = c.options | selectattr("label") | list %}
+        {% set rows_n = shown | length + (1 if c.scale else 0) %}
         <tbody class="ig-crit">
-          {% for o in c.options %}
+          {% for o in shown %}
           <tr>
-            {% if loop.first %}<td class="ig-name" rowspan="{{ c.options | length }}">{{ c.label }}</td>{% endif %}
-            <td class="ig-pts{% if o.points < 0 %} ig-neg{% endif %}">{{ o.points }}</td>
+            {% if loop.first %}<td class="ig-name" rowspan="{{ rows_n }}">{{ c.label }}</td>{% endif %}
+            <td class="ig-pts{% if o.points < 0 %} ig-neg{% endif %}">{{ "+" if o.points > 0 and c.scale }}{{ o.points | string | replace("-", "−") }}</td>
             <td>{{ o.label }}</td>
-            {% if loop.first %}<td class="ig-max" rowspan="{{ c.options | length }}">{{ top }}</td>{% endif %}
+            {% if loop.first %}<td class="ig-max" rowspan="{{ rows_n }}">{% if c.scale %}+{% endif %}{{ c.options | map(attribute="points") | max }}</td>{% endif %}
           </tr>
           {% endfor %}
+          {% if c.scale %}
+          <tr><td class="ig-pts">…</td><td class="msp-muted">Or any whole number in between, at your judgement.</td></tr>
+          {% endif %}
         </tbody>
         {% endfor %}
-        <tbody><tr class="ig-total"><td colspan="3">Total (the CV-project penalty can't take it below 0)</td>
+        <tbody><tr class="ig-total"><td colspan="3">Total: 15, plus or minus the CV-project adjustment (so it can be above 15 or below 0)</td>
           <td class="ig-max">{{ interview_max }}</td></tr></tbody>
       </table>
     </div>

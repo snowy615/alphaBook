@@ -234,6 +234,18 @@
     .sc-cues li b { display: inline-block; width: 38px; font-variant-numeric: tabular-nums; }
     .sc-cues li.is-past { color: var(--text); }
     .sc-cues li.is-now { border-left-color: var(--brand); background: var(--brand-wash); color: var(--text); }
+    .sc-scale-opt { cursor: pointer; }
+    .sc-scale-opt input { position: absolute; opacity: 0; pointer-events: none; }
+    .sc-scale-opt span {
+      display: inline-block; min-width: 38px; padding: 7px 0; text-align: center; font-weight: 600;
+      border: 1px solid var(--border-strong, var(--border)); border-radius: 6px; font-variant-numeric: tabular-nums;
+    }
+    .sc-scale-opt span.sc-neg { color: var(--red); }
+    .sc-scale-opt input:checked + span { border-color: var(--brand); background: var(--brand-wash); }
+    .sc-scale-opt input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .sc-anchors { list-style: none; margin: 8px 0 0; padding: 0; font-size: 13px; line-height: 1.45; display: grid; gap: 4px; }
+    .sc-anchors b { display: inline-block; min-width: 26px; font-variant-numeric: tabular-nums; }
+    .sc-anchors b.sc-neg { color: var(--red); }
 
     /* ── CV rubric ─────────────────────────────────────────────────────────── */
     .apa-rubric { margin: 14px 0 12px; }
@@ -404,7 +416,8 @@
     <div class="card msp-panel apa-summary">
       <div class="head">
         <h3>Applicants</h3>
-        <span class="msp-muted">{{ scored }} of {{ total }} scored by a reviewer · ranked by average score</span>
+        <span class="msp-muted"><span id="apaRankNote">Ranked by CV round score</span> · {{ scored }} of {{ total }} scored</span>
+        <button type="button" class="btn" id="apaUnreviewed" aria-pressed="false">All unreviewed <span class="n"></span></button>
         <a class="btn ghost" href="/apply/admin/interview-guide">Interview guide</a>
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
       </div>
@@ -420,8 +433,13 @@
             {% for r in rows %}
             <tr class="apa-item" data-stage="{{ stage_of.get(r.status, 'started') }}"
                 data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
+                data-uid="{{ r.user_id }}"
+                data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
+                data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
+                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n else '0' }}"
+                data-name="{{ (r.full_name or r.username) | lower }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
-              <td class="apa-rank">{{ r.rank if r.rank else "—" }}</td>
+              <td class="apa-rank" data-rank>{{ r.rank if r.rank else "—" }}</td>
               <td>
                 <a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
                 <div class="msp-muted" style="font-size:12px;">{{ r.username }}</div>
@@ -507,11 +525,16 @@
     <div class="card msp-panel apa-card apa-item" id="a-{{ r.user_id }}"
          data-stage="{{ stage_of.get(r.status, 'started') }}"
          data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
+         data-uid="{{ r.user_id }}"
+                data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
+                data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
+                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n else '0' }}"
+                data-name="{{ (r.full_name or r.username) | lower }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
           <h3 style="margin:0;">
-            {% if r.rank %}{{ r.rank }}.{% endif %} {{ r.full_name or r.username }}
+            <span data-rank-prefix>{% if r.rank %}{{ r.rank }}.{% endif %}</span> {{ r.full_name or r.username }}
           </h3>
           <span class="apa-email">
             {{ r.username }}{% if r.oxford_email %} · {{ r.oxford_email }}
@@ -650,8 +673,8 @@
             {% for e in r.review.entries %}
             <li>
               <strong>{{ e.reviewer_name }}</strong>:
-              CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("cv_score") is not none %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %},
-              interview {% if e.get("interview_score") is not none and e.get("interview_rubric") %}{{ e.interview_score }}/{{ r.review.interview_max }}{% elif e.get("interview_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("interview_score") is not none %}{{ e.interview_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %}
+              CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% else %}–{% endif %},
+              interview {% if e.get("interview_score") is not none and e.get("interview_rubric") %}{{ e.interview_score }}/{{ r.review.interview_max }}{% elif e.get("interview_rubric") %}<span class="msp-muted">in progress</span>{% else %}–{% endif %}
               {% if e.note %}<div class="apa-review-note">{{ e.note }}</div>{% endif %}
             </li>
             {% endfor %}
@@ -1088,6 +1111,25 @@
       return { rb: out, locked };
     }
 
+    const signed = (n) => n > 0 ? `+${n}` : n < 0 ? `\u2212${-n}` : "0";
+
+    // A criterion scored anywhere on a range (CV project, +2 to -8): one
+    // button per point, with the labelled anchors listed underneath.
+    function scaleHtml(c) {
+      return `
+        <div class="sc-scale" role="radiogroup" aria-label="${escHtml(c.label)}">
+          ${c.options.map((o) => `
+            <label class="sc-scale-opt">
+              <input type="radio" name="iv-${c.key}" value="${o.points}">
+              <span class="${o.points < 0 ? "sc-neg" : ""}">${signed(o.points)}</span>
+            </label>`).join("")}
+        </div>
+        <ul class="sc-anchors">
+          ${c.options.filter((o) => o.label).map((o) =>
+            `<li><b class="${o.points < 0 ? "sc-neg" : ""}">${signed(o.points)}</b> ${escHtml(o.label)}</li>`).join("")}
+        </ul>`;
+    }
+
     function renderInterview(box) {
       const d = sc.d, rv = d.review;
       box.innerHTML = `
@@ -1098,13 +1140,13 @@
           <tbody>${INTERVIEW_RUBRIC.map((c) => `
             <tr data-key="${c.key}">
               <th scope="row">${escHtml(c.label)}<div class="sc-auto" data-auto></div></th>
-              <td><div class="sc-opts-v" role="radiogroup" aria-label="${escHtml(c.label)}">
+              <td>${c.scale ? scaleHtml(c) : `<div class="sc-opts-v" role="radiogroup" aria-label="${escHtml(c.label)}">
                 ${c.options.map((o) => `
                   <label class="sc-opt-v">
                     <input type="radio" name="iv-${c.key}" value="${o.points}">
                     <b class="${o.points < 0 ? "sc-neg" : ""}">${o.points}</b><span>${escHtml(o.label)}</span>
                   </label>`).join("")}
-              </div></td>
+              </div>`}</td>
             </tr>`).join("")}
           </tbody>
           <tfoot><tr><th scope="row">Total</th>
@@ -1126,7 +1168,7 @@
         });
         const picked = Object.keys(rb).length;
         const sum = Object.values(rb).reduce((a, b) => a + b, 0);
-        box.querySelector("[data-total]").textContent = Math.max(0, sum);
+        box.querySelector("[data-total]").textContent = sum;
         const left = INTERVIEW_RUBRIC.length - picked;
         box.querySelector("[data-left]").innerHTML = left
           ? `<span class="msp-muted">${left} still to score. The total only counts once all are scored.</span>` : "";
@@ -1393,18 +1435,62 @@
       const items = Array.from(document.querySelectorAll(".apa-item"));
       const tabs = Array.from(document.querySelectorAll(".apa-stage-tab"));
       const noneEl = document.getElementById("apaNone");
+      const unreviewedBtn = document.getElementById("apaUnreviewed");
+      const rankNote = document.getElementById("apaRankNote");
       let stage = "all";
+      let unreviewed = false;   // the "All unreviewed" toggle, on top of the tabs
 
       // "mine" is its own dimension (who's interviewing, not lifecycle
       // stage), so it overrides data-stage entirely rather than combining
       // with it — a pending interview can be at any stage from shortlisted
-      // on, and the point of the tab is to not have to know which.
+      // on, and the point of the tab is to not have to know which. The
+      // unreviewed view likewise spans every stage.
       const stageOk = (el, s) => s === "all" ? true : s === "mine" ? el.dataset.mine === "1" : el.dataset.stage === s;
-      const matches = (el, q) => stageOk(el, stage) && (!q || el.dataset.q.includes(q));
+      const matches = (el, q) => (unreviewed ? el.dataset.unreviewed === "1" : stageOk(el, stage))
+        && (!q || el.dataset.q.includes(q));
+
+      // The shortlist is ranked by the average of the CV and interview
+      // rounds; everything else by the CV round alone. Both scores are on
+      // a 10-point scale already. Unscored sorts last, then by name.
+      function rankKey() { return stage === "shortlist" ? "combined" : "cv"; }
+      function order(els, key) {
+        return els.slice().sort((a, b) => {
+          const x = a.dataset[key], y = b.dataset[key];
+          if ((x === "") !== (y === "")) return x === "" ? 1 : -1;
+          if (x !== "" && Number(x) !== Number(y)) return Number(y) - Number(x);
+          return a.dataset.name.localeCompare(b.dataset.name);
+        });
+      }
+      function rerank() {
+        const key = rankKey();
+        rankNote.textContent = unreviewed ? "Submitted, not yet scored by anyone"
+          : key === "combined" ? "Ranked by the average of the CV and interview rounds" : "Ranked by CV round score";
+        const rows = order(items.filter((el) => el.tagName === "TR"), key);
+        const cards = order(items.filter((el) => el.tagName !== "TR"), key);
+        rows.forEach((el) => el.parentNode.appendChild(el));
+        cards.forEach((el) => el.parentNode.appendChild(el));
+        // Numbered within what's showing, so the shortlist tab reads 1, 2, 3...
+        let n = 0;
+        const rankOf = {};
+        rows.forEach((el) => {
+          if (el.classList.contains("hidden") || el.dataset[key] === "") return;
+          rankOf[el.dataset.uid] = ++n;
+        });
+        items.forEach((el) => {
+          const r = rankOf[el.dataset.uid];
+          const cell = el.querySelector("[data-rank]");
+          if (cell) cell.textContent = r || "—";
+          const prefix = el.querySelector("[data-rank-prefix]");
+          if (prefix) prefix.textContent = r ? r + "." : "";
+        });
+      }
 
       function apply() {
         const q = searchEl.value.trim().toLowerCase();
         items.forEach((el) => el.classList.toggle("hidden", !matches(el, q)));
+        rerank();
+        unreviewedBtn.querySelector(".n").textContent = items.filter((el) => el.tagName === "TR"
+          && el.dataset.unreviewed === "1" && (!q || el.dataset.q.includes(q))).length;
         // Counts reflect the search too, so a tab never promises more than it shows.
         tabs.forEach((tab) => {
           const s = tab.dataset.stage;
@@ -1416,8 +1502,18 @@
         noneEl.classList.toggle("hidden", shown);
       }
 
+      function setUnreviewed(on) {
+        unreviewed = on;
+        unreviewedBtn.setAttribute("aria-pressed", on);
+        unreviewedBtn.classList.toggle("primary", on);
+        unreviewedBtn.firstChild.textContent = on ? "Show ranking " : "All unreviewed ";
+        tabs.forEach((t) => t.classList.toggle("is-active", !on && t.dataset.stage === stage));
+      }
+      unreviewedBtn.addEventListener("click", () => { setUnreviewed(!unreviewed); apply(); });
+
       tabs.forEach((tab) => tab.addEventListener("click", () => {
         stage = tab.dataset.stage;
+        setUnreviewed(false);
         tabs.forEach((t) => t.classList.toggle("is-active", t === tab));
         apply();
       }));
@@ -1431,6 +1527,7 @@
         const target = document.getElementById(link.getAttribute("href").slice(1));
         if (target && target.classList.contains("hidden")) {
           stage = "all";
+          setUnreviewed(false);
           searchEl.value = "";
           tabs.forEach((t) => t.classList.toggle("is-active", t.dataset.stage === "all"));
           apply();

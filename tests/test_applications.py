@@ -465,7 +465,7 @@ class TestScoring:
         with pytest.raises(HTTPException):
             asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"easy": 5}), reviewer))
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"cv_project": -1}), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"cv_project": -9}), reviewer))
 
     def test_requires_at_least_one_score(self, monkeypatch):
         self._patch(monkeypatch, self._base())
@@ -1916,21 +1916,22 @@ class TestConfirmCvWithApplicantInfo:
         assert stored["linkedin"] == "https://linkedin.com/in/jo"
         assert sent == []   # no confirmation email yet — the OA hasn't been sat
 
-    def test_fast_track_skips_straight_to_submitted_with_its_own_email(self, monkeypatch):
+    def test_fast_track_goes_straight_to_shortlisted_with_its_own_email(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="fast_track"))
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.confirm_cv(
             ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
 
-        assert result["status"] == ap.S_SUBMITTED
+        assert result["status"] == ap.S_SHORTLISTED
         stored = fake_db.collections[ap.COLLECTION]["u1"]
-        assert stored["status"] == ap.S_SUBMITTED
-        assert "submitted_at" in stored
+        assert stored["status"] == ap.S_SHORTLISTED
+        assert "submitted_at" in stored and "shortlisted_at" in stored
+        assert stored["shortlisted_by"] == "Fast-Track"
         assert "oa" not in stored   # never sat one
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@merton.ox.ac.uk"
-        assert "no written assessment" in sent[0]["title"].lower() or "received" in sent[0]["title"].lower()
+        assert sent[0]["title"] == "Through to interview"
 
     def test_fast_track_confirmation_email_is_sent_only_once(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="fast_track"))
@@ -3010,10 +3011,13 @@ class TestInterviewRubric:
     def _entry(self, fake_db):
         return fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
 
-    def test_the_rubric_adds_up_to_fifteen(self):
+    def test_the_rubric_is_fifteen_plus_the_cv_project_adjustment(self):
         assert [c["key"] for c in ap.INTERVIEW_RUBRIC] == [
             "likability", "communication", "easy", "hard", "adaptability", "cv_project"]
-        assert sum(max(o["points"] for o in c["options"]) for c in ap.INTERVIEW_RUBRIC) == ap.INTERVIEW_MAX == 15
+        base = [c for c in ap.INTERVIEW_RUBRIC if c["key"] != "cv_project"]
+        assert sum(max(o["points"] for o in c["options"]) for c in base) == ap.INTERVIEW_MAX == 15
+        project = next(c for c in ap.INTERVIEW_RUBRIC if c["key"] == "cv_project")
+        assert [o["points"] for o in project["options"]] == list(range(2, -9, -1))   # every point, +2 to -8
 
     def test_the_score_is_the_total(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
@@ -3025,10 +3029,15 @@ class TestInterviewRubric:
         self._score({"likability": 1, "communication": 1, "easy": 3, "hard": 2, "adaptability": 2, "cv_project": -2})
         assert self._entry(fake_db)["interview_score"] == 7
 
-    def test_the_total_never_goes_below_zero(self, monkeypatch):
+    def test_the_total_can_go_below_zero(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
-        self._score({"likability": 0, "communication": 0, "easy": 0, "hard": 0, "adaptability": 0, "cv_project": -2})
-        assert self._entry(fake_db)["interview_score"] == 0
+        self._score({"likability": 0, "communication": 1, "easy": 0, "hard": 0, "adaptability": 0, "cv_project": -8})
+        assert self._entry(fake_db)["interview_score"] == -7
+
+    def test_outstanding_cv_projects_can_add_two(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({**iv(15), "cv_project": 2})
+        assert self._entry(fake_db)["interview_score"] == 17
 
     @pytest.mark.parametrize("easy", [0, 1, 2])
     def test_the_hard_question_is_zero_when_the_easy_one_scored_two_or_less(self, monkeypatch, easy):
@@ -3078,3 +3087,65 @@ class TestInterviewRubric:
         assert "Adaptability / use of hints" in html and "Checkpoint 1" in html
         assert "3:00" in html and "5:00" in html and "No early hints" in html
         assert "\u2014" not in html   # no em dashes in the guide
+
+
+class TestReviewListRanking:
+    """The review list ranks by CV round score, the shortlist by the average
+    of the CV and interview rounds, and "All unreviewed" shows everyone
+    submitted whom nobody has finished scoring."""
+
+    def _rows(self, monkeypatch, applications):
+        _flow_db(monkeypatch, applications=applications)
+        return asyncio.run(ap._ranked_rows(viewer_id="r1"))
+
+    def test_ranked_by_cv_round_score_alone(self, monkeypatch):
+        rows = self._rows(monkeypatch, {
+            "hi_cv": {"user_id": "hi_cv", "username": "a", "status": ap.S_SHORTLISTED,
+                      "reviews": {"r1": {"cv_rubric": rubric(14), "cv_score": 14,
+                                         "interview_rubric": iv(3), "interview_score": 3}}},
+            "lo_cv": {"user_id": "lo_cv", "username": "b", "status": ap.S_SHORTLISTED,
+                      "reviews": {"r1": {"cv_rubric": rubric(9), "cv_score": 9,
+                                         "interview_rubric": iv(15), "interview_score": 15}}},
+            "none": {"user_id": "none", "username": "c", "status": ap.S_SUBMITTED},
+        })
+        assert [r["user_id"] for r in rows] == ["hi_cv", "lo_cv", "none"]
+        assert [r["rank"] for r in rows] == [1, 2, None]
+        # The shortlist's ranking is the average of the two rounds, each /10:
+        # 14/15 and 3/15 vs 9/15 and 15/15.
+        by_id = {r["user_id"]: r for r in rows}
+        assert by_id["hi_cv"]["combined_score"] == 5.67
+        assert by_id["lo_cv"]["combined_score"] == 8.0
+
+    def test_fast_track_cv_is_compared_fairly(self, monkeypatch):
+        # 11/11 for Fast-Track beats 14/15 once both are on the same scale.
+        rows = self._rows(monkeypatch, {
+            "ft": {"user_id": "ft", "username": "a", "status": ap.S_SHORTLISTED, "event_ticket": "fast_track",
+                   "reviews": {"r1": {"cv_rubric": rubric(11, fast_tracked=True), "cv_score": 11}}},
+            "std": {"user_id": "std", "username": "b", "status": ap.S_SUBMITTED,
+                    "reviews": {"r1": {"cv_rubric": rubric(14), "cv_score": 14}}},
+        })
+        assert [r["user_id"] for r in rows] == ["ft", "std"]
+
+    def test_the_page_carries_what_the_ranking_and_unreviewed_view_need(self, monkeypatch):
+        _flow_db(monkeypatch, applications={
+            "done": {"user_id": "done", "username": "a", "status": ap.S_SUBMITTED,
+                     "reviews": {"r1": {"cv_rubric": rubric(12), "cv_score": 12}}},
+            "half": {"user_id": "half", "username": "b", "status": ap.S_SUBMITTED,
+                     "reviews": {"r1": {"cv_rubric": {"major": 2}, "cv_score": None}}},
+            "new": {"user_id": "new", "username": "c", "status": ap.S_SUBMITTED},
+            "early": {"user_id": "early", "username": "d", "status": ap.S_CV},
+        })
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, User(id="r1", username="al", is_admin=True))).body.decode()
+        import re
+
+        def attrs(uid):
+            m = re.search(r'<tr class="apa-item"[^>]*data-uid="%s"[^>]*>' % uid, html, re.S)
+            return m.group(0)
+        assert 'data-cv="8.0"' in attrs("done") and 'data-unreviewed="0"' in attrs("done")
+        assert 'data-cv=""' in attrs("half") and 'data-unreviewed="1"' in attrs("half")   # unfinished counts as unreviewed
+        assert 'data-unreviewed="1"' in attrs("new")
+        assert 'data-unreviewed="0"' in attrs("early")   # nothing to review yet
+        assert 'id="apaUnreviewed"' in html and "All unreviewed" in html
