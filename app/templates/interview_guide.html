@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Interview guide - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .ig-section { margin-bottom: 30px; }
+    .ig-section-title {
+      font-size: 13px; text-transform: uppercase; letter-spacing: .06em;
+      color: var(--muted); margin: 0 0 10px;
+    }
+    .ig-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); background: var(--panel); }
+    .ig-table th, .ig-table td { padding: 9px 12px; text-align: left; vertical-align: top; font-size: 14px; line-height: 1.5; }
+    .ig-table thead th {
+      font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border-strong);
+    }
+    .ig-table tbody.ig-crit { border-top: 1px solid var(--border-strong); }
+    .ig-table tbody.ig-crit tr + tr td { border-top: 1px solid var(--border); }
+    .ig-name { width: 24%; font-weight: 600; }
+    .ig-pts { width: 56px; text-align: center !important; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .ig-max { width: 60px; text-align: center !important; font-weight: 700; color: var(--brand); font-variant-numeric: tabular-nums; }
+    .ig-neg { color: var(--red); }
+    .ig-total td { border-top: 1px solid var(--border-strong); font-weight: 700; }
+    .ig-schedule { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 0 0 12px; }
+    .ig-step { border: 1px solid var(--border); background: var(--panel); padding: 10px 12px; }
+    .ig-step b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; color: var(--brand); }
+    .ig-step span { font-size: 13px; color: var(--muted); }
+    .ig-list { margin: 0; padding-left: 20px; line-height: 1.65; font-size: 14px; }
+    .ig-list li { margin-bottom: 6px; }
+    .ig-list strong { color: var(--text); }
+    @media (max-width: 640px) {
+      .ig-name { width: auto; }
+      .ig-table th, .ig-table td { padding: 8px; font-size: 13px; }
+    }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Interview guide</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/apply/admin" class="btn ghost">Back to applications</a>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 980px;">
+    <div class="msp-hero">
+      <h2>Interview rubric ({{ interview_max }} points)</h2>
+      <p>Assessing problem solving, learning mindset, and fit for the team. Two questions from the
+        question bank, easy then hard, {{ question_minutes }} minutes each.</p>
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">Scoring</p>
+      <table class="ig-table">
+        <thead><tr><th>Criterion</th><th class="ig-pts">Score</th><th>What it looks like</th><th class="ig-max">Max</th></tr></thead>
+        {% for c in interview_rubric %}
+        {% set top = c.options | map(attribute="points") | max %}
+        <tbody class="ig-crit">
+          {% for o in c.options %}
+          <tr>
+            {% if loop.first %}<td class="ig-name" rowspan="{{ c.options | length }}">{{ c.label }}</td>{% endif %}
+            <td class="ig-pts{% if o.points < 0 %} ig-neg{% endif %}">{{ o.points }}</td>
+            <td>{{ o.label }}</td>
+            {% if loop.first %}<td class="ig-max" rowspan="{{ c.options | length }}">{{ top }}</td>{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% endfor %}
+        <tbody><tr class="ig-total"><td colspan="3">Total (the CV-project penalty can't take it below 0)</td>
+          <td class="ig-max">{{ interview_max }}</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">When to give hints</p>
+      <div class="ig-schedule">
+        <div class="ig-step"><b>0:00 to {{ (interview_hints[0].at // 60) }}:00</b><span>No hints. Answer clarifying questions only.</span></div>
+        {% for h in interview_hints %}
+        <div class="ig-step"><b>{{ h.at // 60 }}:00</b><span><strong>{{ h.label }}</strong>, {{ h.detail }}.</span></div>
+        {% endfor %}
+        <div class="ig-step"><b>{{ question_minutes }}:00</b><span>Stop and move on.</span></div>
+      </div>
+      <ul class="ig-list">
+        <li><strong>Start the clock</strong> once the question has been read out and any clarifying questions
+          answered. The scoring view has a timer that calls out each step.</li>
+        <li><strong>Checkpoints decide whether a hint is needed.</strong> Each question in the bank lists Hint 1,
+          Hint 2, and the checkpoint each hint gets the candidate to. At 3:00, give Hint 1 only if they haven't
+          reached Checkpoint 1; at 5:00, give Hint 2 only if they haven't reached Checkpoint 2. That's the whole
+          test: not how confident they seem, or whether they ask.</li>
+        <li><strong>No early hints.</strong> If a candidate asks before a hint is due, tell them the next one comes at
+          its time if they still need it. Give each hint at the next natural pause after its time, within about
+          30 seconds, rather than cutting them off mid-sentence.</li>
+        <li><strong>Only the official wording.</strong> Read Hint 1 and Hint 2 as written in the question bank. Don't
+          give extra hints, rephrase them into bigger ones, or lead with questions that amount to a hint.</li>
+        <li><strong>Clarification isn't a hint.</strong> Answering a question about wording or assumptions is allowed
+          and doesn't affect the score.</li>
+      </ul>
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">Scoring rules</p>
+      <ul class="ig-list">
+        <li><strong>Hard-question gate.</strong> Move on to the hard question only if the easy question scored 3 or 4.
+          With 0, 1 or 2, the hard question scores 0 automatically.</li>
+        <li><strong>Adaptability is scored on the hints actually given.</strong> If the candidate solved both questions
+          with no hint at all (easy 4 and hard 4), adaptability is 3 automatically: there was nothing to adapt to, and
+          needing no help is the best possible outcome. If hints were given on only one question, score how they used
+          those.</li>
+        <li><strong>Score what they achieved in the time with the hints due,</strong> not whether they eventually reach
+          the answer with extra guidance.</li>
+        <li><strong>Likability and communication:</strong> most candidates should get 1. Keep 2 for genuinely stand-out
+          cases.</li>
+        <li><strong>Same structure and timing for every candidate,</strong> as closely as possible. Use the descriptions
+          as guidelines alongside your overall impression of the interview.</li>
+      </ul>
+    </div>
+  </div>
+</body>
+
+</html>

@@ -191,9 +191,9 @@ DECIDED = {S_ACCEPTED, S_REJECTED}
 # written response actually exist to be read, through to a final decision.
 SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 
-# The interview score is on a 1-10 scale for now (its own criteria are
-# still to come). The CV, written answers included, is scored against
-# CV_RUBRIC below.
+# The CV (written answers included) is scored against CV_RUBRIC and the
+# interview against INTERVIEW_RUBRIC, both below. SCORE_MAX is the common
+# 10-point scale they're both put on for the combined ranking.
 SCORE_MIN, SCORE_MAX = 1, 10
 NOTE_MAX_CHARS = 2000   # a reviewer's general comments on one applicant
 
@@ -238,6 +238,68 @@ CV_RUBRIC: List[Dict[str, Any]] = [
     ]},
 ]
 CV_RESPONSE_KEYS = {"motivation", "fermi"}
+
+
+# The interview: two questions from the question bank (easy, then hard), each
+# 8 minutes with two predefined hints on a fixed schedule (INTERVIEW_HINTS),
+# plus how the candidate comes across. Out of 15; the CV-project criterion
+# only ever takes points away. Two rules are applied automatically (see
+# _checked_interview_rubric): the hard question scores 0 when the easy one
+# scored 0-2, since they never reach it, and adaptability is full marks when
+# both questions were solved with no hint at all, since there was no hint to
+# adapt to.
+INTERVIEW_RUBRIC: List[Dict[str, Any]] = [
+    {"key": "likability", "label": "Likability / easy to work with", "options": [
+        {"points": 0, "label": "Poor attitude: dismissive, arrogant, unreceptive, or otherwise difficult to work with."},
+        {"points": 1, "label": "Neutral, normal interaction: professional and reasonably easy to work with."},
+        {"points": 2, "label": "Particularly pleasant, collaborative and receptive; someone you'd actively enjoy working with."},
+    ]},
+    {"key": "communication", "label": "Communication", "options": [
+        {"points": 0, "label": "Has significant difficulty articulating thoughts; hard to follow even with prompting."},
+        {"points": 1, "label": "Communicates reasoning adequately; understandable, if at times unclear or unstructured."},
+        {"points": 2, "label": "Exceptionally clear, well structured and concise; their thought process is easy to follow."},
+    ]},
+    {"key": "easy", "label": "Problem solving: easy question", "options": [
+        {"points": 0, "label": "Little or no meaningful independent progress, even after some time."},
+        {"points": 1, "label": "Some independent progress or a relevant idea, but can't develop it far."},
+        {"points": 2, "label": "Good independent progress, but needs Hint 2 to finish."},
+        {"points": 3, "label": "Solves it with only Hint 1."},
+        {"points": 4, "label": "Solves it with no hint, with sound reasoning."},
+    ]},
+    {"key": "hard", "label": "Problem solving: hard question", "options": [
+        {"points": 0, "label": "Not reached (easy question scored 0-2), or no meaningful progress."},
+        {"points": 1, "label": "Makes some meaningful independent progress."},
+        {"points": 2, "label": "Develops a sensible approach and makes good independent progress."},
+        {"points": 3, "label": "Gets close to a full solution independently, or solves it with only Hint 1."},
+        {"points": 4, "label": "Solves it with no hint, with strong reasoning or creativity."},
+    ]},
+    {"key": "adaptability", "label": "Adaptability / use of hints", "options": [
+        {"points": 0, "label": "Can't make meaningful use of the hints given, or needs the same guidance repeatedly."},
+        {"points": 1, "label": "Uses hints at a basic level, but needs continued guidance."},
+        {"points": 2, "label": "Uses hints well: gets the intended insight and carries on largely independently."},
+        {"points": 3, "label": "Takes the hint immediately and develops it well beyond (e.g. applies it in a new way). "
+                              "Automatic when both questions were solved with no hint."},
+    ]},
+    {"key": "cv_project", "label": "CV project discussion (penalty only)", "options": [
+        {"points": 0, "label": "Explains the project(s) on their CV clearly: motivation, their role, methods, results, what they learned."},
+        {"points": -2, "label": "Can't explain them well: unclear on their own contribution, struggles with methods or results, "
+                               "or gives vague or inaccurate answers."},
+    ]},
+]
+INTERVIEW_MAX = 15
+
+# The hint schedule, per question (each is 8 minutes). Timed from when the
+# question has been read out and any clarifying questions answered, and the
+# same for every candidate: a hint is given at its time only if the
+# candidate hasn't yet reached that hint's checkpoint (each question in the
+# bank lists Hint 1, Hint 2 and the checkpoint each one gets you to), and
+# never earlier, even if asked.
+INTERVIEW_QUESTION_SECONDS = 8 * 60
+INTERVIEW_HINTS = [
+    {"at": 3 * 60, "label": "Hint 1", "detail": "if they haven't reached Checkpoint 1"},
+    {"at": 5 * 60, "label": "Hint 2", "detail": "if they haven't reached Checkpoint 2"},
+    {"at": 7 * 60, "label": "Wrap up", "detail": "ask them to summarise where they've got to"},
+]
 
 
 def _cv_rubric_for(fast_tracked: bool) -> List[Dict[str, Any]]:
@@ -307,12 +369,14 @@ class ReviewScore(BaseModel):
     Only the fields actually sent are changed (the scoring view autosaves
     each edit on its own), and sending null clears that field. The CV is
     scored criterion by criterion ({criterion key: points}); the CV score is
-    their total once every criterion is scored. A bare cv_score is refused.
+    their total once every criterion is scored, and the interview the same
+    way (interview_rubric). A bare cv_score or interview_score is refused.
     The written answers are scored inside the CV rubric (its two response
     criteria), so there's no separate written score. ``note`` is the
     reviewer's general comments on the applicant, shared by every section."""
     cv_rubric: Optional[Dict[str, Optional[int]]] = None
     cv_score: Optional[int] = None
+    interview_rubric: Optional[Dict[str, Optional[int]]] = None
     interview_score: Optional[int] = None
     note: Optional[str] = None
 
@@ -1285,12 +1349,16 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     def _avg(scores: List[int]) -> Optional[float]:
         return round(sum(scores) / len(scores), 1) if scores else None
 
-    interview_scores = _given("interview_score")
+    # As with the CV, only rubric scores count: an interview score entered
+    # before the rubric was out of 10, not 15.
+    interview_scores = [r["interview_score"] for r in reviews.values()
+                        if r.get("interview_rubric") and r.get("interview_score") is not None]
     return {
         "count": len(reviews),
         "cv_avg": _avg(cv_scores),
         "cv_max": _cv_max(application.get("event_ticket") == EVENT_TICKET_FAST_TRACK),
         "interview_avg": _avg(interview_scores),
+        "interview_max": INTERVIEW_MAX,
         # How many reviewers each average is over — each section is scored
         # by whoever chose to score it, not necessarily everyone.
         "cv_n": len(cv_scores), "interview_n": len(interview_scores),
@@ -1414,12 +1482,14 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     # ranking. An application nobody has scored yet sorts to the bottom
     # rather than being read as a zero, since it hasn't had its turn.
     # The CV rubric (which includes the written answers) is out of 15, or 11
-    # for Fast-Track, and the interview out of 10, so the CV average is put
-    # on the same 10-point scale before combining.
+    # for Fast-Track, and the interview out of 15, so both are put on the
+    # same 10-point scale before combining.
     def _combined(r: Dict[str, Any]) -> Optional[float]:
         review = r["review"]
         cv = review["cv_avg"] * SCORE_MAX / review["cv_max"] if review["cv_avg"] is not None else None
-        parts = [v for v in (cv, review["interview_avg"]) if v is not None]
+        interview = (review["interview_avg"] * SCORE_MAX / review["interview_max"]
+                     if review["interview_avg"] is not None else None)
+        parts = [v for v in (cv, interview) if v is not None]
         return round(sum(parts) / len(parts), 2) if parts else None
 
     for r in rows:
@@ -1486,12 +1556,30 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "cv_rubric": CV_RUBRIC,
         "cv_response_keys": sorted(CV_RESPONSE_KEYS),
         "note_max_chars": NOTE_MAX_CHARS,
+        "interview_rubric": INTERVIEW_RUBRIC,
+        "interview_max": INTERVIEW_MAX,
+        "interview_hints": INTERVIEW_HINTS,
+        "interview_question_seconds": INTERVIEW_QUESTION_SECONDS,
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
         "fast_track_rows": fast_track_rows,
         "general_rows": general_rows,
         "fast_track_capacity": FAST_TRACK_CAPACITY,
+    })
+
+
+@router.get("/admin/interview-guide", include_in_schema=False)
+async def interview_guide(request: Request, reviewer: User = Depends(require_reviewer)):
+    """The interview rubric and its rules on one page, to read before an
+    interview. The scoring view uses the same rubric and hint schedule."""
+    return templates.TemplateResponse("interview_guide.html", {
+        "request": request,
+        "app_name": "AlphaBook",
+        "interview_rubric": INTERVIEW_RUBRIC,
+        "interview_max": INTERVIEW_MAX,
+        "interview_hints": INTERVIEW_HINTS,
+        "question_minutes": INTERVIEW_QUESTION_SECONDS // 60,
     })
 
 
@@ -1512,7 +1600,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Interview avg",
+        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Interview avg (/15)",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1539,8 +1627,15 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
                 return f"{e['cv_score']}/{e.get('cv_max') or r['review']['cv_max']}"
             return f"{e['cv_score']}/10 (old scale)"
 
+        def _interview(e: Dict[str, Any]) -> str:
+            if e.get("interview_score") is None:
+                return "—"
+            if e.get("interview_rubric"):
+                return f"{e['interview_score']}/{INTERVIEW_MAX}"
+            return f"{e['interview_score']}/10 (old scale)"
+
         reviewer_notes = "; ".join(
-            f"{e['reviewer_name']}: CV {_cv(e)}, interview {_score(e, 'interview_score')}"
+            f"{e['reviewer_name']}: CV {_cv(e)}, interview {_interview(e)}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
         )
@@ -1629,6 +1724,33 @@ def _checked_cv_rubric(raw: Dict[str, Optional[int]], fast_tracked: bool) -> Dic
     return out
 
 
+def _checked_interview_rubric(raw: Dict[str, Optional[int]]) -> Dict[str, int]:
+    """Like _checked_cv_rubric, then the two automatic rules:
+
+    * the hard question is only reached with 3 or 4 on the easy one, so an
+      easy score of 0-2 makes the hard score 0;
+    * adaptability is judged on the hints actually given, so with no hint on
+      either question (easy 4 and hard 4) it's full marks, 3.
+
+    Applied here rather than trusted from the page, so every reviewer's
+    score follows them whatever was clicked."""
+    allowed = {c["key"]: {o["points"] for o in c["options"]} for c in INTERVIEW_RUBRIC}
+    out: Dict[str, int] = {}
+    for key, points in raw.items():
+        if points is None and key in allowed:
+            continue
+        if key not in allowed:
+            raise HTTPException(400, f"Unknown interview criterion: {key}")
+        if points not in allowed[key]:
+            raise HTTPException(400, f"That isn't one of the options for {key}")
+        out[key] = int(points)
+    if out.get("easy") is not None and out["easy"] <= 2:
+        out["hard"] = 0
+    if out.get("easy") == 4 and out.get("hard") == 4:
+        out["adaptability"] = 3
+    return out
+
+
 @router.post("/admin/{user_id}/score")
 async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depends(require_reviewer)):
     """
@@ -1643,12 +1765,11 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
     sent = payload.model_fields_set
     if "cv_score" in sent and payload.cv_score is not None:
         raise HTTPException(400, "Score the CV using the criteria")
-    fields = sent & {"cv_rubric", "interview_score", "note"}
+    if "interview_score" in sent and payload.interview_score is not None:
+        raise HTTPException(400, "Score the interview using the criteria")
+    fields = sent & {"cv_rubric", "interview_rubric", "note"}
     if not fields:
         raise HTTPException(400, "Enter at least one score")
-    value = payload.interview_score
-    if "interview_score" in fields and value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
-        raise HTTPException(400, f"Interview score must be between {SCORE_MIN} and {SCORE_MAX}")
 
     application = await _load(user_id)
     if application is None:
@@ -1671,8 +1792,16 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
             "cv_score": sum(cv_rubric.values()) if complete else None,
             "cv_max": _cv_max(fast_tracked),
         })
-    if "interview_score" in fields:
-        entry["interview_score"] = payload.interview_score
+    if "interview_rubric" in fields:
+        interview_rubric = _checked_interview_rubric(payload.interview_rubric or {})
+        complete = len(interview_rubric) == len(INTERVIEW_RUBRIC)
+        entry.update({
+            "interview_rubric": interview_rubric,
+            # Floored at 0: the CV-project penalty can't take a total below
+            # nothing.
+            "interview_score": max(0, sum(interview_rubric.values())) if complete else None,
+            "interview_max": INTERVIEW_MAX,
+        })
     if "note" in fields:
         entry["note"] = (payload.note or "").strip()[:NOTE_MAX_CHARS]
     entry["updated_at"] = _now()

@@ -96,6 +96,18 @@ def rubric(total: int, fast_tracked: bool = False) -> dict:
     return out
 
 
+def iv(total: int) -> dict:
+    """A complete interview rubric adding up to `total` (0-15), filled so
+    the automatic rules (hard gate, no-hint adaptability) don't change it."""
+    order = [("easy", 4), ("likability", 2), ("communication", 2), ("adaptability", 3), ("hard", 4)]
+    out = {"cv_project": 0}
+    for key, top in order:
+        out[key] = min(top, total)
+        total -= out[key]
+    assert total == 0
+    return out
+
+
 def ago(seconds: float) -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=seconds)
 
@@ -391,7 +403,7 @@ class TestSubmissionEmail:
 class TestReviewSummary:
     def test_averages_only_the_reviewers_who_gave_that_score(self):
         application = {"reviews": {
-            "r1": {"reviewer_name": "Alice", "cv_rubric": rubric(8), "cv_score": 8, "interview_score": 6},
+            "r1": {"reviewer_name": "Alice", "cv_rubric": rubric(8), "cv_score": 8, "interview_rubric": iv(6), "interview_score": 6},
             "r2": {"reviewer_name": "Bob", "cv_rubric": rubric(10), "cv_score": 10, "interview_score": None},
         }}
         summary = ap._review_summary(application, viewer_id="r1")
@@ -403,7 +415,8 @@ class TestReviewSummary:
     def test_no_reviews_yet(self):
         summary = ap._review_summary({}, viewer_id="r1")
         assert summary == {
-            "count": 0, "cv_avg": None, "cv_max": 15, "interview_avg": None, "cv_n": 0, "interview_n": 0,
+            "count": 0, "cv_avg": None, "cv_max": 15, "interview_avg": None, "interview_max": 15,
+            "cv_n": 0, "interview_n": 0,
             "entries": [], "mine": None,
         }
 
@@ -450,9 +463,9 @@ class TestScoring:
         self._patch(monkeypatch, self._base())
         reviewer = User(id="r1", username="alice")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=11), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"easy": 5}), reviewer))
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=0), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric={"cv_project": -1}), reviewer))
 
     def test_requires_at_least_one_score(self, monkeypatch):
         self._patch(monkeypatch, self._base())
@@ -470,8 +483,8 @@ class TestScoring:
         self._patch(monkeypatch, self._base())
         alice = User(id="r1", username="alice")
         bob = User(id="r2", username="bob")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), interview_score=6), alice))
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(10), interview_score=8), bob))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), interview_rubric=iv(6)), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(10), interview_rubric=iv(8)), bob))
         assert result["review"]["count"] == 2
         assert result["review"]["cv_avg"] == 9.0
         assert result["review"]["interview_avg"] == 7.0
@@ -479,7 +492,7 @@ class TestScoring:
     def test_resubmitting_updates_your_own_score_not_a_new_one(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         alice = User(id="r1", username="alice")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), interview_score=6), alice))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), interview_rubric=iv(6)), alice))
         result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(9)), alice))
         assert result["review"]["count"] == 1
         assert result["review"]["cv_avg"] == 9.0
@@ -492,26 +505,25 @@ class TestScoring:
         result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(7)), reviewer))
         assert result["review"]["cv_avg"] == 7.0
 
-    def test_interview_score_out_of_range_is_rejected(self, monkeypatch):
+    def test_a_bare_interview_number_is_refused(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         reviewer = User(id="r1", username="alice")
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=0), reviewer))
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=11), reviewer))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=9), reviewer))
+        assert "criteria" in exc.value.detail
 
     def test_an_interview_score_alone_is_enough_to_submit(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         reviewer = User(id="r1", username="alice")
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=9), reviewer))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(9)), reviewer))
         assert result["review"]["interview_avg"] == 9.0
 
     def test_interview_scores_from_multiple_reviewers_are_averaged(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         alice = User(id="r1", username="alice")
         bob = User(id="r2", username="bob")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=8), alice))
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=6), bob))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(8)), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(6)), bob))
         assert result["review"]["interview_avg"] == 7.0
 
     def test_a_fast_tracked_applicant_can_still_get_an_interview_score(self, monkeypatch):
@@ -520,7 +532,7 @@ class TestScoring:
         application["event_ticket"] = ap.EVENT_TICKET_FAST_TRACK
         self._patch(monkeypatch, application)
         reviewer = User(id="r1", username="alice")
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=10), reviewer))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(10)), reviewer))
         assert result["review"]["interview_avg"] == 10.0
 
 
@@ -530,13 +542,14 @@ class TestRankedRows:
         fake_db.collections[ap.COLLECTION] = {
             "u1": {
                 "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED,
-                "reviews": {"r1": {"cv_rubric": rubric(12), "cv_score": 12, "interview_score": 10}},
+                "reviews": {"r1": {"cv_rubric": rubric(12), "cv_score": 12,
+                                   "interview_rubric": iv(15), "interview_score": 15}},
             },
         }
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
-        assert rows[0]["review"]["interview_avg"] == 10.0
-        assert rows[0]["combined_score"] == 9.0   # mean of 12/15 as 8/10, and 10
+        assert rows[0]["review"]["interview_avg"] == 15.0
+        assert rows[0]["combined_score"] == 9.0   # mean of 12/15 and 15/15, each as /10
 
     def test_an_unscored_interview_does_not_drag_the_average_down(self, monkeypatch):
         fake_db = _FakeDB()
@@ -1002,7 +1015,7 @@ class TestMyPendingInterview:
 
     def test_already_scored_by_me_is_not_pending(self):
         application = self._application()
-        application["reviews"] = {"rev1": {"reviewer_name": "Priya", "interview_score": 8}}
+        application["reviews"] = {"rev1": {"reviewer_name": "Priya", "interview_rubric": iv(8), "interview_score": 8}}
         row = ap._review_row("u1", application, viewer_id="rev1")
         assert row["is_my_pending_interview"] is False
 
@@ -2833,7 +2846,7 @@ class TestCvRubric:
         fake_db = self._patch(monkeypatch)
         reviewer = User(id="r1", username="al")
         asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(9)), reviewer))
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=6), reviewer))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(6)), reviewer))
         entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
         assert entry["cv_score"] == 9 and entry["cv_rubric"] == rubric(9) and entry["interview_score"] == 6
 
@@ -2878,7 +2891,7 @@ class TestAutosavedScoring:
     def test_only_the_fields_sent_change(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
         me = User(id="r1", username="al")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=6, note="Sharp"), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(6), note="Sharp"), me))
         asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={"major": 2}), me))
         entry = self._entry(fake_db)
         assert (entry["interview_score"], entry["cv_rubric"], entry["note"]) == (6, {"major": 2}, "Sharp")
@@ -2886,8 +2899,8 @@ class TestAutosavedScoring:
     def test_a_score_or_the_comments_can_be_cleared(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
         me = User(id="r1", username="al")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=6, note="Sharp"), me))
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=None), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(6), note="Sharp"), me))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=None), me))
         asyncio.run(ap.submit_score("u1", ap.ReviewScore(note=""), me))
         entry = self._entry(fake_db)
         assert entry["interview_score"] is None and entry["note"] == ""
@@ -2917,11 +2930,11 @@ class TestAutosavedScoring:
         async def stale_load(uid):
             return {**stale, "reviews": {}}
 
-        fake_db.collections[ap.COLLECTION]["u1"]["reviews"] = {"r2": {"reviewer_name": "bo", "interview_score": 4}}
+        fake_db.collections[ap.COLLECTION]["u1"]["reviews"] = {"r2": {"reviewer_name": "bo", "note": "Keen"}}
         monkeypatch.setattr(ap, "_load", stale_load)
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_score=9), User(id="r1", username="al")))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=iv(9)), User(id="r1", username="al")))
         reviews = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]
-        assert reviews["r2"]["interview_score"] == 4 and reviews["r1"]["interview_score"] == 9
+        assert reviews["r2"]["note"] == "Keen" and reviews["r1"]["interview_score"] == 9
 
     def test_nothing_to_save_is_refused(self, monkeypatch):
         self._patch(monkeypatch)
@@ -2968,14 +2981,100 @@ class TestScoringView:
             "oa": {"motivation": {"text": "Chess </script> club"}, "estimation": {"text": "About 30,000"}},
             "reviews": {
                 "admin1": {"reviewer_name": "root", "cv_rubric": {"major": 2}, "cv_score": None,
-                           "interview_score": 7, "note": "Keen", "updated_at": dt.datetime.now(dt.timezone.utc)},
-                "r2": {"reviewer_name": "bo", "interview_score": 5},
+                           "interview_rubric": iv(7), "interview_score": 7, "note": "Keen",
+                           "updated_at": dt.datetime.now(dt.timezone.utc)},
+                "r2": {"reviewer_name": "bo", "interview_rubric": iv(5), "interview_score": 5},
             },
         }})
         d = self._data(html, "u1")
         assert d["name"] == "Jo Bloggs" and d["cv_url"] == "/apply/admin/u1/cv"
-        assert d["mine"] == {"cv_rubric": {"major": 2}, "interview_score": 7, "note": "Keen"}
+        assert d["mine"] == {"cv_rubric": {"major": 2}, "interview_rubric": iv(7), "note": "Keen"}
         assert d["review"]["interview_avg"] == 6.0 and d["review"]["interview_n"] == 2
         assert d["estimation"] == "About 30,000"             # shown under the CV
         assert d["motivation"] == "Chess </script> club"   # safely embedded, not cut short
         assert "in progress" in html                        # my half-scored CV
+
+
+class TestInterviewRubric:
+    """The interview: six criteria out of 15, a penalty-only CV-project
+    criterion, and two rules applied automatically."""
+
+    def _patch(self, monkeypatch):
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED}})
+        return fake_db
+
+    def _score(self, rb, rid="r1"):
+        return asyncio.run(ap.submit_score("u1", ap.ReviewScore(interview_rubric=rb), User(id=rid, username=rid)))
+
+    def _entry(self, fake_db):
+        return fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+
+    def test_the_rubric_adds_up_to_fifteen(self):
+        assert [c["key"] for c in ap.INTERVIEW_RUBRIC] == [
+            "likability", "communication", "easy", "hard", "adaptability", "cv_project"]
+        assert sum(max(o["points"] for o in c["options"]) for c in ap.INTERVIEW_RUBRIC) == ap.INTERVIEW_MAX == 15
+
+    def test_the_score_is_the_total(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 2, "easy": 3, "hard": 2, "adaptability": 2, "cv_project": 0})
+        assert self._entry(fake_db)["interview_score"] == 10
+
+    def test_the_cv_project_penalty_takes_two_off(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": 3, "hard": 2, "adaptability": 2, "cv_project": -2})
+        assert self._entry(fake_db)["interview_score"] == 7
+
+    def test_the_total_never_goes_below_zero(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 0, "communication": 0, "easy": 0, "hard": 0, "adaptability": 0, "cv_project": -2})
+        assert self._entry(fake_db)["interview_score"] == 0
+
+    @pytest.mark.parametrize("easy", [0, 1, 2])
+    def test_the_hard_question_is_zero_when_the_easy_one_scored_two_or_less(self, monkeypatch, easy):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": easy, "hard": 3, "adaptability": 1, "cv_project": 0})
+        entry = self._entry(fake_db)
+        assert entry["interview_rubric"]["hard"] == 0
+        assert entry["interview_score"] == 3 + easy
+
+    def test_no_hints_on_either_question_means_full_adaptability(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": 4, "hard": 4, "adaptability": 0, "cv_project": 0})
+        entry = self._entry(fake_db)
+        assert entry["interview_rubric"]["adaptability"] == 3 and entry["interview_score"] == 13
+
+    def test_adaptability_is_still_judged_when_a_hint_was_given(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        self._score({"likability": 1, "communication": 1, "easy": 4, "hard": 3, "adaptability": 1, "cv_project": 0})
+        assert self._entry(fake_db)["interview_rubric"]["adaptability"] == 1
+
+    def test_half_scored_is_kept_but_not_counted(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        result = self._score({"likability": 1, "easy": 4})
+        assert self._entry(fake_db)["interview_score"] is None
+        assert result["review"]["interview_avg"] is None
+
+    def test_reviewers_are_averaged_out_of_fifteen(self, monkeypatch):
+        self._patch(monkeypatch)
+        self._score(iv(9), rid="r1")
+        result = self._score(iv(12), rid="r2")
+        assert result["review"]["interview_avg"] == 10.5 and result["review"]["interview_n"] == 2
+        assert result["review"]["interview_max"] == 15
+
+    def test_an_old_scale_interview_score_is_not_averaged_in(self):
+        summary = ap._review_summary({"reviews": {
+            "r1": {"reviewer_name": "Old", "interview_score": 8},
+            "r2": {"reviewer_name": "New", "interview_rubric": iv(12), "interview_score": 12},
+        }})
+        assert summary["interview_avg"] == 12.0
+
+    def test_the_guide_page_lists_the_rubric_and_hint_schedule(self, monkeypatch):
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin/interview-guide", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.interview_guide(request, User(id="r1", username="al"))).body.decode()
+        assert "Interview rubric (15 points)" in html
+        assert "Adaptability / use of hints" in html and "Checkpoint 1" in html
+        assert "3:00" in html and "5:00" in html and "No early hints" in html
+        assert "\u2014" not in html   # no em dashes in the guide

@@ -208,6 +208,33 @@
       .sc-right { overflow: visible; }
     }
 
+    .sc-iv-table tbody th { width: 30%; }
+    .sc-iv-table tr.is-auto td { opacity: .75; }
+    .sc-auto { font-weight: 400; font-size: 12px; color: var(--brand); margin-top: 6px; line-height: 1.4; }
+    .sc-iv-total { float: right; font-size: 14px; }
+    .sc-opts-v { display: grid; gap: 4px; }
+    .sc-opt-v {
+      display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; cursor: pointer;
+      padding: 6px 8px; border: 1px solid transparent; border-radius: 6px; line-height: 1.4;
+    }
+    .sc-opt-v:hover { background: var(--brand-wash); }
+    .sc-opt-v input { position: absolute; opacity: 0; pointer-events: none; }
+    .sc-opt-v b { text-align: center; font-variant-numeric: tabular-nums; }
+    .sc-opt-v b.sc-neg { color: var(--red); }
+    .sc-opt-v:has(input:checked) { border-color: var(--brand); background: var(--brand-wash); }
+    .sc-opt-v:has(input:disabled) { cursor: default; }
+    .sc-opt-v:has(input:focus-visible) { outline: 2px solid var(--brand); outline-offset: 1px; }
+    .sc-timer { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin: 0 0 18px; background: var(--card); }
+    .sc-timer-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 10px; }
+    .sc-timer-head a { color: var(--brand); text-decoration: none; font-weight: 600; font-size: 13px; }
+    .sc-timer-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .sc-clock { margin-left: auto; font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .sc-cues { list-style: none; margin: 10px 0 6px; padding: 0; display: grid; gap: 2px; font-size: 13px; }
+    .sc-cues li { padding: 4px 8px; border-left: 2px solid var(--border); color: var(--muted); }
+    .sc-cues li b { display: inline-block; width: 38px; font-variant-numeric: tabular-nums; }
+    .sc-cues li.is-past { color: var(--text); }
+    .sc-cues li.is-now { border-left-color: var(--brand); background: var(--brand-wash); color: var(--text); }
+
     /* ── CV rubric ─────────────────────────────────────────────────────────── */
     .apa-rubric { margin: 14px 0 12px; }
     .apa-rubric-title { margin: 0 0 8px; font-weight: 600; font-size: 14px; }
@@ -378,6 +405,7 @@
       <div class="head">
         <h3>Applicants</h3>
         <span class="msp-muted">{{ scored }} of {{ total }} scored by a reviewer · ranked by average score</span>
+        <a class="btn ghost" href="/apply/admin/interview-guide">Interview guide</a>
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
@@ -404,7 +432,7 @@
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
-                {% if r.review.interview_avg is not none %}{{ r.review.interview_avg }}<span class="msp-muted">/{{ score_max }}</span>
+                {% if r.review.interview_avg is not none %}{{ r.review.interview_avg }}<span class="msp-muted">/{{ r.review.interview_max }}</span>
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
@@ -606,7 +634,7 @@
             </div>
             {% endmacro %}
             {{ stat("CV", r.review.cv_avg, r.review.cv_n, r.review.cv_max) }}
-            {{ stat("Interview", r.review.interview_avg, r.review.interview_n, score_max,
+            {{ stat("Interview", r.review.interview_avg, r.review.interview_n, r.review.interview_max,
                     None if can_interview else "After shortlisting") }}
           </div>
 
@@ -623,7 +651,7 @@
             <li>
               <strong>{{ e.reviewer_name }}</strong>:
               CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("cv_score") is not none %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %},
-              interview {{ e.get("interview_score") if e.get("interview_score") is not none else "–" }}
+              interview {% if e.get("interview_score") is not none and e.get("interview_rubric") %}{{ e.interview_score }}/{{ r.review.interview_max }}{% elif e.get("interview_rubric") %}<span class="msp-muted">in progress</span>{% elif e.get("interview_score") is not none %}{{ e.interview_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% else %}–{% endif %}
               {% if e.note %}<div class="apa-review-note">{{ e.note }}</div>{% endif %}
             </li>
             {% endfor %}
@@ -641,12 +669,13 @@
             "cv_max": r.review.cv_max,
             "mine": {
               "cv_rubric": m.get("cv_rubric") or {},
-              "interview_score": m.get("interview_score"),
+              "interview_rubric": m.get("interview_rubric") or {},
               "note": m.get("note") or "",
             },
             "review": {
               "cv_avg": r.review.cv_avg, "cv_n": r.review.cv_n,
               "interview_avg": r.review.interview_avg, "interview_n": r.review.interview_n,
+              "interview_max": r.review.interview_max,
             },
           } | tojson }}</script>
         </div>
@@ -897,13 +926,14 @@
     // so a later save can never land before an earlier one.
     const RUBRIC = {{ cv_rubric | tojson }};
     const RESPONSE_KEYS = new Set({{ cv_response_keys | tojson }});
-    const SCORE_MAX = {{ score_max }};
     const PROMPTS = { motivation: {{ motivation_prompt | tojson }}, estimation: {{ estimation_prompt | tojson }} };
     const SECTIONS = [
       { key: "cv", label: "CV" },
       { key: "interview", label: "Interview" },
     ];
-    const SCORE_FIELD = { interview: "interview_score" };
+    const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
+    const INTERVIEW_HINTS = {{ interview_hints | tojson }};
+    const QUESTION_SECONDS = {{ interview_question_seconds }};
     const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -1034,29 +1064,150 @@
         });
         return;
       }
-      const field = SCORE_FIELD[sc.section];
-      const label = SECTIONS.find((s) => s.key === sc.section).label;
-      const avgKey = sc.section + "_avg", nKey = sc.section + "_n";
-      const current = d.mine[field];
+      renderInterview(box);
+    }
+
+    // The two rules the server also applies: an easy score of 0-2 means the
+    // hard question isn't reached (0), and solving both with no hint
+    // (easy 4, hard 4) makes adaptability full marks (3).
+    // A score the rules filled in is cleared again once its rule stops
+    // applying (say the easy score is changed from 4 to 3), so it gets
+    // scored by hand rather than silently keeping the automatic value.
+    function applyInterviewRules(rb, wasLocked = {}) {
+      const out = { ...rb };
+      const locked = {};
+      if (out.easy !== undefined && out.easy <= 2) {
+        out.hard = 0;
+        locked.hard = "Automatic: the easy question scored 0 to 2, so the hard question isn't reached.";
+      }
+      if (out.easy === 4 && out.hard === 4) {
+        out.adaptability = 3;
+        locked.adaptability = "Automatic: both questions solved with no hint, so there was nothing to adapt to.";
+      }
+      for (const key of Object.keys(wasLocked)) if (!locked[key]) delete out[key];
+      return { rb: out, locked };
+    }
+
+    function renderInterview(box) {
+      const d = sc.d, rv = d.review;
       box.innerHTML = `
-        <p class="apa-rubric-title">${label} <span class="msp-muted">(out of ${SCORE_MAX})</span></p>
-        <p class="sc-avg">${avgLine(rv[avgKey], rv[nKey], SCORE_MAX)}</p>
-        <div class="sc-scale" role="radiogroup" aria-label="${label} score">
-          ${Array.from({ length: SCORE_MAX }, (_, i) => i + 1).map((n) =>
-            `<button type="button" class="sc-num${current === n ? " is-on" : ""}" data-n="${n}" aria-pressed="${current === n}">${n}</button>`).join("")}
-          <button type="button" class="sc-clear" data-n="">Clear</button>
-        </div>
-        <p class="sc-hint">Detailed criteria for this section are to follow.</p>`;
-      box.querySelectorAll("[data-n]").forEach((b) => b.addEventListener("click", () => {
-        const n = b.dataset.n === "" ? null : Number(b.dataset.n);
-        d.mine[field] = n;
-        box.querySelectorAll(".sc-num").forEach((x) => {
-          const on = Number(x.dataset.n) === n;
-          x.classList.toggle("is-on", on);
-          x.setAttribute("aria-pressed", on);
+        ${timerHtml()}
+        <p class="apa-rubric-title">Interview <span class="msp-muted">(${rv.interview_max} points)</span></p>
+        <p class="sc-avg">${avgLine(rv.interview_avg, rv.interview_n, rv.interview_max)}</p>
+        <table class="apa-rubric-table sc-iv-table">
+          <tbody>${INTERVIEW_RUBRIC.map((c) => `
+            <tr data-key="${c.key}">
+              <th scope="row">${escHtml(c.label)}<div class="sc-auto" data-auto></div></th>
+              <td><div class="sc-opts-v" role="radiogroup" aria-label="${escHtml(c.label)}">
+                ${c.options.map((o) => `
+                  <label class="sc-opt-v">
+                    <input type="radio" name="iv-${c.key}" value="${o.points}">
+                    <b class="${o.points < 0 ? "sc-neg" : ""}">${o.points}</b><span>${escHtml(o.label)}</span>
+                  </label>`).join("")}
+              </div></td>
+            </tr>`).join("")}
+          </tbody>
+          <tfoot><tr><th scope="row">Total</th>
+            <td><span data-left></span> <strong class="sc-iv-total"><span data-total></span>/${rv.interview_max}</strong></td></tr></tfoot>
+        </table>`;
+      let wasLocked = applyInterviewRules(d.mine.interview_rubric || {}).locked;
+      const sync = () => {
+        const { rb, locked } = applyInterviewRules(d.mine.interview_rubric || {}, wasLocked);
+        wasLocked = locked;
+        d.mine.interview_rubric = rb;
+        box.querySelectorAll("tr[data-key]").forEach((row) => {
+          const key = row.dataset.key;
+          row.querySelectorAll("input").forEach((inp) => {
+            inp.checked = rb[key] === Number(inp.value);
+            inp.disabled = !!locked[key];
+          });
+          row.querySelector("[data-auto]").textContent = locked[key] || "";
+          row.classList.toggle("is-auto", !!locked[key]);
         });
-        queueSave({ [field]: n });
+        const picked = Object.keys(rb).length;
+        const sum = Object.values(rb).reduce((a, b) => a + b, 0);
+        box.querySelector("[data-total]").textContent = Math.max(0, sum);
+        const left = INTERVIEW_RUBRIC.length - picked;
+        box.querySelector("[data-left]").innerHTML = left
+          ? `<span class="msp-muted">${left} still to score. The total only counts once all are scored.</span>` : "";
+      };
+      sync();
+      box.querySelectorAll("tr[data-key]").forEach((row) => row.addEventListener("change", (ev) => {
+        d.mine.interview_rubric = { ...(d.mine.interview_rubric || {}), [row.dataset.key]: Number(ev.target.value) };
+        sync();
+        queueSave({ interview_rubric: d.mine.interview_rubric });
       }));
+      wireTimer(box);
+    }
+
+    // ── Question timer ──
+    // Runs on this page only (nothing saved), and keeps running if you switch
+    // tab or close the scoring view, so an accidental close mid-question
+    // doesn't lose the clock. Calls out each hint time from the schedule.
+    const timer = { uid: null, q: null, start: 0, id: null };
+
+    function mmss(sec) {
+      sec = Math.max(0, Math.floor(sec));
+      return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+    }
+
+    function timerHtml() {
+      return `
+        <div class="sc-timer">
+          <div class="sc-timer-head">
+            <strong>Question timer</strong>
+            <a href="/apply/admin/interview-guide" target="_blank" rel="noopener">Interview guide ↗</a>
+          </div>
+          <div class="sc-timer-row">
+            <button type="button" class="btn" data-q="easy">Start easy question</button>
+            <button type="button" class="btn" data-q="hard">Start hard question</button>
+            <button type="button" class="btn ghost" data-stop>Stop</button>
+            <span class="sc-clock" data-clock>–</span>
+          </div>
+          <ol class="sc-cues">
+            <li data-at="0"><b>0:00</b> No hints. Clarifying questions only.</li>
+            ${INTERVIEW_HINTS.map((h) => `<li data-at="${h.at}"><b>${mmss(h.at)}</b> <strong>${escHtml(h.label)}</strong>, ${escHtml(h.detail)}.</li>`).join("")}
+            <li data-at="${QUESTION_SECONDS}"><b>${mmss(QUESTION_SECONDS)}</b> Stop and move on.</li>
+          </ol>
+          <p class="sc-hint">Start when the question has been read out and any clarifying questions answered.
+            A hint is due only if they haven't reached its checkpoint, and never earlier.</p>
+        </div>`;
+    }
+
+    function paintTimer() {
+      const box = document.querySelector("#scScore .sc-timer");
+      if (!box) return;
+      const running = timer.id && timer.uid === sc.uid;
+      const el = running ? (Date.now() - timer.start) / 1000 : null;
+      box.querySelector("[data-clock]").textContent = running
+        ? `${timer.q === "easy" ? "Easy" : "Hard"} ${mmss(el)}` : "–";
+      const cues = [...box.querySelectorAll(".sc-cues li")];
+      let current = null;
+      cues.forEach((li) => {
+        const at = Number(li.dataset.at);
+        li.classList.toggle("is-past", running && el >= at);
+        if (running && el >= at) current = li;
+      });
+      cues.forEach((li) => li.classList.toggle("is-now", li === current));
+      box.querySelectorAll("[data-q]").forEach((b) => b.classList.toggle("primary", running && b.dataset.q === timer.q));
+    }
+
+    function wireTimer(box) {
+      box.querySelectorAll("[data-q]").forEach((b) => b.addEventListener("click", () => {
+        clearInterval(timer.id);
+        Object.assign(timer, { uid: sc.uid, q: b.dataset.q, start: Date.now() });
+        timer.id = setInterval(() => {
+          if ((Date.now() - timer.start) / 1000 >= QUESTION_SECONDS + 60) { clearInterval(timer.id); timer.id = null; }
+          paintTimer();
+        }, 500);
+        paintTimer();
+      }));
+      box.querySelector("[data-stop]").addEventListener("click", () => {
+        clearInterval(timer.id);
+        timer.id = null;
+        paintTimer();
+      });
+      paintTimer();
     }
 
     function queueSave(patch) {
@@ -1086,7 +1237,7 @@
             const key = sc.section;
             avg.innerHTML = key === "cv"
               ? avgLine(sc.d.review.cv_avg, sc.d.review.cv_n, sc.d.cv_max)
-              : avgLine(sc.d.review[key + "_avg"], sc.d.review[key + "_n"], SCORE_MAX);
+              : avgLine(sc.d.review.interview_avg, sc.d.review.interview_n, sc.d.review.interview_max);
           }
         }
         if ("note" in body) sc.d.mine.note = body.note;
