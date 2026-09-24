@@ -1061,8 +1061,18 @@ async def check_integrations(admin: User = Depends(require_admin)):
         )
         if created:
             removed = await gcal.delete_event(created["event_id"])
-            meet = {"ok": True, "detail": f"Created a Meet link on {gcal.ACCOUNT_EMAIL}'s calendar"
-                                          f"{' and removed the test event' if removed else ' (test event left behind — delete it by hand)'}.",
+            # Whose calendar the event really landed on — the account the
+            # setup script was signed in as, which is also the account email
+            # is sent through. Not necessarily GOOGLE_ACCOUNT_EMAIL.
+            account = created.get("organizer_email") or gcal.ACCOUNT_EMAIL
+            detail = (f"Created a Meet link on {account}'s calendar"
+                      f"{' and removed the test event' if removed else ' (test event left behind — delete it by hand)'}.")
+            if account.lower() != gcal.ACCOUNT_EMAIL.lower():
+                detail += (f" The Google connection is signed in as {account}, not {gcal.ACCOUNT_EMAIL}: "
+                           f"interviews go on {account}'s calendar, and email shows as sent on behalf of "
+                           f"{account}. Re-run scripts/gcal_oauth_setup.py signed in as {gcal.ACCOUNT_EMAIL} "
+                           f"and update GOOGLE_OAUTH_REFRESH_TOKEN.")
+            meet = {"ok": True, "detail": detail, "account": account,
                     "sample_link": created["meet_link"]}
         else:
             meet["detail"] = ("Google refused — the saved sign-in may be wrong or revoked. "

@@ -95,6 +95,8 @@ class TestCreateMeetEvent:
         _queue_token()
         _FakeAsyncClient.responses.append(_FakeResponse(200, {
             "id": "ev1", "hangoutLink": "https://meet.google.com/abc-defg-hij",
+            "iCalUID": "ev1@google.com", "organizer": {"email": "oxfordalphafund@gmail.com"},
+            "sequence": 0,
         }))
         start = dt.datetime.now(dt.timezone.utc)
         end = start + dt.timedelta(minutes=30)
@@ -103,7 +105,11 @@ class TestCreateMeetEvent:
             summary="Alpha Fund interview — Jo", description="Quant Analyst interview.",
             start=start, end=end, attendee_emails=["jo@ox.ac.uk", "priya@ox.ac.uk"]))
 
-        assert result == {"event_id": "ev1", "meet_link": "https://meet.google.com/abc-defg-hij"}
+        assert result == {"event_id": "ev1", "meet_link": "https://meet.google.com/abc-defg-hij",
+                          "ical_uid": "ev1@google.com", "organizer_email": "oxfordalphafund@gmail.com",
+                          "sequence": 0}
+        # A fresh requestId every time: each interview is its own Meet room.
+        assert kwargs_request_id(_FakeAsyncClient.calls[-1])
         method, url, kwargs = _FakeAsyncClient.calls[-1]
         assert method == "post"
         assert kwargs["json"]["attendees"] == [{"email": "jo@ox.ac.uk"}, {"email": "priya@ox.ac.uk"}]
@@ -165,10 +171,11 @@ class TestCreateMeetEvent:
 class TestUpdateEventTime:
     def test_moves_an_existing_event(self):
         _queue_token()
-        _FakeAsyncClient.responses.append(_FakeResponse(200, {}))
+        _FakeAsyncClient.responses.append(_FakeResponse(200, {"iCalUID": "ev1@google.com", "sequence": 1}))
         start = dt.datetime.now(dt.timezone.utc)
 
-        assert run(gcal.update_event_time("ev1", start, start)) is True
+        moved = run(gcal.update_event_time("ev1", start, start))
+        assert moved and moved["sequence"] == 1
         method, url, kwargs = _FakeAsyncClient.calls[-1]
         assert method == "patch"
         assert url.endswith("/ev1")
@@ -202,3 +209,23 @@ class TestDeleteEvent:
         assert run(gcal.delete_event("")) is False
         monkeypatch.setattr(gcal, "CONFIGURED", False)
         assert run(gcal.delete_event("ev123")) is False
+
+
+def kwargs_request_id(call):
+    return call[2]["json"]["conferenceData"]["createRequest"]["requestId"]
+
+
+class TestSeparateRooms:
+    def test_two_interviews_at_the_same_time_get_different_requests(self):
+        start = dt.datetime.now(dt.timezone.utc)
+        _queue_token()
+        for i in range(2):
+            _FakeAsyncClient.responses.append(_FakeResponse(200, {
+                "id": f"ev{i}", "hangoutLink": f"https://meet.google.com/room-{i}"}))
+        a = run(gcal.create_meet_event(summary="A", description="", start=start, end=start,
+                                       attendee_emails=["a@ox.ac.uk"]))
+        b = run(gcal.create_meet_event(summary="B", description="", start=start, end=start,
+                                       attendee_emails=["b@ox.ac.uk"]))
+        posts = [c for c in _FakeAsyncClient.calls if c[0] == "post" and c[1] != gcal.TOKEN_URL]
+        assert kwargs_request_id(posts[0]) != kwargs_request_id(posts[1])
+        assert a["event_id"] != b["event_id"] and a["meet_link"] != b["meet_link"]

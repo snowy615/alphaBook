@@ -1586,10 +1586,14 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     previous = application.get("interview") or {}
     meet_link = previous.get("meet_link")
     gcal_event_id = previous.get("gcal_event_id")
+    # What the .ics attachment needs to point at the real Calendar event.
+    ics_identity = {k: previous.get(k) for k in ("gcal_ical_uid", "gcal_organizer", "gcal_sequence")}
     same_interviewer = previous.get("interviewer_id") == interviewer["id"]
     moved = False
     if gcal_event_id and same_interviewer:
         moved = await gcal.update_event_time(gcal_event_id, when, end)
+        if isinstance(moved, dict):
+            ics_identity["gcal_sequence"] = moved.get("sequence")
     elif gcal_event_id:
         await _cancel_interview_event(application)
     if not moved:
@@ -1602,6 +1606,11 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
         )
         meet_link = created["meet_link"] if created else None
         gcal_event_id = created["event_id"] if created else None
+        ics_identity = {
+            "gcal_ical_uid": (created or {}).get("ical_uid"),
+            "gcal_organizer": (created or {}).get("organizer_email"),
+            "gcal_sequence": (created or {}).get("sequence"),
+        }
 
     interview = {
         "interviewer_id": interviewer["id"],
@@ -1616,6 +1625,7 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
         "candidate_note": None,
         "meet_link": meet_link,
         "gcal_event_id": gcal_event_id,
+        **ics_identity,
     }
     application["interview"] = interview
     await _save(user_id, application)
@@ -1787,14 +1797,34 @@ def _build_interview_ics(application: dict, interview: dict) -> bytes:
     description = f"{programme} interview with {interviewer_name}."
     if meet_link:
         description += f"\nJoin with Google Meet: {meet_link}"
-    return mailer.build_ics_invite(
-        uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
+    common = dict(
         summary=f"Alpha Fund interview with {candidate_name}",
         description=description,
         start=when, end=end,
-        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.sender() or "",
         attendee_name=candidate_name, attendee_email=candidate_to,
         location=meet_link or "Online, details to follow",
+    )
+    if interview.get("gcal_ical_uid") and interview.get("gcal_organizer"):
+        # The real Calendar event: its own UID, organised by the account whose
+        # calendar it's on, with both people as guests (they already are, on
+        # Google's side). That's what lets Gmail's card load the event and
+        # offer to add it, rather than "Unable to load event".
+        return mailer.build_ics_invite(
+            uid=interview["gcal_ical_uid"], uid_domain=None,
+            organizer_name="Alpha Fund", organizer_email=interview["gcal_organizer"],
+            more_attendees=[(interviewer_name, interviewer_email)],
+            sequence=interview.get("gcal_sequence") or 0,
+            **common,
+        )
+    # No Calendar event behind it (Google not connected, or an interview
+    # scheduled before this was recorded). Published rather than sent as a
+    # request: there's no organiser's calendar for a mail client to look the
+    # event up on, so it's offered as a plain event to add.
+    return mailer.build_ics_invite(
+        uid=f"interview-{application.get('user_id')}-{int(when.timestamp())}",
+        organizer_name=interviewer_name, organizer_email=interviewer_email or mailer.sender() or "",
+        method="PUBLISH",
+        **common,
     )
 
 

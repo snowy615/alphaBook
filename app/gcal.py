@@ -82,8 +82,14 @@ async def create_meet_event(*, summary: str, description: str, start: dt.datetim
                              end: dt.datetime, attendee_emails: List[str]) -> Optional[Dict[str, str]]:
     """Create a Calendar event with a Google Meet link attached.
 
-    Returns ``{"event_id": ..., "meet_link": ...}``, or ``None`` if this
-    isn't configured, or Google refused/failed the request.
+    Returns ``{"event_id", "meet_link", "ical_uid", "organizer_email",
+    "sequence"}``, or ``None`` if this isn't configured, or Google
+    refused/failed the request. The last three let AlphaBook's own .ics
+    attachment describe *this* event (see applications._build_interview_ics):
+    Gmail's "add to calendar" card looks the invite up by its UID on the
+    organizer's calendar, and shows "Unable to load event" if it isn't there.
+    Each call gets its own ``requestId``, so every interview gets its own
+    event and its own Meet room, even two at the same time.
     """
     if not CONFIGURED:
         return None
@@ -117,7 +123,18 @@ async def create_meet_event(*, summary: str, description: str, start: dt.datetim
     link = _meet_link_from(data)
     if not link:
         return None
-    return {"event_id": data.get("id", ""), "meet_link": link}
+    return {"event_id": data.get("id", ""), "meet_link": link, **_ics_identity(data)}
+
+
+def _ics_identity(event: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "ical_uid": event.get("iCalUID") or "",
+        # Whichever Google account the refresh token belongs to — the
+        # calendar the event actually lives on, which may not be ACCOUNT_EMAIL
+        # if the setup script was signed in as someone else.
+        "organizer_email": (event.get("organizer") or {}).get("email") or "",
+        "sequence": int(event.get("sequence") or 0),
+    }
 
 
 def _meet_link_from(event: Dict[str, Any]) -> Optional[str]:
@@ -129,11 +146,15 @@ def _meet_link_from(event: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-async def update_event_time(event_id: str, start: dt.datetime, end: dt.datetime) -> bool:
+async def update_event_time(event_id: str, start: dt.datetime, end: dt.datetime) -> Any:
     """Move an existing event to a new time — used when an interview is
     re-proposed, so a Meet link a candidate may already have stays valid
     instead of a fresh one being minted (and a stray old event left behind)
-    on every reschedule."""
+    on every reschedule.
+
+    Returns the moved event's identity (see _ics_identity; truthy) on
+    success, False otherwise. Moving bumps the event's sequence number, and
+    the next .ics has to carry the new one or calendars treat it as stale."""
     if not CONFIGURED or not event_id:
         return False
     token = await access_token()
@@ -147,7 +168,11 @@ async def update_event_time(event_id: str, start: dt.datetime, end: dt.datetime)
                 json={"start": {"dateTime": _rfc3339(start)}, "end": {"dateTime": _rfc3339(end)}},
             )
             r.raise_for_status()
-        return True
+            try:
+                data = r.json()
+            except ValueError:
+                data = {}
+        return _ics_identity(data if isinstance(data, dict) else {})
     except Exception:
         log.exception("gcal: failed to move event %s", event_id)
         return False

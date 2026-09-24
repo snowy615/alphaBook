@@ -2673,3 +2673,70 @@ def test_the_faq_has_no_dashes():
     from pathlib import Path
     faq = (Path(ap.__file__).parent / "templates" / "faq.html").read_text()
     assert "—" not in faq and "–" not in faq
+
+
+class TestInterviewInviteMatchesTheCalendarEvent:
+    """Gmail's "add to calendar" card looks the attached invite up by UID on
+    the organizer's Google Calendar; pointing it anywhere else shows "Unable
+    to load event". So the .ics names the real Calendar event."""
+
+    def _users(self):
+        return {"qa1": {"username": "priya", "full_name": "Priya Patel", "email": "priya@ox.ac.uk",
+                        "membership": mb.M_QUANT_ANALYST}}
+
+    def _app(self):
+        return {"u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+                       "oxford_email": "jo@merton.ox.ac.uk", "programme": mb.M_QUANT_ANALYST,
+                       "status": ap.S_SHORTLISTED}}
+
+    def test_the_invite_uses_the_google_events_uid_and_organizer(self, monkeypatch):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications=self._app(), users=self._users())
+        captured = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            captured.append(ics.decode())
+            return True
+
+        async def fake_create(**kwargs):
+            return {"event_id": "ev9", "meet_link": "https://meet.google.com/x", "ical_uid": "ev9@google.com",
+                    "organizer_email": "oxfordalphafund@gmail.com", "sequence": 0}
+
+        monkeypatch.setattr(ap.mailer, "send_email", fake_send)
+        monkeypatch.setattr(ap.gcal, "create_meet_event", fake_create)
+        when = dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), User(id="qa1", username="priya")))
+        asyncio.run(ap.confirm_interview(User(id="u1", username="jo")))
+
+        for ics in captured:   # the proposal and the confirmation
+            assert "UID:ev9@google.com\r\n" in ics
+            assert "METHOD:REQUEST" in ics
+            assert "ORGANIZER;CN=Alpha Fund:mailto:oxfordalphafund@gmail.com" in ics
+            assert "mailto:jo@merton.ox.ac.uk" in ics and "mailto:priya@ox.ac.uk" in ics
+
+    def test_moving_the_event_carries_its_new_sequence(self, monkeypatch):
+        apps = self._app()
+        apps["u1"]["interview"] = {"interviewer_id": "qa1", "status": ap.INTERVIEW_PROPOSED,
+                                   "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc),
+                                   "gcal_event_id": "ev9", "meet_link": "https://meet.google.com/x",
+                                   "gcal_ical_uid": "ev9@google.com",
+                                   "gcal_organizer": "oxfordalphafund@gmail.com", "gcal_sequence": 0}
+        fake_db, _, _ = _flow_db(monkeypatch, applications=apps, users=self._users())
+
+        async def fake_update(event_id, start, end):
+            return {"ical_uid": "ev9@google.com", "organizer_email": "oxfordalphafund@gmail.com", "sequence": 1}
+
+        monkeypatch.setattr(ap.gcal, "update_event_time", fake_update)
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=dt.datetime(2026, 10, 6, 9, tzinfo=dt.timezone.utc)),
+            User(id="qa1", username="priya")))
+        interview = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
+        assert interview["gcal_sequence"] == 1
+        assert "SEQUENCE:1" in ap._build_interview_ics(fake_db.collections[ap.COLLECTION]["u1"], interview).decode()
+
+    def test_without_a_calendar_event_the_invite_is_published_not_requested(self):
+        application = self._app()["u1"]
+        interview = {"interviewer_name": "Priya", "interviewer_email": "priya@ox.ac.uk",
+                     "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)}
+        ics = ap._build_interview_ics(application, interview).decode()
+        assert "METHOD:PUBLISH" in ics

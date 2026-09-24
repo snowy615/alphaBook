@@ -37,7 +37,7 @@ import smtplib
 from email import utils as email_utils
 from email.message import EmailMessage
 from email.utils import formataddr
-from typing import Optional
+from typing import List, Optional, Tuple
 
 import httpx
 
@@ -100,22 +100,28 @@ def _ics_escape(text: str) -> str:
 def build_ics_invite(
     *, uid: str, summary: str, description: str, start: dt.datetime, end: dt.datetime,
     organizer_name: str, organizer_email: str, attendee_name: str, attendee_email: str,
-    location: str = "Online — details to follow",
+    location: str = "Online, details to follow",
+    uid_domain: Optional[str] = "alphabook.uk",
+    method: str = "REQUEST", sequence: int = 0,
+    more_attendees: Optional[List[Tuple[str, str]]] = None,
 ) -> bytes:
     """
     A minimal RFC 5545 VEVENT, valid enough for Gmail/Outlook/Apple Calendar
     to offer an "Add to calendar" prompt. No external library — the format
     is simple enough that hand-writing it is less risk than a new dependency
     for one small feature.
+
+    ``uid_domain=None`` uses ``uid`` exactly as given, for when it's a real
+    Google Calendar event's iCalUID (which already carries its own domain).
     """
     lines = [
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
         "PRODID:-//AlphaBook//Interview Scheduling//EN",
         "CALSCALE:GREGORIAN",
-        "METHOD:REQUEST",
+        f"METHOD:{method}",
         "BEGIN:VEVENT",
-        f"UID:{uid}@alphabook.uk",
+        f"UID:{uid}@{uid_domain}" if uid_domain else f"UID:{uid}",
         f"DTSTAMP:{_ics_stamp(dt.datetime.now(dt.timezone.utc))}",
         f"DTSTART:{_ics_stamp(start)}",
         f"DTEND:{_ics_stamp(end)}",
@@ -124,8 +130,10 @@ def build_ics_invite(
         f"LOCATION:{_ics_escape(location)}",
         f"ORGANIZER;CN={_ics_escape(organizer_name)}:mailto:{organizer_email}",
         f"ATTENDEE;CN={_ics_escape(attendee_name)};ROLE=REQ-PARTICIPANT:mailto:{attendee_email}",
+        *(f"ATTENDEE;CN={_ics_escape(n)};ROLE=REQ-PARTICIPANT:mailto:{e}"
+          for n, e in (more_attendees or []) if e),
         "STATUS:CONFIRMED",
-        "SEQUENCE:0",
+        f"SEQUENCE:{int(sequence)}",
         "END:VEVENT",
         "END:VCALENDAR",
     ]
