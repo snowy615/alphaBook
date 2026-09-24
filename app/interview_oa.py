@@ -10,7 +10,7 @@ question but not enough to type it into a chatbot and wait for an answer.
 Design notes:
 
 * **Login is required before the password gate.** The shared password
-  ("interview" by default, overridable via ``INTERVIEW_OA_PASSWORD``) just
+  (``INTERVIEW_OA_PASSWORD`` — no default, since the repo is public) just
   unlocks the assessment for an already-authenticated AlphaBook account, so
   every attempt is tied to a real user, not an anonymous link.
 * **One attempt.** A session document is keyed by user id. Once it reaches
@@ -56,7 +56,7 @@ BASE_DIR = Path(__file__).parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 COLLECTION = "interview_oa_sessions"
-PASSWORD = os.getenv("INTERVIEW_OA_PASSWORD", "interview")
+PASSWORD = os.getenv("INTERVIEW_OA_PASSWORD", "")
 TIME_PER_QUESTION = 20        # seconds
 ANSWER_GRACE = 3              # seconds of network slack before a late /answer is ignored
 QUESTIONS_PER_SESSION = 10
@@ -260,7 +260,7 @@ async def gate_page(request: Request):
 
 @router.post("/unlock")
 async def unlock(req: UnlockRequest, user: User = Depends(current_user)):
-    if req.password.strip() != PASSWORD:
+    if not PASSWORD or req.password.strip() != PASSWORD:
         raise HTTPException(403, "That access code isn't right")
 
     uid = str(user.id)

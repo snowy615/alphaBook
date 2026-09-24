@@ -8,10 +8,8 @@ Oxford's own SMTP, a transactional-email provider's SMTP endpoint — all speak
 SMTP). There is no vendor SDK and no new account created by this code; the
 operator supplies credentials for a mailbox they already control.
 
-Deliberately not used for sign-in verification: Firebase Auth already sends
-that email itself (``sendEmailVerification`` in the client SDK, using
-Firebase's own templates and deliverability), so duplicating it here would
-just be a second, worse copy of the same email.
+Also sends the sign-up verification email: the link comes from Firebase, but
+the email around it is ours (see ``auth._send_branded_verification_email``).
 
 Two ways out, tried in order:
 

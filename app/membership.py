@@ -229,8 +229,10 @@ def validate_membership_change(
     """Return an error message if this membership can't be self-selected."""
     if membership not in MEMBERSHIPS:
         return f"Unknown membership. Choose from: {', '.join(MEMBERSHIPS)}"
-    if membership in ANALYST_MEMBERSHIPS and password != analyst_password:
+    # An unconfigured (empty) password must never match — otherwise sending
+    # an empty password would unlock the tier.
+    if membership in ANALYST_MEMBERSHIPS and (not analyst_password or password != analyst_password):
         return "Incorrect password for analyst membership"
-    if membership in BOOTCAMP_MEMBERSHIPS and password != bootcamp_password:
+    if membership in BOOTCAMP_MEMBERSHIPS and (not bootcamp_password or password != bootcamp_password):
         return "Incorrect password for bootcamp membership"
     return None

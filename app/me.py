@@ -390,8 +390,10 @@ import os
 
 from app import membership as mb
 
-_ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "OAFQA")
-_BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "OAFBC")
+# No defaults — the repo is public. Unset means that tier can't be
+# self-selected at all (see membership.validate_membership_change).
+_ANALYST_PASSWORD = os.getenv("ANALYST_PASSWORD", "")
+_BOOTCAMP_PASSWORD = os.getenv("BOOTCAMP_PASSWORD", "")
 
 
 class ProfileUpdate(BaseModel):

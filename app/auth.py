@@ -294,13 +294,15 @@ async def resend_verification(id_token: str = Form(...)):
 
 # ----- Direct admin login (no Firebase) -----
 ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "Alphabook")
+# No default: this repo is public, so any fallback here is a password anyone
+# can read. Unset means direct admin login is simply off.
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 ADMIN_UID = "admin_user_id"  # Must match the UID used in main.py startup
 
 @router.post("/auth/direct", include_in_schema=False)
 async def direct_login(request: Request, username: str = Form(...), password: str = Form(...)):
     """Direct username/password login – used for admin access from the normal login page."""
-    if username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
+    if not ADMIN_PASSWORD or username != ADMIN_USERNAME or password != ADMIN_PASSWORD:
         return JSONResponse({"status": "error", "message": "Invalid credentials"}, status_code=401)
 
     # Ensure admin user doc exists in Firestore

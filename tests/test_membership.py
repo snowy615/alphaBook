@@ -151,3 +151,23 @@ class TestDisabledProgrammes:
         # Shown on the apply page as "coming next term", not hidden outright.
         for p in mb.DISABLED_PROGRAMMES:
             assert p in mb.APPLY_PROGRAMMES
+
+
+class TestUnconfiguredTierPasswordsFailClosed:
+    """The repo is public, so there are no default passwords — an unset one
+    must lock the tier, never let an empty password through."""
+
+    def test_empty_password_never_unlocks_an_unconfigured_analyst_tier(self):
+        for sent in ("", None):
+            assert mb.validate_membership_change(mb.M_QUANT_ANALYST, sent, "", "") is not None
+
+    def test_empty_password_never_unlocks_an_unconfigured_bootcamp_tier(self):
+        for sent in ("", None):
+            assert mb.validate_membership_change(mb.M_QUANT_BOOTCAMP, sent, "", "") is not None
+
+    def test_configured_passwords_still_work(self):
+        assert mb.validate_membership_change(mb.M_QUANT_ANALYST, "a-pass", "a-pass", "b-pass") is None
+        assert mb.validate_membership_change(mb.M_QUANT_BOOTCAMP, "b-pass", "a-pass", "b-pass") is None
+
+    def test_open_tiers_need_no_password(self):
+        assert mb.validate_membership_change(mb.M_PUBLIC, None, "", "") is None

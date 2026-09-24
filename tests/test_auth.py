@@ -310,3 +310,16 @@ class TestResendVerification:
         result = asyncio.run(auth.resend_verification(id_token="garbage"))
 
         assert result.status_code == 401
+
+
+class TestDirectAdminLoginFailsClosed:
+    def test_no_admin_password_configured_means_no_admin_login(self, monkeypatch):
+        monkeypatch.setattr(auth, "ADMIN_PASSWORD", "")
+        for pw in ("", "Alphabook"):
+            result = asyncio.run(auth.direct_login(_FakeRequest(), username="admin", password=pw))
+            assert result.status_code == 401
+
+    def test_a_wrong_password_is_refused(self, monkeypatch):
+        monkeypatch.setattr(auth, "ADMIN_PASSWORD", "the-real-one")
+        result = asyncio.run(auth.direct_login(_FakeRequest(), username="admin", password="Alphabook"))
+        assert result.status_code == 401
