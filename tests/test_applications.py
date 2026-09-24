@@ -76,6 +76,18 @@ class _FakeDB:
         return _FakeCollection(self.collections[name])
 
 
+def rubric(total: int, fast_tracked: bool = False) -> dict:
+    """A complete CV rubric that adds up to `total`, filling criteria in
+    order up to each one's maximum."""
+    out = {}
+    for c in ap._cv_rubric_for(fast_tracked):
+        top = max(o["points"] for o in c["options"])
+        out[c["key"]] = min(top, total)
+        total -= out[c["key"]]
+    assert total == 0
+    return out
+
+
 def ago(seconds: float) -> dt.datetime:
     return dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=seconds)
 
@@ -371,8 +383,8 @@ class TestSubmissionEmail:
 class TestReviewSummary:
     def test_averages_only_the_reviewers_who_gave_that_score(self):
         application = {"reviews": {
-            "r1": {"reviewer_name": "Alice", "cv_score": 8, "written_score": 6},
-            "r2": {"reviewer_name": "Bob", "cv_score": 10, "written_score": None},
+            "r1": {"reviewer_name": "Alice", "cv_rubric": rubric(8), "cv_score": 8, "written_score": 6},
+            "r2": {"reviewer_name": "Bob", "cv_rubric": rubric(10), "cv_score": 10, "written_score": None},
         }}
         summary = ap._review_summary(application, viewer_id="r1")
         assert summary["count"] == 2
@@ -383,7 +395,7 @@ class TestReviewSummary:
     def test_no_reviews_yet(self):
         summary = ap._review_summary({}, viewer_id="r1")
         assert summary == {
-            "count": 0, "cv_avg": None, "written_avg": None, "interview_avg": None,
+            "count": 0, "cv_avg": None, "cv_max": 15, "written_avg": None, "interview_avg": None,
             "entries": [], "mine": None,
         }
 
@@ -439,7 +451,7 @@ class TestScoring:
         self._patch(monkeypatch, self._base())
         reviewer = User(id="r1", username="alice")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=11), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=11), reviewer))
         with pytest.raises(HTTPException):
             asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=0), reviewer))
 
@@ -453,14 +465,14 @@ class TestScoring:
         self._patch(monkeypatch, self._base(status=ap.S_OA_ACTIVE))
         reviewer = User(id="r1", username="alice")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8), reviewer))
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8)), reviewer))
 
     def test_two_independent_reviewers_are_averaged(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         alice = User(id="r1", username="alice")
         bob = User(id="r2", username="bob")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8, written_score=6), alice))
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=10, written_score=8), bob))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), written_score=6), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(10), written_score=8), bob))
         assert result["review"]["count"] == 2
         assert result["review"]["cv_avg"] == 9.0
         assert result["review"]["written_avg"] == 7.0
@@ -468,8 +480,8 @@ class TestScoring:
     def test_resubmitting_updates_your_own_score_not_a_new_one(self, monkeypatch):
         self._patch(monkeypatch, self._base())
         alice = User(id="r1", username="alice")
-        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8, written_score=6), alice))
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=9), alice))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(8), written_score=6), alice))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(9)), alice))
         assert result["review"]["count"] == 1
         assert result["review"]["cv_avg"] == 9.0
         # Not touched by the second call, so it's kept rather than wiped.
@@ -478,7 +490,7 @@ class TestScoring:
     def test_can_still_be_scored_after_a_decision(self, monkeypatch):
         self._patch(monkeypatch, self._base(status=ap.S_ACCEPTED))
         reviewer = User(id="r1", username="alice")
-        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=7), reviewer))
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(7)), reviewer))
         assert result["review"]["cv_avg"] == 7.0
 
     def test_interview_score_out_of_range_is_rejected(self, monkeypatch):
@@ -519,13 +531,14 @@ class TestRankedRows:
         fake_db.collections[ap.COLLECTION] = {
             "u1": {
                 "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED,
-                "reviews": {"r1": {"cv_score": 8, "written_score": 6, "interview_score": 10}},
+                "reviews": {"r1": {"cv_rubric": rubric(12), "cv_score": 12,
+                                   "written_score": 6, "interview_score": 10}},
             },
         }
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
         assert rows[0]["review"]["interview_avg"] == 10.0
-        assert rows[0]["combined_score"] == 8.0   # mean of 8, 6, 10
+        assert rows[0]["combined_score"] == 8.0   # mean of 12/15 as 8/10, 6 and 10
 
     def test_an_unscored_interview_does_not_drag_the_average_down(self, monkeypatch):
         fake_db = _FakeDB()
@@ -533,12 +546,12 @@ class TestRankedRows:
             "u1": {
                 "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
                 "event_ticket": ap.EVENT_TICKET_FAST_TRACK,
-                "reviews": {"r1": {"cv_score": 9}},
+                "reviews": {"r1": {"cv_rubric": rubric(11, fast_tracked=True), "cv_score": 11}},
             },
         }
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
-        assert rows[0]["combined_score"] == 9.0   # not scored yet, so it's simply excluded
+        assert rows[0]["combined_score"] == 10.0   # full marks out of 11; nothing else scored yet
 
 
 class TestDecideFlow:
@@ -1670,7 +1683,8 @@ class TestExportApplications:
                 "motivation": {"text": "Because quant finance.", "word_count": 3, "seconds_used": 120},
                 "estimation": {"text": "Roughly a million.", "word_count": 3, "seconds_used": 300},
             },
-            "reviews": {"r1": {"reviewer_name": "Priya", "cv_score": 8, "written_score": 7, "note": "Strong"}},
+            "reviews": {"r1": {"reviewer_name": "Priya", "cv_rubric": rubric(8), "cv_score": 8, "cv_max": 15,
+                               "written_score": 7, "note": "Strong"}},
         }
         base.update(extra)
         return base
@@ -1692,7 +1706,7 @@ class TestExportApplications:
         row = {headers[i]: c.value for i, c in enumerate(next(ws.iter_rows(min_row=2, max_row=2)))}
         assert row["Username"] == "jo"
         assert row["Motivation text"] == "Because quant finance."
-        assert row["CV avg"] == 8
+        assert row["CV avg (/15)"] == 8
         assert "16 Sep 2026" in row["Availability submitted"]
         assert "London" in row["Availability submitted"]
 
@@ -2539,7 +2553,7 @@ class TestExportNoneScores:
         from openpyxl import load_workbook
         _flow_db(monkeypatch, applications={"u1": {
             "user_id": "u1", "username": "jo", "programme": mb.M_QUANT_ANALYST, "status": ap.S_SUBMITTED,
-            "reviews": {"r1": {"reviewer_name": "Priya", "cv_score": 8,
+            "reviews": {"r1": {"reviewer_name": "Priya", "cv_rubric": rubric(8), "cv_score": 8, "cv_max": 15,
                                "written_score": None, "interview_score": None}}}})
         wb = load_workbook(_read_streaming(asyncio.run(
             ap.export_applications(User(id="admin1", username="root", is_admin=True)))))
@@ -2547,7 +2561,7 @@ class TestExportNoneScores:
         headers = [c.value for c in next(ws.iter_rows(min_row=1, max_row=1))]
         notes = next(ws.iter_rows(min_row=2, max_row=2))[headers.index("Reviewer notes")].value
         assert "None" not in notes
-        assert notes == "Priya: CV 8, written —, interview —"
+        assert notes == "Priya: CV 8/15, written —, interview —"
 
 
 class TestWordingFixes:
@@ -2740,3 +2754,99 @@ class TestInterviewInviteMatchesTheCalendarEvent:
                      "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)}
         ics = ap._build_interview_ics(application, interview).decode()
         assert "METHOD:PUBLISH" in ics
+
+
+class TestCvRubric:
+    """The CV round: six criteria, one option each, totalling out of 15."""
+
+    def _patch(self, monkeypatch, **extra):
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED, **extra}})
+        return fake_db
+
+    def test_the_rubric_adds_up_to_fifteen(self):
+        assert [c["key"] for c in ap.CV_RUBRIC] == [
+            "motivation", "fermi", "major", "stem_achievements", "stem_research", "market"]
+        assert ap._cv_max(False) == 15
+
+    def test_the_cv_score_is_the_total_of_the_criteria(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        picks = {"motivation": 1, "fermi": 2, "major": 2, "stem_achievements": 1,
+                 "stem_research": 0, "market": 3}
+        result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert entry["cv_score"] == 9 and entry["cv_rubric"] == picks and entry["cv_max"] == 15
+        assert result["review"]["cv_avg"] == 9.0
+
+    def test_every_criterion_must_be_scored(self, monkeypatch):
+        self._patch(monkeypatch)
+        partial = rubric(9)
+        partial.pop("market")
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=partial), User(id="r1", username="al")))
+        assert "Previous market experience" in exc.value.detail
+
+    @pytest.mark.parametrize("key,points", [("motivation", 3), ("market", -1), ("major", 5)])
+    def test_only_the_listed_options_are_accepted(self, monkeypatch, key, points):
+        self._patch(monkeypatch)
+        picks = {**rubric(0), key: points}
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
+
+    def test_an_unknown_criterion_is_refused(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={**rubric(0), "vibes": 1}),
+                                        User(id="r1", username="al")))
+
+    def test_a_bare_cv_number_is_refused(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8), User(id="r1", username="al")))
+        assert "criteria" in exc.value.detail
+
+    def test_fast_track_skips_the_written_response_criteria(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, event_ticket=ap.EVENT_TICKET_FAST_TRACK)
+        assert ap._cv_max(True) == 11
+        picks = rubric(11, fast_tracked=True)
+        assert "motivation" not in picks and "fermi" not in picks
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert entry["cv_score"] == 11 and entry["cv_max"] == 11
+        with pytest.raises(HTTPException):   # and scoring them anyway is refused
+            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(15)), User(id="r1", username="al")))
+
+    def test_a_written_score_alone_keeps_the_cv_rubric(self, monkeypatch):
+        fake_db = self._patch(monkeypatch)
+        reviewer = User(id="r1", username="al")
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(9)), reviewer))
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(written_score=6), reviewer))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert entry["cv_score"] == 9 and entry["cv_rubric"] == rubric(9) and entry["written_score"] == 6
+
+    def test_an_old_scale_cv_score_is_not_averaged_in(self):
+        summary = ap._review_summary({"reviews": {
+            "r1": {"reviewer_name": "Old", "cv_score": 8},
+            "r2": {"reviewer_name": "New", "cv_rubric": rubric(12), "cv_score": 12},
+        }})
+        assert summary["cv_avg"] == 12.0
+
+    def test_the_review_page_renders_the_rubric_without_the_oxford_student_box(self, monkeypatch):
+        _flow_db(monkeypatch, applications={
+            "u1": {"user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
+                   "applicant_category": mb.M_PUBLIC, "confirmed_oxford_student": True,
+                   "reviews": {"admin1": {"reviewer_name": "root", "cv_rubric": rubric(9), "cv_score": 9,
+                                          "cv_max": 15}}},
+            "u2": {"user_id": "u2", "username": "ft", "status": ap.S_SUBMITTED, "event_ticket": "fast_track"},
+        })
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, User(id="admin1", username="root", is_admin=True))).body.decode()
+        assert "Oxford student" not in html
+        assert html.count('class="apa-rubric"') == 2
+        assert "STEM achievements" in html and "International medallist" in html
+        assert 'data-total>9<' in html                      # my saved total, shown on load
+        assert html.count('name="rb-u1-') == 21             # 6 criteria, 21 options
+        assert 'name="rb-u2-motivation"' not in html        # Fast-Track: no response criteria
+        assert "9.0<span" in html and "/15" in html and "/11" in html

@@ -147,6 +147,34 @@
 
     .apa-empty { text-align: center; color: var(--muted); padding: 48px 20px; }
 
+    /* ── CV rubric ─────────────────────────────────────────────────────────── */
+    .apa-rubric { margin: 14px 0 12px; }
+    .apa-rubric-title { margin: 0 0 8px; font-weight: 600; font-size: 14px; }
+    .apa-rubric-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .apa-rubric-table th, .apa-rubric-table td {
+      border-bottom: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top;
+    }
+    .apa-rubric-table thead th { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .apa-rubric-table tbody th { width: 26%; font-weight: 600; }
+    .apa-rubric-table tfoot th, .apa-rubric-table tfoot td { border-bottom: none; font-size: 14px; }
+    .apa-rubric-pts { width: 70px; text-align: right !important; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .apa-rubric-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .apa-rubric-opt { cursor: pointer; }
+    .apa-rubric-opt input { position: absolute; opacity: 0; pointer-events: none; }
+    .apa-rubric-opt span {
+      display: inline-block; padding: 5px 9px; border: 1px solid var(--border-strong, var(--border));
+      border-radius: 6px; line-height: 1.35;
+    }
+    .apa-rubric-opt span b { margin-right: 4px; }
+    .apa-rubric-opt input:checked + span { border-color: var(--brand); background: var(--brand-wash); color: var(--text); }
+    .apa-rubric-opt input:focus-visible + span { outline: 2px solid var(--brand); outline-offset: 1px; }
+    @media (max-width: 640px) {
+      .apa-rubric-table tbody th { width: auto; display: block; border-bottom: none; padding-bottom: 2px; }
+      .apa-rubric-table tbody tr { display: block; border-bottom: 1px solid var(--border); }
+      .apa-rubric-table tbody td { display: inline-block; border-bottom: none; }
+      .apa-rubric-table thead { display: none; }
+    }
+
     /* ── Interview availability grid (admin side) ────────────────────────── */
     .aval-wrap {
       overflow: auto; max-height: 460px; margin: 4px 0 12px;
@@ -311,7 +339,7 @@
               </td>
               <td>{{ r.programme }}</td>
               <td>
-                {% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="msp-muted">/{{ score_max }}</span>
+                {% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="msp-muted">/{{ r.review.cv_max }}</span>
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
@@ -444,14 +472,6 @@
             <span class="apa-v">{% if r.estimation_seconds %}{{ (r.estimation_seconds / 60) | round(1) }} min{% else %}—{% endif %}</span>
           </div>
           <div class="apa-cell">
-            <span class="apa-k">Oxford student</span>
-            <span class="apa-v" style="font-size:14px;">
-              {% if r.applicant_category == "General public" %}
-                {{ "Confirmed" if r.confirmed_oxford_student else "Not confirmed" }}
-              {% else %}<span class="msp-muted">n/a — member</span>{% endif %}
-            </span>
-          </div>
-          <div class="apa-cell">
             <span class="apa-k">Submitted</span>
             <span class="apa-v" style="font-size:13px;font-weight:500;">
               {{ r.submitted_at.strftime("%d %b, %H:%M") if r.submitted_at else "—" }}
@@ -514,7 +534,7 @@
           <div class="apa-review-summary">
             <div class="apa-review-stat">
               <span class="apa-k">CV — average of {{ r.review.count }}</span>
-              <span class="apa-v">{% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="apa-of">/{{ score_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
+              <span class="apa-v">{% if r.review.cv_avg is not none %}{{ r.review.cv_avg }}<span class="apa-of">/{{ r.review.cv_max }}</span>{% else %}<span class="msp-muted" style="font-size:14px;">not scored yet</span>{% endif %}</span>
             </div>
             <div class="apa-review-stat">
               <span class="apa-k">Written — average of {{ r.review.count }}</span>
@@ -535,21 +555,47 @@
             {% for e in r.review.entries %}
             <li>
               <strong>{{ e.reviewer_name }}</strong> —
-              CV {{ e.cv_score if e.cv_score is not none else "—" }},
-              written {{ e.written_score if e.written_score is not none else "—" }},
-              interview {{ e.interview_score if e.interview_score is not none else "—" }}
+              CV {% if e.cv_score is none %}—{% elif e.cv_rubric %}{{ e.cv_score }}/{{ e.cv_max or r.review.cv_max }}{% else %}{{ e.cv_score }}/10 <span class="msp-muted">(old scale, not averaged)</span>{% endif %},
+              written {{ e.get("written_score") if e.get("written_score") is not none else "—" }},
+              interview {{ e.get("interview_score") if e.get("interview_score") is not none else "—" }}
               {% if e.note %}· “{{ e.note }}”{% endif %}
             </li>
             {% endfor %}
           </ul>
           {% endif %}
 
+          {% set mine_rubric = (r.review.mine.cv_rubric if r.review.mine and r.review.mine.cv_rubric else {}) %}
+          <div class="apa-rubric" id="rubric-{{ r.user_id }}" data-max="{{ r.review.cv_max }}">
+            <p class="apa-rubric-title">CV round <span class="msp-muted">({{ r.review.cv_max }} points{% if r.is_fast_tracked %}; Fast-Track, so the two written-response criteria don't apply{% endif %})</span></p>
+            <table class="apa-rubric-table">
+              <thead><tr><th>Criterion</th><th>Your score</th><th class="apa-rubric-pts">Points</th></tr></thead>
+              <tbody>
+                {% for c in cv_rubric if not (r.is_fast_tracked and c.key in cv_response_keys) %}
+                <tr data-key="{{ c.key }}">
+                  <th scope="row">{{ c.label }}</th>
+                  <td>
+                    <div class="apa-rubric-opts" role="radiogroup" aria-label="{{ c.label }}">
+                      {% for o in c.options %}
+                      <label class="apa-rubric-opt">
+                        <input type="radio" name="rb-{{ r.user_id }}-{{ c.key }}" value="{{ o.points }}"
+                               {% if mine_rubric.get(c.key) == o.points %}checked{% endif %}>
+                        <span><b>{{ o.points }}</b> {{ o.label }}</span>
+                      </label>
+                      {% endfor %}
+                    </div>
+                  </td>
+                  <td class="apa-rubric-pts" data-pts>{{ mine_rubric.get(c.key, "") }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+              <tfoot>
+                <tr><th scope="row">Total</th><td></td>
+                  <td class="apa-rubric-pts"><strong data-total>{{ mine_rubric.values() | sum if mine_rubric else 0 }}</strong>/{{ r.review.cv_max }}</td></tr>
+              </tfoot>
+            </table>
+          </div>
+
           <form class="apa-score-form" onsubmit="return submitScore(event, '{{ r.user_id }}')">
-            <div class="apa-score-field">
-              <label for="cv-{{ r.user_id }}">CV ({{ score_min }}–{{ score_max }})</label>
-              <input type="number" id="cv-{{ r.user_id }}" min="{{ score_min }}" max="{{ score_max }}"
-                     value="{{ r.review.mine.cv_score if r.review.mine and r.review.mine.cv_score is not none else '' }}">
-            </div>
             {% if not r.is_fast_tracked %}
             <div class="apa-score-field">
               <label for="written-{{ r.user_id }}">Written ({{ score_min }}–{{ score_max }})</label>
@@ -795,17 +841,49 @@
       }
     }
 
+    // The CV rubric: one radio group per criterion. Returns {key: points}
+    // when every criterion is picked, null when none are, and "partial" in
+    // between (the server wants all or nothing).
+    function readRubric(userId) {
+      const box = document.getElementById("rubric-" + userId);
+      if (!box) return null;
+      const out = {};
+      let picked = 0, total = 0;
+      box.querySelectorAll("tbody tr[data-key]").forEach((row) => {
+        total++;
+        const checked = row.querySelector("input[type=radio]:checked");
+        if (checked) { out[row.dataset.key] = Number(checked.value); picked++; }
+      });
+      if (picked === 0) return null;
+      return picked === total ? out : "partial";
+    }
+
+    document.querySelectorAll(".apa-rubric").forEach((box) => {
+      box.addEventListener("change", () => {
+        let sum = 0;
+        box.querySelectorAll("tbody tr[data-key]").forEach((row) => {
+          const checked = row.querySelector("input[type=radio]:checked");
+          row.querySelector("[data-pts]").textContent = checked ? checked.value : "";
+          if (checked) sum += Number(checked.value);
+        });
+        box.querySelector("[data-total]").textContent = sum;
+      });
+    });
+
     async function submitScore(event, userId) {
       event.preventDefault();
       const btn = event.target.querySelector("button[type=submit]");
-      const cvEl = document.getElementById("cv-" + userId);
+      const rubric = readRubric(userId);
+      if (rubric === "partial") {
+        flash("Score every CV criterion, or leave them all blank", true);
+        return false;
+      }
       const writtenEl = document.getElementById("written-" + userId);   // absent for Fast-Track applicants
       const interviewEl = document.getElementById("interview-score-" + userId);   // absent before shortlisting
       const noteEl = document.getElementById("note-" + userId);
-      const cv = cvEl.value === "" ? null : Number(cvEl.value);
       const written = (!writtenEl || writtenEl.value === "") ? null : Number(writtenEl.value);
       const interview = (!interviewEl || interviewEl.value === "") ? null : Number(interviewEl.value);
-      if (cv === null && written === null && interview === null) {
+      if (rubric === null && written === null && interview === null) {
         flash("Enter at least one score", true);
         return false;
       }
@@ -815,7 +893,7 @@
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cv_score: cv, written_score: written, interview_score: interview, note: noteEl.value }),
+          body: JSON.stringify({ cv_rubric: rubric, written_score: written, interview_score: interview, note: noteEl.value }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);

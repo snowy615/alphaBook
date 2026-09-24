@@ -191,9 +191,63 @@ DECIDED = {S_ACCEPTED, S_REJECTED}
 # written response actually exist to be read, through to a final decision.
 SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 
-# Reviewer scores are on a 1-10 scale — familiar from any CV-review process
-# and coarse enough that an average across several reviewers means something.
+# Written and interview scores are on a 1-10 scale for now (their own
+# criteria are still to come). The CV is scored against CV_RUBRIC below.
 SCORE_MIN, SCORE_MAX = 1, 10
+
+# The CV round: each criterion is scored by picking exactly one option, and
+# the CV score is the total (out of 15). Options are listed lowest first, and
+# the order here is the order reviewers see. The two response criteria read
+# the written answers, so a Fast-Track applicant (who never wrote them) is
+# scored on the other four only, out of 11: see _cv_rubric_for.
+CV_RUBRIC: List[Dict[str, Any]] = [
+    {"key": "motivation", "label": "Response to motivation question", "options": [
+        {"points": 0, "label": "Very little effort"},
+        {"points": 1, "label": "Generic"},
+        {"points": 2, "label": "Insightful / excellent (rare)"},
+    ]},
+    {"key": "fermi", "label": "Response to Fermi question", "options": [
+        {"points": 0, "label": "Very short, low effort"},
+        {"points": 1, "label": "Some reasoning"},
+        {"points": 2, "label": "Insightful"},
+    ]},
+    {"key": "major", "label": "Major", "options": [
+        {"points": 0, "label": "Other"},
+        {"points": 1, "label": "Other STEM / Economics"},
+        {"points": 2, "label": "Maths / CS / Physics / Engineering"},
+    ]},
+    {"key": "stem_achievements", "label": "STEM achievements", "options": [
+        {"points": 0, "label": "No awards"},
+        {"points": 1, "label": "Less well-known competition, or non-final national round"},
+        {"points": 2, "label": "Final-round national medallist"},
+        {"points": 3, "label": "International medallist"},
+    ]},
+    {"key": "stem_research", "label": "STEM research", "options": [
+        {"points": 0, "label": "None"},
+        {"points": 1, "label": "Scattered or less well known"},
+        {"points": 2, "label": "National, without coding"},
+        {"points": 3, "label": "International, or national involving coding"},
+    ]},
+    {"key": "market", "label": "Previous market experience", "options": [
+        {"points": 0, "label": "None"},
+        {"points": 1, "label": "Personal finance project (no trading, no internship)"},
+        {"points": 2, "label": "Internship or trades"},
+        {"points": 3, "label": "Internship and trades"},
+    ]},
+]
+CV_RESPONSE_KEYS = {"motivation", "fermi"}
+
+
+def _cv_rubric_for(fast_tracked: bool) -> List[Dict[str, Any]]:
+    """The criteria this applicant is scored on. Fast-Track skips the two
+    that read written answers, since there are none to read."""
+    if fast_tracked:
+        return [c for c in CV_RUBRIC if c["key"] not in CV_RESPONSE_KEYS]
+    return CV_RUBRIC
+
+
+def _cv_max(fast_tracked: bool) -> int:
+    return sum(max(o["points"] for o in c["options"]) for c in _cv_rubric_for(fast_tracked))
 
 # How an interview record moves: a reviewer proposes a time, and the
 # candidate either confirms it (a calendar invite follows) or declines it
@@ -246,6 +300,9 @@ class ConfirmCv(BaseModel):
 
 
 class ReviewScore(BaseModel):
+    # The CV is scored criterion by criterion ({criterion key: points}); the
+    # CV score is their total. A bare cv_score is no longer accepted.
+    cv_rubric: Optional[Dict[str, int]] = None
     cv_score: Optional[int] = None
     written_score: Optional[int] = None
     interview_score: Optional[int] = None
@@ -1200,12 +1257,17 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     interview itself.
     """
     reviews = application.get("reviews") or {}
-    cv_scores = [r["cv_score"] for r in reviews.values() if r.get("cv_score") is not None]
+    # Only rubric scores count toward the CV average. A CV score entered
+    # before the rubric was on a different (1-10) scale, so averaging it in
+    # would be meaningless; it's still listed, marked as the old scale.
+    cv_scores = [r["cv_score"] for r in reviews.values()
+                 if r.get("cv_rubric") and r.get("cv_score") is not None]
     written_scores = [r["written_score"] for r in reviews.values() if r.get("written_score") is not None]
     interview_scores = [r["interview_score"] for r in reviews.values() if r.get("interview_score") is not None]
     return {
         "count": len(reviews),
         "cv_avg": round(sum(cv_scores) / len(cv_scores), 1) if cv_scores else None,
+        "cv_max": _cv_max(application.get("event_ticket") == EVENT_TICKET_FAST_TRACK),
         "written_avg": round(sum(written_scores) / len(written_scores), 1) if written_scores else None,
         "interview_avg": round(sum(interview_scores) / len(interview_scores), 1) if interview_scores else None,
         "entries": sorted(
@@ -1327,9 +1389,12 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     # — there is no auto-graded component any more, so this average *is* the
     # ranking. An application nobody has scored yet sorts to the bottom
     # rather than being read as a zero, since it hasn't had its turn.
+    # The CV rubric is out of 15 (11 for Fast-Track), the others out of 10,
+    # so the CV average is put on the same 10-point scale before combining.
     def _combined(r: Dict[str, Any]) -> Optional[float]:
-        parts = [v for v in (r["review"]["cv_avg"], r["review"]["written_avg"], r["review"]["interview_avg"])
-                 if v is not None]
+        review = r["review"]
+        cv = review["cv_avg"] * SCORE_MAX / review["cv_max"] if review["cv_avg"] is not None else None
+        parts = [v for v in (cv, review["written_avg"], review["interview_avg"]) if v is not None]
         return round(sum(parts) / len(parts), 2) if parts else None
 
     for r in rows:
@@ -1393,6 +1458,8 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "is_admin": reviewer.is_admin,
         "score_min": SCORE_MIN,
         "score_max": SCORE_MAX,
+        "cv_rubric": CV_RUBRIC,
+        "cv_response_keys": sorted(CV_RESPONSE_KEYS),
         "reviewers": await _list_reviewers(),
         "viewer_id": str(reviewer.id),
         "interview_minutes": INTERVIEW_MINUTES,
@@ -1419,7 +1486,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score", "CV avg", "Written avg", "Interview avg",
+        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Written avg", "Interview avg",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1439,8 +1506,15 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             # interview) reads as a dash, not the word "None".
             return "—" if e.get(key) is None else e[key]
 
+        def _cv(e: Dict[str, Any]) -> str:
+            if e.get("cv_score") is None:
+                return "—"
+            if e.get("cv_rubric"):
+                return f"{e['cv_score']}/{e.get('cv_max') or r['review']['cv_max']}"
+            return f"{e['cv_score']}/10 (old scale)"
+
         reviewer_notes = "; ".join(
-            f"{e['reviewer_name']}: CV {_score(e, 'cv_score')}, written {_score(e, 'written_score')}, "
+            f"{e['reviewer_name']}: CV {_cv(e)}, written {_score(e, 'written_score')}, "
             f"interview {_score(e, 'interview_score')}"
             + (f' ("{e["note"]}")' if e.get("note") else "")
             for e in r["review"]["entries"]
@@ -1513,6 +1587,25 @@ async def applicant_cv(user_id: str, reviewer: User = Depends(require_reviewer))
     )
 
 
+def _checked_cv_rubric(raw: Dict[str, int], fast_tracked: bool) -> Dict[str, int]:
+    """Every criterion this applicant is scored on, each with one of its own
+    options' points. All or nothing: a half-filled rubric's total would look
+    like a low score rather than an unfinished one."""
+    criteria = _cv_rubric_for(fast_tracked)
+    allowed = {c["key"]: {o["points"] for o in c["options"]} for c in criteria}
+    missing = [c["label"] for c in criteria if c["key"] not in raw]
+    if missing:
+        raise HTTPException(400, f"Score every CV criterion (missing: {', '.join(missing)})")
+    out: Dict[str, int] = {}
+    for key, points in raw.items():
+        if key not in allowed:
+            raise HTTPException(400, f"Unknown CV criterion: {key}")
+        if points not in allowed[key]:
+            raise HTTPException(400, f"That isn't one of the options for {key}")
+        out[key] = int(points)
+    return out
+
+
 @router.post("/admin/{user_id}/score")
 async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depends(require_reviewer)):
     """
@@ -1522,11 +1615,13 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
     own score rather than adding a second one, and the average on display
     always reflects everyone's latest.
     """
-    scores = (("CV", payload.cv_score), ("Written", payload.written_score), ("Interview", payload.interview_score))
+    if payload.cv_score is not None and payload.cv_rubric is None:
+        raise HTTPException(400, "Score the CV using the criteria")
+    scores = (("Written", payload.written_score), ("Interview", payload.interview_score))
     for label, value in scores:
         if value is not None and not (SCORE_MIN <= value <= SCORE_MAX):
             raise HTTPException(400, f"{label} score must be between {SCORE_MIN} and {SCORE_MAX}")
-    if all(value is None for _, value in scores):
+    if payload.cv_rubric is None and all(value is None for _, value in scores):
         raise HTTPException(400, "Enter at least one score")
 
     application = await _load(user_id)
@@ -1535,11 +1630,19 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
     if application.get("status") not in SCORABLE:
         raise HTTPException(400, "This application hasn't been submitted yet — nothing to score")
 
+    fast_tracked = application.get("event_ticket") == EVENT_TICKET_FAST_TRACK
+    cv_rubric = _checked_cv_rubric(payload.cv_rubric, fast_tracked) if payload.cv_rubric is not None else None
+
     reviews = application.setdefault("reviews", {})
     existing = reviews.get(str(reviewer.id), {})
+    if cv_rubric is not None:
+        cv_fields = {"cv_rubric": cv_rubric, "cv_score": sum(cv_rubric.values()),
+                     "cv_max": _cv_max(fast_tracked)}
+    else:
+        cv_fields = {k: existing.get(k) for k in ("cv_rubric", "cv_score", "cv_max")}
     reviews[str(reviewer.id)] = {
         "reviewer_name": reviewer.username,
-        "cv_score": payload.cv_score if payload.cv_score is not None else existing.get("cv_score"),
+        **cv_fields,
         "written_score": payload.written_score if payload.written_score is not None else existing.get("written_score"),
         "interview_score": payload.interview_score if payload.interview_score is not None else existing.get("interview_score"),
         "note": (payload.note or "").strip()[:300] or existing.get("note", ""),
