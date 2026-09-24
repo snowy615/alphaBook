@@ -29,11 +29,16 @@ from __future__ import annotations
 import argparse
 import http.server
 import threading
+import time
 import urllib.parse
 import webbrowser
 
 import httpx
 
+# Google's "confirm it's you" re-sign-in can easily take a few minutes, so wait
+# a generous while — and if the redirect still arrives too late, the code can
+# be pasted in by hand (see main()).
+WAIT_SECONDS = 15 * 60
 REDIRECT_PORT = 8765
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/"
 SCOPE = "https://www.googleapis.com/auth/calendar.events"
@@ -46,12 +51,16 @@ _result: dict = {}
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):  # noqa: N802 (stdlib method name)
         qs = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-        _result["code"] = qs.get("code", [None])[0]
-        _result["error"] = qs.get("error", [None])[0]
+        # Only the OAuth redirect counts — anything else (a favicon request,
+        # a stray reload) is answered and ignored rather than ending the wait.
+        if "code" in qs or "error" in qs:
+            _result["code"] = qs.get("code", [None])[0]
+            _result["error"] = qs.get("error", [None])[0]
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
-        message = "Signed in — you may close this window." if _result["code"] else "Something went wrong — check the terminal."
+        message = ("Signed in — you may close this window." if _result.get("code")
+                   else "Something went wrong — check the terminal.")
         self.wfile.write(f"<html><body><p>{message}</p></body></html>".encode())
 
     def log_message(self, *args):
@@ -65,8 +74,7 @@ def main() -> None:
     args = parser.parse_args()
 
     server = http.server.HTTPServer(("localhost", REDIRECT_PORT), _CallbackHandler)
-    thread = threading.Thread(target=server.handle_request, daemon=True)
-    thread.start()
+    threading.Thread(target=server.serve_forever, daemon=True).start()
 
     auth_url = AUTH_URL + "?" + urllib.parse.urlencode({
         "client_id": args.client_id,
@@ -82,9 +90,28 @@ def main() -> None:
     print(f"Opening your browser to sign in — if it doesn't open, visit:\n{auth_url}\n")
     webbrowser.open(auth_url)
 
-    thread.join(timeout=180)
+    print(f"Waiting up to {WAIT_SECONDS // 60} minutes for you to finish signing in…")
+    deadline = time.time() + WAIT_SECONDS
+    while time.time() < deadline and not (_result.get("code") or _result.get("error")):
+        time.sleep(0.5)
+    server.shutdown()
+
+    if _result.get("error"):
+        raise SystemExit(f"Google returned an error: {_result['error']}. Try again.")
     if not _result.get("code"):
-        raise SystemExit(f"No authorization code received (error: {_result.get('error')}). Try again.")
+        # The redirect never reached this script (it timed out, or the browser
+        # couldn't connect). Google still put the code in the address bar of
+        # the page it redirected to, so it can be pasted in by hand. Codes
+        # only last a few minutes, so do this promptly.
+        pasted = input(
+            "\nDidn't hear back from the browser. If you finished signing in, copy the full\n"
+            "address from the browser tab it ended on (starts with http://localhost:8765/?)\n"
+            "and paste it here, then press Enter:\n> "
+        ).strip()
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(pasted).query).get("code", [None])[0]
+        if not code:
+            raise SystemExit("That address has no code in it. Run the script again.")
+        _result["code"] = code
 
     resp = httpx.post(TOKEN_URL, data={
         "code": _result["code"],
