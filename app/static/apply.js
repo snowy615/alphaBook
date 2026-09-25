@@ -311,8 +311,8 @@
       : `${state.fast_track_remaining} of ${capacity} places left.`;
     const fastBlurb = fastDisabled
       ? fastNote
-      : `Have your CV reviewed in person by an analyst at the event, and skip the written ` +
-        `assessment entirely — you'll go straight into the same CV-scoring and interview process ` +
+      : `Do your CV round in person at the event, with an analyst, in place of the online written ` +
+        `questions. After that it's the same interview process as everyone else. ` +
         `as everyone else. ${placesLine}`;
     const TICKET_NAME = { fast_track: "CV clinic + Fast-Track", general: "General attendance" };
 
@@ -854,8 +854,8 @@
       }
     } else if (state.is_fast_tracked) {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in. As a
-           Fast-Track applicant there's no written assessment — the committee reviews your CV
-           directly, and you'll hear a decision from there.</p>`;
+           Fast-Track applicant, your CV round happens in person at the CV clinic at Quant Outreach,
+           in place of the online written questions. You'll hear from us after that.</p>`;
     } else {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in, and your
            assessment has been submitted. The committee reads your CV and your written answers

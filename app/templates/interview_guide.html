@@ -4,7 +4,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Interview guide - {{ app_name }}</title>
+  <title>Scoring guide - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/theme.js"></script>
   <style>
@@ -24,6 +24,8 @@
     .ig-pts { width: 56px; text-align: center !important; font-weight: 700; font-variant-numeric: tabular-nums; }
     .ig-max { width: 60px; text-align: center !important; font-weight: 700; color: var(--brand); font-variant-numeric: tabular-nums; }
     .ig-neg { color: var(--red); }
+    .ig-hint { font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .ig-lead { font-size: 14px; line-height: 1.6; margin: 0 0 8px; }
     .ig-table td.msp-muted { color: var(--muted); }
     .ig-total td { border-top: 1px solid var(--border-strong); font-weight: 700; }
     .ig-part { margin: 14px 0 8px; font-weight: 600; font-size: 14px; }
@@ -48,7 +50,7 @@
         <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
         <div class="titles">
           <h1>{{ app_name }}</h1>
-          <div class="subtitle">Interview guide</div>
+          <div class="subtitle">Scoring guide</div>
         </div>
       </a>
     </div>
@@ -57,8 +59,70 @@
     </div>
   </div>
 
+  {% macro cv_table(rubric) %}
+      <table class="ig-table">
+        <thead><tr><th>Criterion</th><th class="ig-pts">Score</th><th>What it looks like</th><th class="ig-max">Max</th></tr></thead>
+        {% for c in rubric %}
+        <tbody class="ig-crit">
+          {% for o in c.options %}
+          <tr>
+            {% if loop.first %}<td class="ig-name" rowspan="{{ c.options | length }}">{{ c.label }}
+              {% if c.hint %}<div class="ig-hint">{{ c.hint }}</div>{% endif %}</td>{% endif %}
+            <td class="ig-pts">{{ o.points }}</td>
+            <td>{{ o.label }}</td>
+            {% if loop.first %}<td class="ig-max" rowspan="{{ c.options | length }}">{{ c.options | map(attribute="points") | max }}</td>{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+        {% endfor %}
+        <tbody><tr class="ig-total"><td colspan="3">Total</td><td class="ig-max">{{ cv_max }}</td></tr></tbody>
+      </table>
+  {% endmacro %}
+
   <div class="container" style="max-width: 980px;">
     <div class="msp-hero">
+      <h2>CV round ({{ cv_max }} points)</h2>
+      <p>Assessing academic background, problem-solving potential and relevant experience. Online applicants are
+        scored on the Online CV rubric; Fast-Track applicants, whose CV round is in person at the CV clinic, on the
+        Onsite CV rubric.</p>
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">Automatic shortlist</p>
+      <p class="ig-lead">Candidates who meet any one of these are shortlisted for interview straight away, with no CV
+        score needed. Use <strong>Automatic shortlist</strong> on their card.</p>
+      <ul class="ig-list">
+        {% for key, label in auto_shortlist_reasons.items() %}<li>{{ label }}.{% if key == "finance_internship" %}
+          Note the key details (firm, role, duration, responsibilities) so they can be checked at interview.{% endif %}</li>
+        {% endfor %}
+      </ul>
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">Online CV</p>
+      {{ cv_table(online_cv_rubric) }}
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">Onsite CV (Fast-Track)</p>
+      {{ cv_table(onsite_cv_rubric) }}
+    </div>
+
+    <div class="ig-section">
+      <p class="ig-section-title">CV round guidance</p>
+      <ul class="ig-list">
+        <li>Every criterion applies to every applicant, first years included.</li>
+        <li>We aim for Year 1 applicants to make up at least 50% of the interview cohort (exact share to be confirmed).</li>
+        <li>Use the descriptions as a guide. When in doubt, pick the score that best fits your overall impression.</li>
+        <li>Focus on the depth and quality of the evidence, not the quantity. Be consistent across candidates.</li>
+        <li>Relevant technical projects include research with code, data analysis, app or software development,
+          modelling, ML / AI projects, and other substantial coding work.</li>
+        <li>For finance internships or trading experience, note the key details in your comments so they can be
+          checked at interview.</li>
+      </ul>
+    </div>
+
+    <div class="msp-hero" id="interview" style="margin-top: 36px;">
       <h2>Interview rubric ({{ interview_max }} points + CV penalty)</h2>
       <p>Assessing problem-solving ability and overall fit for the team. A CV discussion, then two
         questions from the question bank, easy then hard, 10 minutes each.</p>

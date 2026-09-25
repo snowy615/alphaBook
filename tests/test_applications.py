@@ -13,6 +13,7 @@ involved.
 """
 
 import asyncio
+import re
 import datetime as dt
 
 import pytest
@@ -415,7 +416,7 @@ class TestReviewSummary:
     def test_no_reviews_yet(self):
         summary = ap._review_summary({}, viewer_id="r1")
         assert summary == {
-            "count": 0, "cv_avg": None, "cv_max": 15, "interview_avg": None, "interview_max": 15,
+            "count": 0, "cv_avg": None, "cv_max": 18, "interview_avg": None, "interview_max": 15,
             "cv_n": 0, "interview_n": 0,
             "entries": [], "mine": None,
         }
@@ -542,14 +543,14 @@ class TestRankedRows:
         fake_db.collections[ap.COLLECTION] = {
             "u1": {
                 "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED,
-                "reviews": {"r1": {"cv_rubric": rubric(12), "cv_score": 12,
+                "reviews": {"r1": {"cv_rubric": rubric(9), "cv_score": 9,
                                    "interview_rubric": iv(15), "interview_score": 15}},
             },
         }
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
         assert rows[0]["review"]["interview_avg"] == 15.0
-        assert rows[0]["combined_score"] == 9.0   # mean of 12/15 and 15/15, each as /10
+        assert rows[0]["combined_score"] == 7.5   # mean of 9/18 and 15/15, each as /10
 
     def test_an_unscored_interview_does_not_drag_the_average_down(self, monkeypatch):
         fake_db = _FakeDB()
@@ -557,12 +558,12 @@ class TestRankedRows:
             "u1": {
                 "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
                 "event_ticket": ap.EVENT_TICKET_FAST_TRACK,
-                "reviews": {"r1": {"cv_rubric": rubric(11, fast_tracked=True), "cv_score": 11}},
+                "reviews": {"r1": {"cv_rubric": rubric(18, fast_tracked=True), "cv_score": 18}},
             },
         }
         monkeypatch.setattr(ap.db_module, "db", fake_db)
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
-        assert rows[0]["combined_score"] == 10.0   # full marks out of 11; nothing else scored yet
+        assert rows[0]["combined_score"] == 10.0   # full marks on the onsite CV; nothing else scored yet
 
 
 class TestDecideFlow:
@@ -1717,7 +1718,7 @@ class TestExportApplications:
         row = {headers[i]: c.value for i, c in enumerate(next(ws.iter_rows(min_row=2, max_row=2)))}
         assert row["Username"] == "jo"
         assert row["Motivation text"] == "Because quant finance."
-        assert row["CV avg (/15)"] == 8
+        assert row["CV avg (/18)"] == 8
         assert "16 Sep 2026" in row["Availability submitted"]
         assert "London" in row["Availability submitted"]
 
@@ -1916,22 +1917,21 @@ class TestConfirmCvWithApplicantInfo:
         assert stored["linkedin"] == "https://linkedin.com/in/jo"
         assert sent == []   # no confirmation email yet — the OA hasn't been sat
 
-    def test_fast_track_goes_straight_to_shortlisted_with_its_own_email(self, monkeypatch):
+    def test_fast_track_is_submitted_for_its_onsite_cv_round_with_its_own_email(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="fast_track"))
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.confirm_cv(
             ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
 
-        assert result["status"] == ap.S_SHORTLISTED
+        assert result["status"] == ap.S_SUBMITTED
         stored = fake_db.collections[ap.COLLECTION]["u1"]
-        assert stored["status"] == ap.S_SHORTLISTED
-        assert "submitted_at" in stored and "shortlisted_at" in stored
-        assert stored["shortlisted_by"] == "Fast-Track"
+        assert stored["status"] == ap.S_SUBMITTED
+        assert "submitted_at" in stored and "shortlisted_at" not in stored
         assert "oa" not in stored   # never sat one
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@merton.ox.ac.uk"
-        assert sent[0]["title"] == "Through to interview"
+        assert sent[0]["title"] == "Application received"
 
     def test_fast_track_confirmation_email_is_sent_only_once(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._application(event_ticket="fast_track"))
@@ -2776,19 +2776,21 @@ class TestCvRubric:
             "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED, **extra}})
         return fake_db
 
-    def test_the_rubric_adds_up_to_fifteen(self):
-        assert [c["key"] for c in ap.CV_RUBRIC] == [
-            "motivation", "fermi", "major", "stem_achievements", "stem_research", "market"]
-        assert ap._cv_max(False) == 15
+    def test_both_rubrics_add_up_to_eighteen(self):
+        assert [c["key"] for c in ap.ONLINE_CV_RUBRIC] == [
+            "motivation", "fermi", "major", "stem_achievements", "stem_research", "market", "academic"]
+        assert [c["key"] for c in ap.ONSITE_CV_RUBRIC] == [
+            "quick_question", "major", "stem_achievements", "stem_research", "market", "academic"]
+        assert ap._cv_max(False) == ap._cv_max(True) == 18
 
     def test_the_cv_score_is_the_total_of_the_criteria(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
         picks = {"motivation": 1, "fermi": 2, "major": 2, "stem_achievements": 1,
-                 "stem_research": 0, "market": 3}
+                 "stem_research": 0, "market": 3, "academic": 2}
         result = asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
         entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
-        assert entry["cv_score"] == 9 and entry["cv_rubric"] == picks and entry["cv_max"] == 15
-        assert result["review"]["cv_avg"] == 9.0
+        assert entry["cv_score"] == 11 and entry["cv_rubric"] == picks and entry["cv_max"] == 18
+        assert result["review"]["cv_avg"] == 11.0
 
     def test_a_half_scored_cv_is_saved_but_has_no_score_yet(self, monkeypatch):
         # The scoring view saves each pick as it's made, so a partial rubric
@@ -2820,11 +2822,13 @@ class TestCvRubric:
         with pytest.raises(HTTPException):
             asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
 
-    def test_an_unknown_criterion_is_refused(self, monkeypatch):
-        self._patch(monkeypatch)
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={**rubric(0), "vibes": 1}),
-                                        User(id="r1", username="al")))
+    def test_a_criterion_from_another_rubric_is_dropped_not_refused(self, monkeypatch):
+        # Leftovers from an older rubric mustn't block a reviewer's autosave.
+        fake_db = self._patch(monkeypatch)
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric={**rubric(10), "vibes": 1}),
+                                    User(id="r1", username="al")))
+        entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
+        assert "vibes" not in entry["cv_rubric"] and entry["cv_score"] == 10
 
     def test_a_bare_cv_number_is_refused(self, monkeypatch):
         self._patch(monkeypatch)
@@ -2832,16 +2836,16 @@ class TestCvRubric:
             asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_score=8), User(id="r1", username="al")))
         assert "criteria" in exc.value.detail
 
-    def test_fast_track_skips_the_written_response_criteria(self, monkeypatch):
+    def test_fast_track_is_scored_on_the_onsite_rubric(self, monkeypatch):
         fake_db = self._patch(monkeypatch, event_ticket=ap.EVENT_TICKET_FAST_TRACK)
-        assert ap._cv_max(True) == 11
-        picks = rubric(11, fast_tracked=True)
-        assert "motivation" not in picks and "fermi" not in picks
+        picks = rubric(18, fast_tracked=True)
+        assert "quick_question" in picks and "motivation" not in picks
         asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=picks), User(id="r1", username="al")))
         entry = fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r1"]
-        assert entry["cv_score"] == 11 and entry["cv_max"] == 11
-        with pytest.raises(HTTPException):   # and scoring them anyway is refused
-            asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(15)), User(id="r1", username="al")))
+        assert entry["cv_score"] == 18 and entry["cv_max"] == 18
+        # The online rubric's picks don't complete an onsite score.
+        asyncio.run(ap.submit_score("u1", ap.ReviewScore(cv_rubric=rubric(18)), User(id="r2", username="bo")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["reviews"]["r2"]["cv_score"] is None
 
     def test_an_interview_score_alone_keeps_the_cv_rubric(self, monkeypatch):
         fake_db = self._patch(monkeypatch)
@@ -2873,7 +2877,8 @@ class TestCvRubric:
         assert "Oxford student" not in html
         assert "STEM achievements" in html and "International medallist" in html   # the rubric, for the view
         assert "9.0<span" in html and "/15" in html
-        assert '"cv_max": 11' in html                                             # Fast-Track
+        assert "Response to quick interview question" in html                    # the onsite rubric
+        assert "Academic performance" in html
 
 
 class TestAutosavedScoring:
@@ -2917,7 +2922,7 @@ class TestAutosavedScoring:
         assert "written_score" not in ap.ReviewScore.model_fields
         assert "estimation_score" not in ap.ReviewScore.model_fields
         self._patch(monkeypatch, reviews={"r1": {"reviewer_name": "al", "written_score": 3,
-                                                  "cv_rubric": rubric(15), "cv_score": 15}})
+                                                  "cv_rubric": rubric(18), "cv_score": 18}})
         rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
         assert rows[0]["combined_score"] == 10.0   # an old written score plays no part
 
@@ -3112,14 +3117,14 @@ class TestReviewListRanking:
         # The shortlist's ranking is the average of the two rounds, each /10:
         # 14/15 and 3/15 vs 9/15 and 15/15.
         by_id = {r["user_id"]: r for r in rows}
-        assert by_id["hi_cv"]["combined_score"] == 5.67
-        assert by_id["lo_cv"]["combined_score"] == 8.0
+        assert by_id["hi_cv"]["combined_score"] == 4.89   # 14/18 and 3/15, each as /10
+        assert by_id["lo_cv"]["combined_score"] == 7.5    # 9/18 and 15/15
 
-    def test_fast_track_cv_is_compared_fairly(self, monkeypatch):
-        # 11/11 for Fast-Track beats 14/15 once both are on the same scale.
+    def test_onsite_and_online_cv_scores_rank_together(self, monkeypatch):
+        # Both rubrics are out of 18, so 16 onsite ranks above 14 online.
         rows = self._rows(monkeypatch, {
-            "ft": {"user_id": "ft", "username": "a", "status": ap.S_SHORTLISTED, "event_ticket": "fast_track",
-                   "reviews": {"r1": {"cv_rubric": rubric(11, fast_tracked=True), "cv_score": 11}}},
+            "ft": {"user_id": "ft", "username": "a", "status": ap.S_SUBMITTED, "event_ticket": "fast_track",
+                   "reviews": {"r1": {"cv_rubric": rubric(16, fast_tracked=True), "cv_score": 16}}},
             "std": {"user_id": "std", "username": "b", "status": ap.S_SUBMITTED,
                     "reviews": {"r1": {"cv_rubric": rubric(14), "cv_score": 14}}},
         })
@@ -3143,7 +3148,7 @@ class TestReviewListRanking:
         def attrs(uid):
             m = re.search(r'<tr class="apa-item"[^>]*data-uid="%s"[^>]*>' % uid, html, re.S)
             return m.group(0)
-        assert 'data-cv="8.0"' in attrs("done") and 'data-unreviewed="0"' in attrs("done")
+        assert 'data-cv="6.67"' in attrs("done") and 'data-unreviewed="0"' in attrs("done")
         assert 'data-cv=""' in attrs("half") and 'data-unreviewed="1"' in attrs("half")   # unfinished counts as unreviewed
         assert 'data-unreviewed="1"' in attrs("new")
         assert 'data-unreviewed="0"' in attrs("early")   # nothing to review yet
@@ -3194,3 +3199,83 @@ def test_confirming_the_membership_password_keeps_the_rest_of_the_form():
     confirm = html[html.index("async function confirmPassword()"):html.index("async function saveProfile()")]
     assert "...formFields()" in confirm and "membership: pendingTrack" in confirm
     assert "full_name: document.getElementById('fullName')" in html[html.index("function formFields()"):]
+
+
+class TestAutomaticShortlist:
+    """Candidates meeting an automatic criterion go straight to interview
+    without a CV score."""
+
+    def _patch(self, monkeypatch, **extra):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": mb.M_QUANT_ANALYST, "status": ap.S_SUBMITTED, **extra}})
+        return fake_db, sent
+
+    def _auto(self, reason, note=""):
+        return asyncio.run(ap.decide("u1", ap.Decision(decision="auto_shortlist", reason=reason, note=note),
+                                     User(id="r1", username="priya")))
+
+    def test_the_three_criteria(self):
+        assert set(ap.AUTO_SHORTLIST_REASONS) == {"prelims_top5", "olympiad_medal", "finance_internship"}
+
+    def test_shortlists_without_a_score_and_records_why(self, monkeypatch):
+        fake_db, sent = self._patch(monkeypatch)
+        result = self._auto("olympiad_medal", "IPhO silver 2024")
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert result["status"] == ap.S_SHORTLISTED and stored["shortlisted_by"] == "priya"
+        assert stored["auto_shortlist"]["reason"] == "olympiad_medal"
+        assert stored["auto_shortlist"]["details"] == "IPhO silver 2024"
+        assert "reviews" not in stored or not stored["reviews"]
+        assert len(sent) == 1 and "shortlisted" in sent[0]["subject"]
+
+    def test_a_criterion_is_required(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException):
+            self._auto(None)
+        with pytest.raises(HTTPException):
+            self._auto("seemed_nice")
+
+    def test_an_internship_needs_its_details_noted(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            self._auto("finance_internship", "  ")
+        assert "firm" in exc.value.detail
+        assert self._auto("finance_internship", "Example Capital, QR intern, 10 weeks")["status"] == ap.S_SHORTLISTED
+
+    def test_only_from_submitted(self, monkeypatch):
+        self._patch(monkeypatch, status=ap.S_SHORTLISTED)
+        with pytest.raises(HTTPException):
+            self._auto("prelims_top5")
+
+    def test_the_page_shows_it_and_it_never_counts_as_unreviewed(self, monkeypatch):
+        _flow_db(monkeypatch, applications={
+            "a": {"user_id": "a", "username": "a", "status": ap.S_SHORTLISTED,
+                  "auto_shortlist": {"reason": "prelims_top5", "label": ap.AUTO_SHORTLIST_REASONS["prelims_top5"],
+                                     "details": "", "by": "priya"}},
+            "ft": {"user_id": "ft", "username": "f", "status": ap.S_SUBMITTED, "event_ticket": "fast_track"},
+            "s": {"user_id": "s", "username": "s", "status": ap.S_SUBMITTED},
+        })
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, User(id="r1", username="al", is_admin=True))).body.decode()
+
+        def row(uid):
+            return re.search(r'<tr class="apa-item"[^>]*data-uid="%s"[^>]*>' % uid, html, re.S).group(0)
+        assert 'data-unreviewed="0"' in row("a") and "auto-shortlisted" in html
+        assert "Automatically shortlisted by priya" in html
+        assert 'data-stage="fasttrack"' in row("ft") and 'data-stage="screen"' in row("s")
+        assert 'data-stage="fasttrack">Fast-Track' in html
+        assert "autoShortlist('s')" in html and "Score onsite CV" in html
+
+
+def test_the_scoring_guide_has_both_cv_rubrics_and_the_auto_shortlist_criteria(monkeypatch):
+    from starlette.requests import Request
+    request = Request({"type": "http", "method": "GET", "path": "/apply/admin/interview-guide", "headers": [],
+                       "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+    html = asyncio.run(ap.interview_guide(request, User(id="r1", username="al"))).body.decode()
+    assert "CV round (18 points)" in html and "Online CV" in html and "Onsite CV (Fast-Track)" in html
+    assert "Response to quick interview question" in html and "top 10% of year" in html
+    for label in ap.AUTO_SHORTLIST_REASONS.values():
+        assert label in html
+    assert "Interview rubric (15 points + CV penalty)" in html

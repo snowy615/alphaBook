@@ -192,53 +192,99 @@ DECIDED = {S_ACCEPTED, S_REJECTED}
 # written response actually exist to be read, through to a final decision.
 SCORABLE = {S_SUBMITTED, S_SHORTLISTED, S_ACCEPTED, S_REJECTED}
 
-# The CV (written answers included) is scored against CV_RUBRIC and the
-# interview against INTERVIEW_RUBRIC, both below. SCORE_MAX is the common
+# The CV round is scored against ONLINE_CV_RUBRIC or ONSITE_CV_RUBRIC and
+# the interview against INTERVIEW_RUBRIC, all below. SCORE_MAX is the common
 # 10-point scale they're both put on for the combined ranking.
 SCORE_MIN, SCORE_MAX = 1, 10
 NOTE_MAX_CHARS = 2000   # a reviewer's general comments on one applicant
 
-# The CV round: each criterion is scored by picking exactly one option, and
-# the CV score is the total (out of 15). Options are listed lowest first, and
-# the order here is the order reviewers see. The two response criteria read
-# the written answers, so a Fast-Track applicant (who never wrote them) is
-# scored on the other four only, out of 11: see _cv_rubric_for.
-CV_RUBRIC: List[Dict[str, Any]] = [
+# The CV round, out of 18 either way, in one of two forms. Each criterion is
+# scored by picking exactly one option; the CV score is the total. Options
+# are listed lowest first, in the order reviewers see them.
+#
+# * ONLINE_CV_RUBRIC for everyone who applied online: it includes the two
+#   written answers.
+# * ONSITE_CV_RUBRIC for Fast-Track applicants, whose CV round happens in
+#   person at the CV clinic: a quick interview question takes the place of
+#   the two written answers.
+#
+# The criteria from Major down are the same in both.
+def _shared_cv_criteria() -> List[Dict[str, Any]]:
+    return [
+        {"key": "major", "label": "Major", "options": [
+            {"points": 0, "label": "Not a relevant major."},
+            {"points": 1, "label": "STEM or Economics (e.g. other science, statistics, economics)."},
+            {"points": 2, "label": "Mathematics, Computer Science, Physics or Engineering."},
+        ]},
+        {"key": "stem_achievements", "label": "STEM achievements", "options": [
+            {"points": 0, "label": "No notable awards."},
+            {"points": 1, "label": "Awards from less well-known competitions, or a non-final national round."},
+            {"points": 2, "label": "Final-round national medallist (e.g. national Olympiad final round)."},
+            {"points": 3, "label": "International medallist (e.g. IMO, IPhO, IOI, IBO)."},
+        ]},
+        {"key": "stem_research", "label": "STEM research / technical projects", "options": [
+            {"points": 0, "label": "None."},
+            {"points": 1, "label": "Scattered or less well-known projects (e.g. small school or coursework projects, "
+                                   "hackathons) with limited depth."},
+            {"points": 2, "label": "National-level research or a significant technical project without coding "
+                                   "(e.g. theoretical research, mathematical modelling, data or policy analysis, "
+                                   "experimental work)."},
+            {"points": 3, "label": "International or national-level research, or a significant technical project "
+                                   "involving coding (e.g. research with code, data-driven projects, machine learning, "
+                                   "app or web development, quantitative modelling, algorithmic work)."},
+        ]},
+        {"key": "market", "label": "Previous market experience", "options": [
+            {"points": 0, "label": "None."},
+            {"points": 1, "label": "Personal project in finance, but no trading and no internship."},
+            {"points": 2, "label": "Either an internship in a relevant area, or personal trading experience."},
+            {"points": 3, "label": "Both a relevant internship and personal trading experience."},
+        ]},
+        {"key": "academic", "label": "Academic performance",
+         "hint": "First years: A Level / IB (or equivalent). Years 2+: Prelims result.", "options": [
+            {"points": 0, "label": "A Level / IB: below A*AA, or IB below 39. Prelims: below upper 2:1 (USM below 65)."},
+            {"points": 1, "label": "A Level / IB: A*AA or A*A*B, or IB 39+. Prelims: upper 2:1 (USM 65+)."},
+            {"points": 2, "label": "A Level / IB: A*A*A, or IB 41+. Prelims: first class."},
+            {"points": 3, "label": "A Level / IB: A*A*A*, or IB 43+. Prelims: top 10% of year."},
+        ]},
+    ]
+
+
+ONLINE_CV_RUBRIC: List[Dict[str, Any]] = [
     {"key": "motivation", "label": "Response to motivation question", "options": [
-        {"points": 0, "label": "Very little effort"},
-        {"points": 1, "label": "Generic"},
-        {"points": 2, "label": "Insightful / excellent (rare)"},
+        {"points": 0, "label": "Very little effort; unclear or irrelevant response."},
+        {"points": 1, "label": "Generic response; limited depth or personal insight."},
+        {"points": 2, "label": "Insightful and well written, showing genuine motivation and strong personal "
+                               "insight (this score is rare)."},
     ]},
     {"key": "fermi", "label": "Response to Fermi question", "options": [
-        {"points": 0, "label": "Very short, low effort"},
-        {"points": 1, "label": "Some reasoning"},
-        {"points": 2, "label": "Insightful"},
+        {"points": 0, "label": "Very short and low effort; little to no reasoning."},
+        {"points": 1, "label": "Some reasonable reasoning, but limited depth."},
+        {"points": 2, "label": "Insightful and well reasoned, with a clear and thoughtful approach."},
     ]},
-    {"key": "major", "label": "Major", "options": [
-        {"points": 0, "label": "Other"},
-        {"points": 1, "label": "Other STEM / Economics"},
-        {"points": 2, "label": "Maths / CS / Physics / Engineering"},
-    ]},
-    {"key": "stem_achievements", "label": "STEM achievements", "options": [
-        {"points": 0, "label": "No awards"},
-        {"points": 1, "label": "Less well-known competition, or non-final national round"},
-        {"points": 2, "label": "Final-round national medallist"},
-        {"points": 3, "label": "International medallist"},
-    ]},
-    {"key": "stem_research", "label": "STEM research", "options": [
-        {"points": 0, "label": "None"},
-        {"points": 1, "label": "Scattered or less well known"},
-        {"points": 2, "label": "National, without coding"},
-        {"points": 3, "label": "International, or national involving coding"},
-    ]},
-    {"key": "market", "label": "Previous market experience", "options": [
-        {"points": 0, "label": "None"},
-        {"points": 1, "label": "Personal finance project (no trading, no internship)"},
-        {"points": 2, "label": "Internship or trades"},
-        {"points": 3, "label": "Internship and trades"},
-    ]},
+    *_shared_cv_criteria(),
 ]
-CV_RESPONSE_KEYS = {"motivation", "fermi"}
+
+ONSITE_CV_RUBRIC: List[Dict[str, Any]] = [
+    {"key": "quick_question", "label": "Response to quick interview question",
+     "hint": "The 4 key aspects: contribution potential, learning potential, commitment level, and interest "
+             "in trading / finance.", "options": [
+        {"points": 0, "label": "Doesn't address any of the key aspects."},
+        {"points": 1, "label": "Clearly addresses 1 of the 4 key aspects."},
+        {"points": 2, "label": "Clearly addresses 2 of the 4 key aspects."},
+        {"points": 3, "label": "Clearly addresses 3 of the 4 key aspects."},
+        {"points": 4, "label": "Clear on their motivations for joining OAF, including contribution potential, "
+                               "learning potential, commitment level and interest in trading / finance."},
+    ]},
+    *_shared_cv_criteria(),
+]
+
+# Candidates who meet any one of these are shortlisted for interview straight
+# away, without a CV score (see decide: "auto_shortlist").
+AUTO_SHORTLIST_REASONS: Dict[str, str] = {
+    "prelims_top5": "Top 5% of their year in Prelims (Years 2+)",
+    "olympiad_medal": "IMO / IPhO / IOI / ISEF medallist",
+    "finance_internship": "Relevant finance internship (including trading firms)",
+}
 
 
 # The interview (the standard rubric): likability, communication, and two
@@ -317,11 +363,9 @@ INTERVIEW_TIMERS: List[Dict[str, Any]] = [
 
 
 def _cv_rubric_for(fast_tracked: bool) -> List[Dict[str, Any]]:
-    """The criteria this applicant is scored on. Fast-Track skips the two
-    that read written answers, since there are none to read."""
-    if fast_tracked:
-        return [c for c in CV_RUBRIC if c["key"] not in CV_RESPONSE_KEYS]
-    return CV_RUBRIC
+    """The rubric this applicant's CV round is scored on: the onsite one for
+    Fast-Track (their CV round is in person), the online one otherwise."""
+    return ONSITE_CV_RUBRIC if fast_tracked else ONLINE_CV_RUBRIC
 
 
 def _cv_max(fast_tracked: bool) -> int:
@@ -415,8 +459,9 @@ class FlagEvent(BaseModel):
 
 
 class Decision(BaseModel):
-    decision: str      # "shortlist" | "accept" | "reject"
+    decision: str      # "shortlist" | "auto_shortlist" | "accept" | "reject"
     note: Optional[str] = None
+    reason: Optional[str] = None   # auto_shortlist only: a key of AUTO_SHORTLIST_REASONS
 
 
 class ScheduleInterview(BaseModel):
@@ -689,8 +734,7 @@ async def _send_submission_confirmation(application: dict) -> None:
 
 async def _send_fast_track_confirmation(application: dict) -> None:
     """The Fast-Track counterpart to _send_submission_confirmation: no
-    written assessment to mention, since there wasn't one, and they go
-    straight to interview, so it asks for their availability."""
+    online written questions, since their CV round happens in person."""
     to = application.get("oxford_email") or application.get("email")
     if not to:
         return
@@ -698,17 +742,15 @@ async def _send_fast_track_confirmation(application: dict) -> None:
     programme = html.escape(application.get("programme", "the programme"))
     await mailer.send_email(
         to=to,
-        subject=f"Alpha Fund: you're through to interview for {programme}",
-        title="Through to interview",
+        subject=f"Alpha Fund: your {programme} application is in",
+        title="Application received",
         body_html=(
             f"<p>Hi {name},</p>"
             f"<p>This confirms your CV for <strong>{programme}</strong> has been submitted. "
-            f"As a Fast-Track applicant there's no written assessment: you go straight "
-            f"through to interview.</p>"
-            f"<p>Please enter your availability on the portal so the committee can schedule "
-            f"your interview.</p>"
+            f"As a Fast-Track applicant, your CV round happens in person at the CV clinic at "
+            f"Quant Outreach, in place of the online written questions. We'll be in touch "
+            f"after that.</p>"
         ),
-        cta_label="Enter your availability", cta_url=f"{BASE_URL}/apply",
     )
 
 
@@ -1154,20 +1196,17 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
     application["linkedin"] = (payload.linkedin or "").strip()[:300] or None
 
     if application.get("event_ticket") == EVENT_TICKET_FAST_TRACK:
-        # Fast-Track is the route straight to interview: no written
-        # assessment and no CV-screen decision, so the application lands
-        # shortlisted and the candidate can give their availability now.
-        now = _now()
-        application["status"] = S_SHORTLISTED
-        application["submitted_at"] = now
-        application["shortlisted_at"] = now
-        application["shortlisted_by"] = "Fast-Track"
+        # Fast-Track replaces the online written questions with a CV round
+        # in person at the CV clinic, so there's nothing more to sit online:
+        # the application is submitted now, and scored on the onsite rubric.
+        application["status"] = S_SUBMITTED
+        application["submitted_at"] = _now()
         await _save(uid, application)
         if not application.get("confirmation_sent_at"):
             await _send_fast_track_confirmation(application)
             application["confirmation_sent_at"] = _now()
             await _save(uid, application)
-        return {"ok": True, "status": S_SHORTLISTED}
+        return {"ok": True, "status": S_SUBMITTED}
 
     application["status"] = S_OA_READY
     await _save(uid, application)
@@ -1361,9 +1400,13 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     interview itself.
     """
     reviews = application.get("reviews") or {}
-    # A score only exists once its rubric is complete (see submit_score).
-    cv_scores = [r["cv_score"] for r in reviews.values()
-                 if r.get("cv_rubric") and r.get("cv_score") is not None]
+    # A CV score only counts once that reviewer has scored every criterion
+    # of the rubric this applicant is scored on, and it's always the total
+    # of those criteria, so a rubric change can't leave a stale total behind.
+    fast_tracked = application.get("event_ticket") == EVENT_TICKET_FAST_TRACK
+    cv_keys = [c["key"] for c in _cv_rubric_for(fast_tracked)]
+    cv_scores = [sum(r["cv_rubric"][k] for k in cv_keys) for r in reviews.values()
+                 if isinstance(r.get("cv_rubric"), dict) and all(k in r["cv_rubric"] for k in cv_keys)]
 
     def _given(key: str) -> List[int]:
         return [r[key] for r in reviews.values() if r.get(key) is not None]
@@ -1376,7 +1419,7 @@ def _review_summary(application: Dict[str, Any], viewer_id: Optional[str] = None
     return {
         "count": len(reviews),
         "cv_avg": _avg(cv_scores),
-        "cv_max": _cv_max(application.get("event_ticket") == EVENT_TICKET_FAST_TRACK),
+        "cv_max": _cv_max(fast_tracked),
         "interview_avg": _avg(interview_scores),
         "interview_max": INTERVIEW_MAX,
         # How many reviewers each average is over — each section is scored
@@ -1460,6 +1503,7 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "is_my_pending_interview": is_my_pending_interview,
         "shortlisted_at": _as_utc(application.get("shortlisted_at")),
         "shortlisted_by": application.get("shortlisted_by") or "",
+        "auto_shortlist": application.get("auto_shortlist"),
         "availability": _availability_of(application),
         "availability_updated_at": _as_utc(application.get("availability_updated_at")),
         "previous_application": (
@@ -1579,8 +1623,9 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "is_admin": reviewer.is_admin,
         "score_min": SCORE_MIN,
         "score_max": SCORE_MAX,
-        "cv_rubric": CV_RUBRIC,
-        "cv_response_keys": sorted(CV_RESPONSE_KEYS),
+        "online_cv_rubric": ONLINE_CV_RUBRIC,
+        "onsite_cv_rubric": ONSITE_CV_RUBRIC,
+        "auto_shortlist_reasons": AUTO_SHORTLIST_REASONS,
         "note_max_chars": NOTE_MAX_CHARS,
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
@@ -1596,11 +1641,16 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
 
 @router.get("/admin/interview-guide", include_in_schema=False)
 async def interview_guide(request: Request, reviewer: User = Depends(require_reviewer)):
-    """The interview rubric and its rules on one page, to read before an
-    interview. The scoring view uses the same rubric and hint schedule."""
+    """The scoring guide: both CV-round rubrics with the automatic shortlist
+    criteria, then the interview rubric and its rules. The scoring view uses
+    the same rubrics and hint schedule."""
     return templates.TemplateResponse("interview_guide.html", {
         "request": request,
         "app_name": "AlphaBook",
+        "online_cv_rubric": ONLINE_CV_RUBRIC,
+        "onsite_cv_rubric": ONSITE_CV_RUBRIC,
+        "auto_shortlist_reasons": AUTO_SHORTLIST_REASONS,
+        "cv_max": _cv_max(False),
         "interview_rubric": INTERVIEW_RUBRIC,
         "interview_max": INTERVIEW_MAX,
         "interview_timers": INTERVIEW_TIMERS,
@@ -1624,7 +1674,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
     headers = [
         "Rank", "Username", "Full name", "Email", "Oxford email", "Category",
         "Event ticket", "College", "Degree", "Year of study", "LinkedIn",
-        "Programme", "Status", "Combined score (/10)", "CV avg (/15)", "Interview avg (/15)",
+        "Programme", "Status", "Combined score (/10)", "CV avg (/18)", "Interview avg (/15)",
         "Reviewer count", "Reviewer notes", "Created at", "Submitted at",
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
@@ -1675,9 +1725,9 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             _dt(r["decided_at"]), r["decided_by"], r["decision_note"],
             "Yes" if r["cv_uploaded"] else "No",
             "Fast-tracked" if fast_tracked else (round(r["motivation_seconds"] / 60, 1) if r["motivation_seconds"] else ""),
-            "Fast-tracked — no written assessment" if fast_tracked else r["motivation_text"],
+            "Fast-Track: CV round in person, no online answers" if fast_tracked else r["motivation_text"],
             "Fast-tracked" if fast_tracked else (round(r["estimation_seconds"] / 60, 1) if r["estimation_seconds"] else ""),
-            "Fast-tracked — no written assessment" if fast_tracked else r["estimation_text"],
+            "Fast-Track: CV round in person, no online answers" if fast_tracked else r["estimation_text"],
             r["flags"].get("paste", 0), r["flags"].get("left_page", 0),
             interview.get("status") or "", _dt(interview.get("when")),
             interview.get("interviewer_name") or "", interview.get("message") or "",
@@ -1745,10 +1795,11 @@ def _checked_cv_rubric(raw: Dict[str, Optional[int]], fast_tracked: bool) -> Dic
     allowed = {c["key"]: {o["points"] for o in c["options"]} for c in criteria}
     out: Dict[str, int] = {}
     for key, points in raw.items():
-        if points is None and key in allowed:
+        # Not part of this applicant's rubric (e.g. left over from an older
+        # version of it): dropped rather than refused, so it can't block a
+        # reviewer's autosave.
+        if points is None or key not in allowed:
             continue
-        if key not in allowed:
-            raise HTTPException(400, f"Unknown CV criterion: {key}")
         if points not in allowed[key]:
             raise HTTPException(400, f"That isn't one of the options for {key}")
         out[key] = int(points)
@@ -1804,7 +1855,7 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
 
     if "cv_rubric" in fields:
         cv_rubric = _checked_cv_rubric(payload.cv_rubric or {}, fast_tracked)
-        complete = len(cv_rubric) == len(_cv_rubric_for(fast_tracked))
+        complete = all(c["key"] in cv_rubric for c in _cv_rubric_for(fast_tracked))
         entry.update({
             "cv_rubric": cv_rubric,
             # Only a finished rubric has a score: a half-scored CV's running
@@ -2284,8 +2335,8 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
     since not everyone who applies gets an interview. Accepting sets the
     member's programme; each transition emails the applicant.
     """
-    if payload.decision not in ("shortlist", "accept", "reject"):
-        raise HTTPException(400, "Decision must be shortlist, accept or reject")
+    if payload.decision not in ("shortlist", "auto_shortlist", "accept", "reject"):
+        raise HTTPException(400, "Decision must be shortlist, auto_shortlist, accept or reject")
 
     application = await _load(user_id)
     if application is None:
@@ -2298,6 +2349,25 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["status"] = S_SHORTLISTED
         application["shortlisted_at"] = _now()
         application["shortlisted_by"] = reviewer.username
+    elif payload.decision == "auto_shortlist":
+        # Meets one of the automatic criteria, so it goes to interview
+        # without needing a CV score. Which criterion, and the details that
+        # back it up, are recorded for checking at interview.
+        if status != S_SUBMITTED:
+            raise HTTPException(400, "Only a newly submitted application can be shortlisted")
+        if payload.reason not in AUTO_SHORTLIST_REASONS:
+            raise HTTPException(400, "Choose which automatic shortlist criterion they meet")
+        details = (payload.note or "").strip()[:500]
+        if payload.reason == "finance_internship" and not details:
+            raise HTTPException(400, "Note the internship's key details (firm, role, duration, responsibilities) "
+                                     "so they can be checked at interview")
+        application["status"] = S_SHORTLISTED
+        application["shortlisted_at"] = _now()
+        application["shortlisted_by"] = reviewer.username
+        application["auto_shortlist"] = {
+            "reason": payload.reason, "label": AUTO_SHORTLIST_REASONS[payload.reason],
+            "details": details, "by": reviewer.username, "at": _now(),
+        }
     elif payload.decision == "accept":
         if status != S_SHORTLISTED:
             raise HTTPException(400, "Shortlist the applicant and hold the interview before accepting")

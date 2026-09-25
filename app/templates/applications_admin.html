@@ -213,6 +213,12 @@
     }
 
     .sc-iv-table tbody th { width: 30%; }
+    .sc-crit-hint { font-weight: 400; font-size: 11.5px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+    .apa-auto-options { display: grid; gap: 8px; margin: 12px 0; }
+    .apa-auto-opt { display: flex; gap: 8px; align-items: center; font-size: 14px; cursor: pointer; }
+    #autoDetails { width: 100%; box-sizing: border-box; padding: 8px 10px; font: inherit; font-size: 13px;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border); }
+    .apa-auto-error { color: var(--red); font-size: 13px; min-height: 1em; margin: 6px 0 0; }
     .sc-iv-table tr.is-auto td { opacity: .75; }
     .sc-auto { font-weight: 400; font-size: 12px; color: var(--brand); margin-top: 6px; line-height: 1.4; }
     .sc-iv-total { float: right; font-size: 14px; }
@@ -360,6 +366,25 @@
     </div>
   </div>
 
+  <div class="apa-modal-overlay" id="autoModal">
+    <div class="apa-modal">
+      <h3>Automatic shortlist</h3>
+      <p>Shortlist for interview without a CV score. Which criterion do they meet?</p>
+      <div class="apa-auto-options">
+        {% for key, label in auto_shortlist_reasons.items() %}
+        <label class="apa-auto-opt"><input type="radio" name="autoReason" value="{{ key }}"> {{ label }}</label>
+        {% endfor %}
+      </div>
+      <input type="text" id="autoDetails" maxlength="500"
+             placeholder="Details to check at interview (required for an internship: firm, role, duration, responsibilities)">
+      <p class="apa-auto-error" id="autoError"></p>
+      <div class="apa-modal-actions">
+        <button class="btn ghost" id="autoModalCancel">Cancel</button>
+        <button class="btn primary" id="autoModalConfirm">Shortlist</button>
+      </div>
+    </div>
+  </div>
+
   <div class="apa-modal-overlay" id="acceptModal">
     <div class="apa-modal">
       <h3>Accept this application?</h3>
@@ -401,6 +426,9 @@
     {% set stage_of = {"cv": "started", "oa_ready": "started", "oa_active": "started",
                        "submitted": "screen", "shortlisted": "shortlist",
                        "accepted": "accepted", "rejected": "rejected"} %}
+    {# A submitted Fast-Track application is waiting on its in-person CV round,
+       so it sits under its own tab rather than the online CV screen. #}
+    {% macro stage(r) %}{{ "fasttrack" if r.status == "submitted" and r.is_fast_tracked else stage_of.get(r.status, "started") }}{% endmacro %}
 
     <div class="apa-filters">
       <input type="search" id="apaSearch" class="apa-search" autocomplete="off"
@@ -410,6 +438,7 @@
         <button type="button" class="apa-stage-tab" data-stage="mine">My pending interviews <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="started">Started application <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="screen">CV screen <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="fasttrack">Fast-Track <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="shortlist">Shortlisted <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="accepted">Accepted <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="rejected">Rejected <span class="n"></span></button>
@@ -423,7 +452,7 @@
         <h3>Applicants</h3>
         <span class="msp-muted"><span id="apaRankNote">Ranked by CV round score</span> · {{ scored }} of {{ total }} scored</span>
         <button type="button" class="btn" id="apaUnreviewed" aria-pressed="false">All unreviewed <span class="n"></span></button>
-        <a class="btn ghost" href="/apply/admin/interview-guide">Interview guide</a>
+        <a class="btn ghost" href="/apply/admin/interview-guide">Scoring guide</a>
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
@@ -436,12 +465,12 @@
           </thead>
           <tbody>
             {% for r in rows %}
-            <tr class="apa-item" data-stage="{{ stage_of.get(r.status, 'started') }}"
+            <tr class="apa-item" data-stage="{{ stage(r) }}"
                 data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
                 data-uid="{{ r.user_id }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
-                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n else '0' }}"
+                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank" data-rank>{{ r.rank if r.rank else "—" }}</td>
@@ -528,12 +557,12 @@
     <!-- One card per applicant: CV, written answer, every graded answer, and scoring. -->
     {% for r in rows %}
     <div class="card msp-panel apa-card apa-item" id="a-{{ r.user_id }}"
-         data-stage="{{ stage_of.get(r.status, 'started') }}"
+         data-stage="{{ stage(r) }}"
          data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
          data-uid="{{ r.user_id }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
-                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n else '0' }}"
+                data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
@@ -561,6 +590,7 @@
             {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
             {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
             {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
+            {% if r.auto_shortlist %}<span class="apa-tag is-good">auto-shortlisted</span>{% endif %}
             {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
             {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
             {% if r.finish_reason == "session_expired" %}<span class="apa-tag is-warn">ran out of time</span>{% endif %}
@@ -624,7 +654,7 @@
 
         {% if r.is_fast_tracked %}
         <p class="apa-h">Written assessment</p>
-        <div class="apa-essay is-empty">Fast-tracked — no written assessment. Reviewed by CV only.</div>
+        <div class="apa-essay is-empty">Fast-Track: the CV round happens in person at the CV clinic, so there are no online written answers.</div>
         {% else %}
         <p class="apa-h">Part one — {{ motivation_prompt }}</p>
         {% if r.motivation_text %}
@@ -667,7 +697,7 @@
           </div>
 
           <div class="apa-score-buttons">
-            <button type="button" class="btn primary" onclick="openScoring('{{ r.user_id }}', 'cv')">Score CV{% if not r.is_fast_tracked %} and answers{% endif %}</button>
+            <button type="button" class="btn primary" onclick="openScoring('{{ r.user_id }}', 'cv')">{% if r.is_fast_tracked %}Score onsite CV{% else %}Score CV and answers{% endif %}</button>
             {% if can_interview %}
             <button type="button" class="btn" onclick="openScoring('{{ r.user_id }}', 'interview')">Interview</button>
             {% endif %}
@@ -791,10 +821,14 @@
         <div class="apa-decide">
           <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)">
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
+          <button class="btn" onclick="autoShortlist('{{ r.user_id }}')">Automatic shortlist</button>
           <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
         </div>
         {% elif r.status == "shortlisted" %}
-        {% if r.shortlisted_by %}
+        {% if r.auto_shortlist %}
+        <p class="apa-decided-note">Automatically shortlisted by {{ r.auto_shortlist.by }}:
+          <strong>{{ r.auto_shortlist.label }}</strong>{% if r.auto_shortlist.details %}. {{ r.auto_shortlist.details }}{% endif %}</p>
+        {% elif r.shortlisted_by %}
         <p class="apa-decided-note">Shortlisted by {{ r.shortlisted_by }}</p>
         {% endif %}
         <div class="apa-decide">
@@ -952,8 +986,7 @@
     // One overlay for every applicant and section. Each click and keystroke
     // is saved on its own (only that field is sent), one request at a time
     // so a later save can never land before an earlier one.
-    const RUBRIC = {{ cv_rubric | tojson }};
-    const RESPONSE_KEYS = new Set({{ cv_response_keys | tojson }});
+    const RUBRICS = { online: {{ online_cv_rubric | tojson }}, onsite: {{ onsite_cv_rubric | tojson }} };
     const PROMPTS = { motivation: {{ motivation_prompt | tojson }}, estimation: {{ estimation_prompt | tojson }} };
     const SECTIONS = [
       { key: "cv", label: "CV" },
@@ -1030,7 +1063,7 @@
         </div>`;
       left.innerHTML = cv + (d.fast
         ? `<div class="sc-pane-head"><span>Written answers</span></div>
-           <p class="msp-muted sc-answer">Fast-tracked: no written assessment.</p>`
+           <p class="msp-muted sc-answer">Fast-Track: the CV round happens in person at the CV clinic, so there are no online written answers.</p>`
         : answer("Written response", PROMPTS.motivation, d.motivation)
           + answer("Estimation", PROMPTS.estimation, d.estimation));
       left.querySelectorAll(".apa-math").forEach((el) => {
@@ -1049,16 +1082,16 @@
     function renderRight() {
       const d = sc.d, box = $sc("scScore"), rv = d.review;
       if (sc.section === "cv") {
-        const criteria = RUBRIC.filter((c) => !(d.fast && RESPONSE_KEYS.has(c.key)));
+        const criteria = d.fast ? RUBRICS.onsite : RUBRICS.online;
         const mine = d.mine.cv_rubric || {};
         box.innerHTML = `
-          <p class="apa-rubric-title">CV round <span class="msp-muted">(${d.cv_max} points${d.fast ? "; Fast-Track, so the written-response criteria don't apply" : ""})</span></p>
+          <p class="apa-rubric-title">CV round: ${d.fast ? "Onsite CV" : "Online CV"} <span class="msp-muted">(${d.cv_max} points${d.fast ? "; Fast-Track, scored at the CV clinic" : ""})</span></p>
           <p class="sc-avg">${avgLine(rv.cv_avg, rv.cv_n, d.cv_max)}</p>
           <table class="apa-rubric-table">
             <thead><tr><th>Criterion</th><th>Your score</th><th class="apa-rubric-pts">Points</th></tr></thead>
             <tbody>${criteria.map((c) => `
               <tr data-key="${c.key}">
-                <th scope="row">${escHtml(c.label)}</th>
+                <th scope="row">${escHtml(c.label)}${c.hint ? `<div class="sc-crit-hint">${escHtml(c.hint)}</div>` : ""}</th>
                 <td><div class="apa-rubric-opts" role="radiogroup" aria-label="${escHtml(c.label)}">
                   ${c.options.map((o) => `
                     <label class="apa-rubric-opt">
@@ -1190,7 +1223,7 @@
         <div class="sc-timer">
           <div class="sc-timer-head">
             <strong>Interview timer</strong>
-            <a href="/apply/admin/interview-guide" target="_blank" rel="noopener">Interview guide ↗</a>
+            <a href="/apply/admin/interview-guide#interview" target="_blank" rel="noopener">Scoring guide ↗</a>
           </div>
           <div class="sc-timer-row">
             ${INTERVIEW_TIMERS.map((t) => `<button type="button" class="btn" data-part="${t.key}">${escHtml(t.button)}</button>`).join("")}
@@ -1364,6 +1397,38 @@
     }
     const askRejectConfirm = wireConfirmModal("rejectModal", "rejectModalCancel", "rejectModalConfirm");
     const askAcceptConfirm = wireConfirmModal("acceptModal", "acceptModalCancel", "acceptModalConfirm");
+
+    // Automatic shortlist: pick the criterion (and note the details), then
+    // it's shortlisted without a score. The server checks the same things.
+    function autoShortlist(userId) {
+      const overlay = document.getElementById("autoModal");
+      const err = document.getElementById("autoError");
+      const details = document.getElementById("autoDetails");
+      overlay.querySelectorAll("input[name=autoReason]").forEach((i) => { i.checked = false; });
+      details.value = "";
+      err.textContent = "";
+      overlay.style.display = "flex";
+      document.getElementById("autoModalCancel").onclick = () => { overlay.style.display = "none"; };
+      document.getElementById("autoModalConfirm").onclick = async () => {
+        const reason = overlay.querySelector("input[name=autoReason]:checked")?.value;
+        if (!reason) { err.textContent = "Choose which criterion they meet."; return; }
+        if (reason === "finance_internship" && !details.value.trim()) {
+          err.textContent = "Note the internship's firm, role, duration and responsibilities."; return;
+        }
+        try {
+          const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/decide`, {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision: "auto_shortlist", reason, note: details.value.trim() }),
+          });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+          location.reload();
+        } catch (e) {
+          err.textContent = e.message;
+        }
+      };
+    }
 
     async function decide(userId, decision) {
       const verbs = { shortlist: "Shortlist", accept: "Accept", reject: "Reject" };
