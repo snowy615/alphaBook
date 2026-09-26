@@ -400,9 +400,12 @@ async def cancel_signup(event_id: str, user: User = Depends(current_user)):
 async def list_signups(event_id: str, reviewer: User = Depends(require_reviewer)):
     await _load_event(event_id)
     rows = sorted(await _signups_of(event_id), key=lambda s: _as_utc(s.get("created_at")) or _now())
+    # Names from profiles as they are now, not as they were at sign-up.
+    names = {d.id: ((d.to_dict() or {}).get("full_name") or "").strip()
+             for d in await db_module.db.collection("users").get()}
     return {"signups": [{
         "user_id": s.get("user_id"),
-        "name": s.get("full_name") or s.get("username") or "?",
+        "name": names.get(s.get("user_id")) or s.get("full_name") or s.get("username") or "?",
         "username": s.get("username") or "",
         "email": s.get("email") or "",
         "status": s.get("status"),

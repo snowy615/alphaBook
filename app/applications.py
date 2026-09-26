@@ -1539,9 +1539,8 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     """Every applicant, ranked by CV round score (the CV screen's ranking) —
     shared by the admin page and the Excel export so the two never disagree.
 
-    Two scores per row, both on a 10-point scale so applicants scored out of
-    different totals compare fairly (the CV round is out of 15, or 11 for
-    Fast-Track; the interview out of 15):
+    Two scores per row, both on a 10-point scale so the CV round (out of 18)
+    and the interview (out of 15) can be averaged:
 
     * ``cv_rank_score``: the CV round alone. What ``rank`` is by.
     * ``combined_score``: the average of the CV round and the interview
@@ -1553,6 +1552,7 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     """
     docs = await db_module.db.collection(COLLECTION).get()
     rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=viewer_id) for d in docs]
+    await _use_real_names(rows)
 
     def _on_ten(avg: Optional[float], out_of: int) -> Optional[float]:
         return round(avg * SCORE_MAX / out_of, 2) if avg is not None else None
@@ -1574,6 +1574,55 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     return rows
 
 
+async def _with_name(user_id: str, application: dict) -> dict:
+    """Fill in the applicant's name from their profile when the application
+    has none of its own (one from before names were asked for), so emails and
+    calendar invites greet them by name rather than by username. In memory
+    only; whatever saves the application next keeps it."""
+    if not (application.get("full_name") or "").strip():
+        name = ((await _user_data(user_id)).get("full_name") or "").strip()
+        if name:
+            application["full_name"] = name
+    return application
+
+
+async def _people() -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Everyone's display name, by user id and by username: their profile's
+    full name, or their username if they haven't set one."""
+    by_id: Dict[str, str] = {}
+    by_username: Dict[str, str] = {}
+    for d in await db_module.db.collection("users").get():
+        data = d.to_dict() or {}
+        name = (data.get("full_name") or "").strip() or data.get("username") or ""
+        by_id[d.id] = name
+        if data.get("username"):
+            by_username[data["username"]] = name
+    return by_id, by_username
+
+
+async def _use_real_names(rows: List[Dict[str, Any]]) -> None:
+    """Put people's names, not their account usernames, everywhere the review
+    page and export show someone: the applicant (when their application has
+    no name of its own, e.g. one from before names were asked for), each
+    reviewer, and whoever shortlisted, decided or auto-shortlisted.
+    Reviews and decisions store the username (or id) of whoever made them,
+    so a name set or changed later still shows up."""
+    by_id, by_username = await _people()
+
+    def name(username: str) -> str:
+        return by_username.get(username, username) if username else username
+
+    for r in rows:
+        if not r.get("full_name"):
+            r["full_name"] = by_id.get(r["user_id"], "")
+        for e in r["review"]["entries"]:
+            e["reviewer_name"] = by_id.get(e.get("reviewer_id"), "") or name(e.get("reviewer_name", ""))
+        r["shortlisted_by"] = name(r.get("shortlisted_by") or "")
+        r["decided_by"] = name(r.get("decided_by") or "")
+        if r.get("auto_shortlist"):
+            r["auto_shortlist"] = {**r["auto_shortlist"], "by": name(r["auto_shortlist"].get("by") or "")}
+
+
 async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
     """Who's coming to the outreach event, by ticket, oldest sign-up first.
 
@@ -1582,6 +1631,7 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
     whose ticket says so, with the application's college/degree/CV where one
     exists. Not the score ranking — a roster reads as "who signed up"."""
     by_uid = {r["user_id"]: r for r in rows}
+    names, _ = await _people()
     entries: Dict[str, Dict[str, Any]] = {}
     for s in await outreach.confirmed_signups():
         uid = s.get("user_id")
@@ -1598,7 +1648,7 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
         else:
             s = e["signup"] or {}
             row = {"user_id": uid, "has_application": False, "username": s.get("username", ""),
-                   "full_name": s.get("full_name", ""), "college": "", "degree": "",
+                   "full_name": names.get(uid) or s.get("full_name", ""), "college": "", "degree": "",
                    "year_of_study": "", "cv_uploaded": False}
         row["_at"] = _as_utc(e["at"]) or _now()
         (fast if e["ticket"] == EVENT_TICKET_FAST_TRACK else general).append(row)
@@ -1894,6 +1944,7 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
+    await _with_name(user_id, application)
     if application.get("status") != S_SHORTLISTED:
         raise HTTPException(400, "Only a shortlisted applicant can have an interview scheduled")
 
@@ -2006,6 +2057,7 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
+    await _with_name(user_id, application)
 
     status = application.get("status")
     copy = _REMINDER_COPY.get(status)
@@ -2281,6 +2333,7 @@ async def confirm_interview(user: User = Depends(current_user)):
     application = await _load(uid)
     if application is None:
         raise HTTPException(404, "No application on file")
+    await _with_name(uid, application)
     interview = application.get("interview")
     if not interview or interview.get("status") != INTERVIEW_PROPOSED:
         raise HTTPException(400, "There's no interview time waiting for a response")
@@ -2301,6 +2354,7 @@ async def decline_interview(payload: InterviewDecline, user: User = Depends(curr
     application = await _load(uid)
     if application is None:
         raise HTTPException(404, "No application on file")
+    await _with_name(uid, application)
     interview = application.get("interview")
     if not interview or interview.get("status") != INTERVIEW_PROPOSED:
         raise HTTPException(400, "There's no interview time waiting for a response")
@@ -2341,6 +2395,7 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
+    await _with_name(user_id, application)
     status = application.get("status")
 
     if payload.decision == "shortlist":

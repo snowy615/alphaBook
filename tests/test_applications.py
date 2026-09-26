@@ -3279,3 +3279,38 @@ def test_the_scoring_guide_has_both_cv_rubrics_and_the_auto_shortlist_criteria(m
     for label in ap.AUTO_SHORTLIST_REASONS.values():
         assert label in html
     assert "Interview rubric (15 points + CV penalty)" in html
+
+
+class TestRealNamesNotUsernames:
+    """The review page, export and emails show people's names, not their
+    account usernames."""
+
+    def _setup(self, monkeypatch, app_extra=None):
+        return _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "username": "Haole", "full_name": "", "status": ap.S_SUBMITTED,
+                                 "oxford_email": "tu.le@pmb.ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP,
+                                 "shortlisted_by": "yansnow615",
+                                 "reviews": {"r1": {"reviewer_name": "yansnow615", "note": "Test"}},
+                                 **(app_extra or {})}},
+            users={"u1": {"username": "Haole", "full_name": "Tu Le"},
+                   "r1": {"username": "yansnow615", "full_name": "Snow Yan"}},
+        )
+
+    def test_the_review_rows_use_profile_names(self, monkeypatch):
+        self._setup(monkeypatch)
+        row = asyncio.run(ap._ranked_rows(viewer_id="r1"))[0]
+        assert row["full_name"] == "Tu Le"
+        assert row["review"]["entries"][0]["reviewer_name"] == "Snow Yan"
+        assert row["shortlisted_by"] == "Snow Yan"
+
+    def test_someone_with_no_profile_name_keeps_their_username(self, monkeypatch):
+        fake_db, _, _ = self._setup(monkeypatch)
+        fake_db.collections["users"]["r1"]["full_name"] = ""
+        row = asyncio.run(ap._ranked_rows(viewer_id="r1"))[0]
+        assert row["review"]["entries"][0]["reviewer_name"] == "yansnow615"
+
+    def test_emails_greet_by_profile_name_when_the_application_has_none(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), User(id="r1", username="yansnow615")))
+        assert "Hi Tu Le," in sent[0]["body_html"] and "Haole" not in sent[0]["body_html"]
