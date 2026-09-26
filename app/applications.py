@@ -454,8 +454,17 @@ class WrittenSubmit(BaseModel):
     section: Optional[str] = None
 
 
+# What the assessment page records as it happens. Each is a count, shown to
+# reviewers as a signal, never an automatic penalty.
+FLAG_KINDS = ("paste", "left_page", "copy", "not_fullscreen", "screenshot")
+
+
+def _empty_flags() -> Dict[str, int]:
+    return {k: 0 for k in FLAG_KINDS}
+
+
 class FlagEvent(BaseModel):
-    kind: str          # "paste" | "left_page"
+    kind: str          # one of FLAG_KINDS
 
 
 class Decision(BaseModel):
@@ -1033,7 +1042,7 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         # (cv-confirm is the only place that happens).
         "status": S_CV,
         "created_at": _now(),
-        "flags": {"paste": 0, "left_page": 0},
+        "flags": _empty_flags(),
     }
     if existing is not None and existing["status"] in DECIDED:
         # A fresh application over a decided one — keep a breadcrumb of the
@@ -1341,18 +1350,19 @@ async def _bank_late_motivation(uid: str, application: dict, req: WrittenSubmit)
 @router.post("/oa/flag")
 async def flag(req: FlagEvent, user: User = Depends(current_user)):
     """
-    Count a paste attempt or a tab-away during the assessment.
+    Count a paste attempt, a tab-away, copying the question, leaving full
+    screen, or a screenshot key during the assessment.
 
     Recorded as a signal for the reviewer, never as an automatic penalty — a
     dropped connection and a second monitor look identical from here.
     """
-    if req.kind not in ("paste", "left_page"):
+    if req.kind not in FLAG_KINDS:
         raise HTTPException(400, "Unknown event")
     uid = str(user.id)
     application = await _load(uid)
     if application is None or application.get("status") != S_OA_ACTIVE:
         return {"ok": True}
-    flags = application.setdefault("flags", {"paste": 0, "left_page": 0})
+    flags = application.setdefault("flags", _empty_flags())
     flags[req.kind] = int(flags.get(req.kind, 0)) + 1
     await _save(uid, application)
     return {"ok": True}
@@ -1729,6 +1739,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
         "Shortlisted at", "Decided at", "Decided by", "Decision note",
         "CV on file", "Motivation minutes", "Motivation text",
         "Estimation minutes", "Estimation text", "Paste flags", "Left-page flags",
+        "Copy flags", "Not-full-screen flags", "Screenshot flags",
         "Interview status", "Interview when", "Interviewer", "Interview message",
         "Availability submitted",
     ]
@@ -1779,6 +1790,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
             "Fast-tracked" if fast_tracked else (round(r["estimation_seconds"] / 60, 1) if r["estimation_seconds"] else ""),
             "Fast-Track: CV round in person, no online answers" if fast_tracked else r["estimation_text"],
             r["flags"].get("paste", 0), r["flags"].get("left_page", 0),
+            r["flags"].get("copy", 0), r["flags"].get("not_fullscreen", 0), r["flags"].get("screenshot", 0),
             interview.get("status") or "", _dt(interview.get("when")),
             interview.get("interviewer_name") or "", interview.get("message") or "",
             availability or "None submitted",
@@ -1786,7 +1798,7 @@ async def export_applications(reviewer: User = Depends(require_reviewer)):
 
     widths = [6, 14, 18, 24, 24, 16, 14, 20, 18, 12, 26,
               16, 12, 14, 8, 12, 14, 40, 17, 17, 17, 17, 14, 24,
-              10, 12, 50, 12, 50, 10, 12, 14, 17, 16, 30, 40]
+              10, 12, 50, 12, 50, 10, 12, 10, 14, 12, 14, 17, 16, 30, 40]
     for i, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = width
 
@@ -2497,7 +2509,7 @@ async def redo_application(user_id: str, admin: User = Depends(require_admin)):
     for field in _OA_PRODUCED_FIELDS:
         application.pop(field, None)
     application["status"] = S_OA_READY if application.get("cv_blob_path") else S_CV
-    application["flags"] = {"paste": 0, "left_page": 0}
+    application["flags"] = _empty_flags()
     application["redone_at"] = _now()
     application["redone_by"] = admin.username
     await _save(user_id, application)

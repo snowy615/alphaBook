@@ -916,7 +916,7 @@ class TestRedoAndDelete:
         assert "oa" not in stored
         assert "reviews" not in stored
         assert "submitted_at" not in stored
-        assert stored["flags"] == {"paste": 0, "left_page": 0}
+        assert stored["flags"] == {"paste": 0, "left_page": 0, "copy": 0, "not_fullscreen": 0, "screenshot": 0}
         # Identity, CV and programme survive a redo untouched.
         assert stored["cv_blob_path"] == "cvs/x.pdf"
         assert stored["programme"] == mb.M_QUANT_ANALYST
@@ -3314,3 +3314,54 @@ class TestRealNamesNotUsernames:
         _, sent, _ = self._setup(monkeypatch)
         asyncio.run(ap.decide("u1", ap.Decision(decision="reject"), User(id="r1", username="yansnow615")))
         assert "Hi Tu Le," in sent[0]["body_html"] and "Haole" not in sent[0]["body_html"]
+
+
+class TestAssessmentIntegrityFlags:
+    """Pasting, leaving the page, copying the question, being out of full
+    screen and screenshot keys are each counted for the reviewer."""
+
+    def _patch(self, monkeypatch, status=ap.S_OA_ACTIVE):
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "status": status, "flags": {"paste": 0, "left_page": 0}}})
+        return fake_db
+
+    @pytest.mark.parametrize("kind", ["paste", "left_page", "copy", "not_fullscreen", "screenshot"])
+    def test_each_kind_is_counted(self, monkeypatch, kind):
+        fake_db = self._patch(monkeypatch)
+        user = User(id="u1", username="jo")
+        asyncio.run(ap.flag(ap.FlagEvent(kind=kind), user))
+        asyncio.run(ap.flag(ap.FlagEvent(kind=kind), user))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["flags"][kind] == 2
+
+    def test_an_unknown_kind_is_refused(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.flag(ap.FlagEvent(kind="sneeze"), User(id="u1", username="jo")))
+
+    def test_nothing_is_counted_outside_the_assessment(self, monkeypatch):
+        fake_db = self._patch(monkeypatch, status=ap.S_SUBMITTED)
+        asyncio.run(ap.flag(ap.FlagEvent(kind="copy"), User(id="u1", username="jo")))
+        assert "copy" not in fake_db.collections[ap.COLLECTION]["u1"]["flags"]
+
+    def test_the_page_wires_them_up(self):
+        from pathlib import Path
+        js = (Path(ap.__file__).parent / "static" / "apply.js").read_text()
+        for needle in ('recordFlag("not_fullscreen")', 'recordFlag("copy")', 'recordFlag("screenshot")',
+                       'recordFlag("left_page")', "enterFullscreen();", 'addEventListener("copy", onCopy)'):
+            assert needle in js, needle
+        css = (Path(ap.__file__).parent / "templates" / "apply.html").read_text()
+        assert "body.oa-live .apl-q-prompt { user-select: none;" in css and "@media print" in css
+
+
+def test_the_review_card_shows_every_integrity_flag(monkeypatch):
+    _flow_db(monkeypatch, applications={"u1": {
+        "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED,
+        "flags": {"paste": 2, "left_page": 1, "copy": 3, "not_fullscreen": 1, "screenshot": 1}}})
+    from starlette.requests import Request
+    request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                       "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+    html = asyncio.run(ap.admin_applications(request, User(id="r1", username="al", is_admin=True))).body.decode()
+    for text in ("2 paste attempts", "left the page 1x", "3 copy attempts", "out of full screen 1x",
+                 "1 screenshot attempt"):
+        assert text in html, text
+    assert "built-in method" not in html

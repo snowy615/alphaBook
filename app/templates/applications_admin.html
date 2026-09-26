@@ -593,6 +593,10 @@
             {% if r.auto_shortlist %}<span class="apa-tag is-good">auto-shortlisted</span>{% endif %}
             {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
             {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
+            {# .get(), not attribute access: flags is a dict, and r.flags.copy is dict.copy. #}
+            {% set nf = r.flags.get("copy", 0) %}{% if nf %}<span class="apa-tag is-warn">{{ nf }} copy attempt{{ "s" if nf != 1 }}</span>{% endif %}
+            {% set nf = r.flags.get("not_fullscreen", 0) %}{% if nf %}<span class="apa-tag is-warn">out of full screen {{ nf }}x</span>{% endif %}
+            {% set nf = r.flags.get("screenshot", 0) %}{% if nf %}<span class="apa-tag is-warn">{{ nf }} screenshot attempt{{ "s" if nf != 1 }}</span>{% endif %}
             {% if r.finish_reason == "session_expired" %}<span class="apa-tag is-warn">ran out of time</span>{% endif %}
           </div>
           {% if is_admin and r.status in ("cv", "oa_ready") %}

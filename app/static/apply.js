@@ -630,9 +630,19 @@
         <strong>No AI, and no outside help.</strong>
         You may not use ChatGPT, Claude, Copilot or any other AI tool, and you may not
         search the web or ask anyone else. We are interested in how you think, not what
-        a model outputs. Pasting into either answer is disabled, and leaving the
-        page is recorded and shown to the reviewer.
+        a model outputs.
       </div>
+
+      <ul class="apl-rules">
+        <li><strong>Full screen.</strong> The assessment opens in full screen; stay in it
+            until you finish. Any time you're not in full screen is recorded.</li>
+        <li><strong>Pasting</strong> into your answers is blocked and recorded.</li>
+        <li><strong>Leaving the page</strong> or switching tabs is recorded.</li>
+        <li><strong>Copying:</strong> you can copy your own writing, but not the questions;
+            attempts are recorded. <strong>Screenshots</strong> of the page aren't allowed
+            and are recorded where the browser can detect them.</li>
+      </ul>
+      <p class="apl-hint">All of these are shown to the reviewers alongside your answers.</p>
 
       <label class="apl-ack" for="ack">
         <input type="checkbox" id="ack">
@@ -644,6 +654,7 @@
     $("#ack").addEventListener("change", (e) => { $("#startOa").disabled = !e.target.checked; });
     $("#startOa").addEventListener("click", async (e) => {
       e.target.disabled = true;
+      enterFullscreen();   // needs the click itself, so before anything async
       try { await api("/apply/oa/start", {}); await refresh(); }
       catch (err) { flash(err.message, true); e.target.disabled = false; }
     });
@@ -1207,14 +1218,21 @@
     const key = keyFor(state);
     const isLive = key === "motivation" || key === "estimation";
 
+    document.body.classList.toggle("oa-live", isLive);
     if (isLive) {
       // These two draw themselves and then tick their own clocks in place.
       const oa = state.oa || {};
       if (oa.section === "motivation") renderMotivation(oa); else renderEstimation(oa);
+      syncFullscreen(true);
       return;
     }
 
     stopTicking();
+    syncFullscreen(false);   // takes the banner down once the assessment is over
+    // Leave the full screen the assessment asked for, now it's finished.
+    if ((drawnKey === "motivation" || drawnKey === "estimation") && inFullscreen() && document.exitFullscreen) {
+      document.exitFullscreen().catch(() => {});
+    }
     if (key === drawnKey) return;
     drawnKey = key;
 
@@ -1288,13 +1306,83 @@
       </p>`);
   }
 
-  // Leaving the page mid-assessment is counted, not punished — a reviewer sees
-  // the number next to the score and reads it alongside everything else.
+  // ── Assessment integrity ───────────────────────────────────────────────────
+  // Everything here is counted, not punished: a reviewer sees each number next
+  // to the answers and reads it alongside everything else. None of it can be
+  // airtight in a browser (a phone camera beats all of it); it records what the
+  // page can see and makes the easy shortcuts awkward.
+  const isLive = () => drawnKey === "motivation" || drawnKey === "estimation";
+  const recordFlag = (kind) => api("/apply/oa/flag", { kind }).catch(() => {});
+
+  // Leaving the page or switching tabs.
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden && (drawnKey === "motivation" || drawnKey === "estimation")) {
-      api("/apply/oa/flag", { kind: "left_page" }).catch(() => {});
+    if (document.hidden && isLive()) recordFlag("left_page");
+  });
+
+  // Full screen: asked for on Start, and a banner with a button whenever
+  // they're out of it. Each stretch out of full screen is recorded once.
+  // Browsers without the Fullscreen API (iPhone Safari) aren't flagged.
+  const fullscreenSupported = () => !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+  const inFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+  let outOfFullscreenRecorded = false;
+  function enterFullscreen() {
+    const el = document.documentElement;
+    const req = el.requestFullscreen || el.webkitRequestFullscreen;
+    if (req) { try { const p = req.call(el); if (p && p.catch) p.catch(() => {}); } catch { /* not allowed */ } }
+  }
+  function syncFullscreen(live) {
+    let banner = document.getElementById("oaFsBanner");
+    const out = (live === undefined ? isLive() : live) && fullscreenSupported() && !inFullscreen();
+    if (!out) {
+      outOfFullscreenRecorded = false;
+      if (banner) banner.remove();
+      return;
+    }
+    if (!outOfFullscreenRecorded) { outOfFullscreenRecorded = true; recordFlag("not_fullscreen"); }
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "oaFsBanner";
+      banner.className = "apl-fs-banner";
+      banner.innerHTML = `You're not in full screen. This is recorded.
+        <button type="button" class="btn primary">Go full screen</button>`;
+      banner.querySelector("button").addEventListener("click", enterFullscreen);
+      document.body.appendChild(banner);
+    }
+  }
+  document.addEventListener("fullscreenchange", () => syncFullscreen());
+  document.addEventListener("webkitfullscreenchange", () => syncFullscreen());
+
+  // Copying: fine from their own answer box, not from anywhere else (the
+  // question). Selecting the question is switched off in CSS too.
+  function onCopy(e) {
+    if (!isLive()) return;
+    const el = document.activeElement;
+    if (el && el.tagName === "TEXTAREA") return;
+    e.preventDefault();
+    flash("Copying the question isn't allowed. This is recorded.", true);
+    recordFlag("copy");
+  }
+  document.addEventListener("copy", onCopy);
+  document.addEventListener("cut", onCopy);
+
+  // Screenshots can't be blocked by a web page, but the Print Screen key and
+  // (where the browser sees them) the Mac shortcuts are recorded, and the
+  // question is blurred whenever the window loses focus, which most
+  // screenshot tools cause. Printing the page is blocked in CSS.
+  document.addEventListener("keyup", (e) => {
+    if (isLive() && e.key === "PrintScreen") {
+      recordFlag("screenshot");
+      flash("Screenshots aren't allowed. This is recorded.", true);
     }
   });
+  document.addEventListener("keydown", (e) => {
+    if (isLive() && e.metaKey && e.shiftKey && ["3", "4", "5", "#", "$", "%"].includes(e.key)) {
+      recordFlag("screenshot");
+      flash("Screenshots aren't allowed. This is recorded.", true);
+    }
+  });
+  window.addEventListener("blur", () => { if (isLive()) document.body.classList.add("apl-obscured"); });
+  window.addEventListener("focus", () => document.body.classList.remove("apl-obscured"));
 
   (async () => {
     try {

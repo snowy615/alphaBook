@@ -161,6 +161,17 @@
     }
 
     .apl-q-prompt { font-size: 18px; line-height: 1.5; margin: 0 0 18px; }
+    /* During the assessment: the question can't be selected, it blurs when
+       the window loses focus, and the page doesn't print. */
+    body.oa-live .apl-q-prompt { user-select: none; -webkit-user-select: none; }
+    body.oa-live.apl-obscured .apl-q-prompt { filter: blur(9px); }
+    @media print { body.oa-live #app { visibility: hidden; } }
+    .apl-fs-banner {
+      position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 50;
+      display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+      background: var(--card); border: 1px solid var(--red); color: var(--text); font-size: 14px;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, .35);
+    }
     .apl-hint { font-size: 12px; color: var(--muted); margin-top: 8px; }
 
     .field-group label {
