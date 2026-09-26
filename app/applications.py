@@ -1181,13 +1181,13 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
 
     application["cv_blob_path"] = data["cv_blob_path"]
     application["cv_confirmed_at"] = _now()
-    # The name typed here is the one reviewers see and emails use — not the
-    # profile's, which may be blank or a nickname. It only fills the profile
-    # in when the profile has none, rather than overwriting someone's choice.
+    # The name typed here is the one reviewers see and emails use, and it's
+    # saved to the profile too, so the whole site shows the same name for
+    # them (the profile's name is also what the CV book prints).
     application["first_name"] = first_name
     application["last_name"] = last_name
     application["full_name"] = f"{first_name} {last_name}"
-    if not (data.get("full_name") or "").strip():
+    if (data.get("full_name") or "").strip() != application["full_name"]:
         await db_module.db.collection("users").document(uid).update({"full_name": application["full_name"]})
     application["email"] = data.get("email") or application.get("email", "")
     application["college"] = college

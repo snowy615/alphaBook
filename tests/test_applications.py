@@ -2621,8 +2621,8 @@ class TestApplicantName:
         assert (stored["first_name"], stored["last_name"]) == ("Jo", "van Bloggs")
         assert stored["full_name"] == "Jo van Bloggs"
         assert ap._review_row("u1", stored)["full_name"] == "Jo van Bloggs"
-        # The profile already had a name, so it's left as the person set it.
-        assert fake_db.collections["users"]["u1"]["full_name"] == "jojo"
+        # Saved to the profile too, replacing what was there.
+        assert fake_db.collections["users"]["u1"]["full_name"] == "Jo van Bloggs"
 
     def test_a_blank_profile_name_is_filled_in(self, monkeypatch):
         fake_db, user = self._setup(monkeypatch)
