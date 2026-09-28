@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Guide{% endblock %} - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .container a:not(.btn) { color: var(--brand); text-decoration: none; }
+    .container a:not(.btn):hover { text-decoration: underline; }
+    .gd-glance { border: 1px solid var(--border); background: var(--panel); padding: 18px 22px; margin: 0 0 30px; }
+    .gd-glance h3 { margin: 0 0 10px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .gd-glance ol { margin: 0; padding-left: 22px; line-height: 1.8; font-size: 15px; }
+    .gd-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 30px; }
+    .gd-toc a {
+      padding: 6px 12px; border: 1px solid var(--border); color: var(--muted);
+      font-size: 13px; text-decoration: none;
+    }
+    .gd-toc a:hover { color: var(--text); border-color: var(--brand); }
+    .gd-section { margin: 0 0 38px; scroll-margin-top: 16px; }
+    .gd-section h2 {
+      font-size: 20px; margin: 0 0 14px; padding-bottom: 10px; border-bottom: 1px solid var(--border);
+      display: flex; gap: 12px; align-items: baseline;
+    }
+    .gd-num { color: var(--brand); font-variant-numeric: tabular-nums; }
+    .gd-section p, .gd-section li { font-size: 15px; line-height: 1.65; }
+    .gd-section p { margin: 0 0 12px; }
+    .gd-section ul, .gd-section ol { margin: 0 0 14px; padding-left: 22px; }
+    .gd-section li { margin-bottom: 6px; }
+    .gd-section strong { color: var(--text); }
+    .gd-steps { counter-reset: step; list-style: none; padding-left: 0 !important; }
+    .gd-steps li { counter-increment: step; position: relative; padding-left: 38px; margin-bottom: 10px; }
+    .gd-steps li::before {
+      content: counter(step); position: absolute; left: 0; top: 1px; width: 24px; height: 24px;
+      border: 1px solid var(--brand); color: var(--brand); font-size: 13px; font-weight: 700;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .gd-note {
+      border: 1px solid var(--border); border-left: 3px solid var(--brand); background: var(--brand-wash);
+      padding: 12px 16px; margin: 4px 0 16px; font-size: 14px; line-height: 1.6;
+    }
+    .gd-note p { margin: 0; font-size: 14px; }
+    .gd-table { width: 100%; border-collapse: collapse; border: 1px solid var(--border); background: var(--panel); margin: 4px 0 16px; }
+    .gd-table th, .gd-table td { padding: 10px 12px; text-align: left; vertical-align: top; font-size: 14px; line-height: 1.55; }
+    .gd-table thead th { font-size: 12px; font-weight: 600; color: var(--muted); border-bottom: 1px solid var(--border-strong); }
+    .gd-table tbody tr + tr td { border-top: 1px solid var(--border); }
+    .gd-table td:first-child { font-weight: 600; width: 30%; }
+    .gd-table .gd-n { text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; width: 80px; }
+    .gd-table .gd-total td { border-top: 1px solid var(--border-strong); font-weight: 700; }
+    .gd-table .gd-dash { color: var(--muted); font-weight: 400; }
+    .gd-shot { margin: 8px 0 18px; }
+    .gd-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--border-strong); }
+    .gd-shot figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; text-align: center; }
+    .gd-shot.is-narrow { max-width: 560px; margin-left: auto; margin-right: auto; }
+    .gd-foot { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 10px; color: var(--muted); font-size: 14px; }
+    @media (max-width: 640px) {
+      .gd-glance { padding: 14px 16px; }
+      .gd-table th, .gd-table td { padding: 8px; font-size: 13px; }
+      .gd-table td:first-child { width: auto; }
+    }
+    @media print {
+      .topbar .actions, .gd-toc { display: none; }
+      .gd-section { break-inside: avoid-page; }
+    }
+    {% block style %}{% endblock %}
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">{% block subtitle %}Guide{% endblock %}</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      {% block actions %}{% endblock %}
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 860px;">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+
+</html>

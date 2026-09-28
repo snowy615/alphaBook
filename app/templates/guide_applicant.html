@@ -1,0 +1,157 @@
+{% extends "guide_base.html" %}
+{% block title %}Applicant guide{% endblock %}
+{% block subtitle %}Applicant guide{% endblock %}
+{% block actions %}
+  {% if is_analyst %}<a href="/guide" class="btn ghost">Analyst guide</a>{% endif %}
+  <a href="/faq" class="btn ghost">FAQ</a>
+  <a href="/apply" class="btn primary">Apply</a>
+{% endblock %}
+{% block style %}
+    .gd-qr { display: flex; gap: 22px; align-items: center; border: 1px solid var(--border); background: var(--panel); padding: 18px 22px; margin: 0 0 30px; }
+    .gd-qr img { width: 132px; height: 132px; background: #fff; padding: 6px; flex: none; }
+    .gd-qr h3 { margin: 0 0 6px; font-size: 16px; }
+    .gd-qr p { margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+    .gd-qr .gd-qr-links { display: flex; flex-wrap: wrap; gap: 8px; }
+    @media (max-width: 560px) { .gd-qr { flex-direction: column; align-items: flex-start; } }
+{% endblock %}
+
+{% block content %}
+    <div class="msp-hero">
+      <h2>Applicant guide</h2>
+      <p>How to apply to Quant Bootcamp or Quant Analyst, for current University of Oxford students.
+        Details of the outreach event are in section 3.</p>
+    </div>
+
+    <div class="gd-glance">
+      <h3>At a glance</h3>
+      <ol>
+        <li>Sign up at <a href="/signup">alphabook.uk/signup</a> and verify your email.</li>
+        <li>Pick a programme at <a href="/apply">alphabook.uk/apply</a>, and confirm your Oxford email if asked.</li>
+        <li>Tell us if you're coming to the Quant Outreach event.</li>
+        <li>Upload your CV and fill in your details.</li>
+        <li>Do the {{ minutes }}-minute written assessment (not needed with Fast-Track).</li>
+        <li>If shortlisted, give your availability and confirm an interview time.</li>
+        <li>Get the decision by email.</li>
+      </ol>
+    </div>
+
+    <nav class="gd-toc" aria-label="Sections">
+      <a href="#start">1. Before you start</a>
+      <a href="#signup">2. Sign up</a>
+      <a href="#event">3. Event, CV and details</a>
+      <a href="#assessment">4. The assessment</a>
+      <a href="#interview">5. Interview</a>
+      <a href="#decision">6. Decision and help</a>
+    </nav>
+
+    <section class="gd-section" id="start">
+      <h2><span class="gd-num">1</span> Before you start</h2>
+      <ul>
+        <li><strong>Quant Bootcamp</strong> is the taught track, for little or no experience.
+          <strong>Quant Analyst</strong> is the research track, for lots of experience. Fundamental uses a
+          separate form.</li>
+        <li>You'll need your Oxford email, your CV as a PDF, and {{ minutes }} quiet minutes for the written
+          assessment.</li>
+      </ul>
+    </section>
+
+    <section class="gd-section" id="signup">
+      <h2><span class="gd-num">2</span> Sign up and choose a programme</h2>
+      <ol class="gd-steps">
+        <li>Go to <a href="/apply">alphabook.uk/apply</a> and click <strong>Sign up to apply</strong>. Open the email
+          we send and click the link to verify your address.</li>
+        <li>Sign in, go back to the apply page and pick <strong>Quant Bootcamp</strong> or
+          <strong>Quant Analyst</strong>.</li>
+        <li>If you signed up with a non-Oxford email, enter your Oxford email. We send a 6-digit code there: type it in
+          and click <strong>Confirm</strong>. All updates about your application go to that address.</li>
+      </ol>
+    </section>
+
+    <section class="gd-section" id="event">
+      <h2><span class="gd-num">3</span> Event, CV and details</h2>
+      <p>First, tell us whether you're coming to the Quant Outreach event (date, time and place are on
+        <a href="/events">Events</a>):</p>
+      <table class="gd-table">
+        <thead><tr><th>Option</th><th>What happens next</th></tr></thead>
+        <tbody>
+          <tr><td>CV clinic + Fast-Track</td><td>Your CV round happens in person at the event: an analyst reviews your CV
+            with you and asks you a quick question, instead of the online written assessment. After that it's the
+            same process as everyone else, including the interview. First {{ fast_track_capacity }} places, and
+            you can only use it once.</td></tr>
+          <tr><td>General attendance</td><td>Come to the event, then apply online as normal.</td></tr>
+          <tr><td>Not attending</td><td>Apply online as normal.</td></tr>
+        </tbody>
+      </table>
+      <p>Then upload your CV as a PDF (or keep the one already on your profile), fill in your first and last name,
+        college, degree and year of study, and click <strong>Continue</strong>.</p>
+      <div class="gd-note"><p><strong>Fast-Track?</strong> You're done online at this point. We'll see you at the CV
+        clinic and be in touch after it.</p></div>
+    </section>
+
+    <section class="gd-section" id="assessment">
+      <h2><span class="gd-num">4</span> The written assessment</h2>
+      <p>Two timed questions, one straight after the other: part one takes {{ motivation_minutes }} minutes and
+        part two, an estimation question, takes {{ estimation_minutes }} minutes. Read the rules, tick the box and
+        click <strong>Start the assessment</strong> when you're ready.</p>
+      <figure class="gd-shot is-narrow">
+        <img src="/static/guide-assets/applicant-start.jpg" alt="The assessment start screen with its rules" loading="lazy">
+        <figcaption>The start screen. Read the rules, tick the box, then start.</figcaption>
+      </figure>
+      <ul>
+        <li><strong>One attempt, no pausing.</strong> The timers keep running even if you close the tab.</li>
+        <li><strong>Stay in full screen</strong> until you finish. Time out of full screen is recorded.</li>
+        <li><strong>No pasting</strong> (it's blocked), and no copying the questions. Leaving the page or switching
+          tabs is recorded.</li>
+        <li><strong>No AI and no outside help.</strong></li>
+        <li>Your answers save automatically, and each part submits itself at 0:00. Click <strong>Submit</strong>
+          to move on early.</li>
+        <li>For maths, type LaTeX between dollar signs (for example <code>$x^2$</code>) and click
+          <strong>Preview</strong>.</li>
+      </ul>
+    </section>
+
+    <section class="gd-section" id="interview">
+      <h2><span class="gd-num">5</span> Interview</h2>
+      <p>If you're shortlisted, we'll email you to ask for your availability. On the apply page, click every
+        30-minute slot you could do (London time). It saves automatically.</p>
+      <figure class="gd-shot">
+        <img src="/static/guide-assets/applicant-availability.jpg" alt="The availability grid with free slots selected" loading="lazy">
+        <figcaption>Pick every slot you're free.</figcaption>
+      </figure>
+      <p>When an analyst proposes a time, you'll get an email. On the apply page, click
+        <strong>Confirm this time</strong>, or <strong>I can't make it</strong> to ask for another. A confirmed
+        interview comes with a calendar invite and a Google Meet link. Interviews take about
+        {{ interview_minutes }} minutes.</p>
+    </section>
+
+    <section class="gd-section" id="decision">
+      <h2><span class="gd-num">6</span> Decision and help</h2>
+      <p>You'll get the decision by email. If you're accepted, your membership updates automatically. If not,
+        Bootcamp applicants can reapply next year, or apply as an Analyst next term with <strong>Apply again</strong>.</p>
+      <table class="gd-table">
+        <thead><tr><th>Problem</th><th>What to do</th></tr></thead>
+        <tbody>
+          <tr><td>No email</td><td>Check spam. Emails come from Alpha Fund (oxfordalphafund@gmail.com) to your Oxford
+            email.</td></tr>
+          <tr><td>No code for your Oxford email</td><td>Check spam, then click <strong>Send a new code</strong>
+            (one a minute).</td></tr>
+          <tr><td>Connection dropped</td><td>Sign back in and carry on. Your answer autosaved, and the timer kept
+            running.</td></tr>
+          <tr><td>Anything else</td><td>See the <a href="/faq">FAQ</a>, or email
+            <a href="mailto:oxfordalphafund@gmail.com">oxfordalphafund@gmail.com</a>.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <div class="gd-qr">
+      <img src="/static/guide-assets/alphabook-apply-qr.svg" alt="QR code for alphabook.uk/apply">
+      <div>
+        <h3>Share the application</h3>
+        <p>Scan to open <strong>alphabook.uk/apply</strong>.</p>
+        <div class="gd-qr-links">
+          <a class="btn ghost" href="/static/guide-assets/alphabook-apply-qr.png" download>Download QR (PNG)</a>
+          <a class="btn ghost" href="/static/guide-assets/alphabook-apply-qr.svg" download>SVG</a>
+        </div>
+      </div>
+    </div>
+{% endblock %}

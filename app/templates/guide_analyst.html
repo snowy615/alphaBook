@@ -1,0 +1,168 @@
+{% extends "guide_base.html" %}
+{% block title %}Analyst guide{% endblock %}
+{% block subtitle %}Analyst guide{% endblock %}
+{% block actions %}
+  <a href="/guide?for=applicant" class="btn ghost">Applicant guide</a>
+  <a href="/apply/admin/interview-guide" class="btn ghost">Scoring guide</a>
+  <a href="/apply/admin" class="btn primary">Review applications</a>
+{% endblock %}
+
+{% block content %}
+    <div class="msp-hero">
+      <h2>Analyst guide</h2>
+      <p>Scoring candidates, running interviews and recording decisions. For Quant and Fundamental Analysts, and
+        admins. Only analysts and admins can see this page.</p>
+    </div>
+
+    <div class="gd-glance">
+      <h3>At a glance</h3>
+      <ol>
+        <li>Get analyst access on your Profile.</li>
+        <li>Open the review page at <a href="/apply/admin">alphabook.uk/apply/admin</a>.</li>
+        <li>Score each CV round (out of {{ cv_max }}), or use Automatic shortlist.</li>
+        <li>Shortlist or reject, then propose an interview time from their availability.</li>
+        <li>Run the interview with the built-in timer and score it (out of {{ interview_max }}).</li>
+        <li>Accept or reject, after agreeing it with the committee.</li>
+      </ol>
+    </div>
+
+    <nav class="gd-toc" aria-label="Sections">
+      <a href="#access">1. Get access</a>
+      <a href="#review">2. The review page</a>
+      <a href="#cv">3. Score the CV round</a>
+      <a href="#schedule">4. Shortlist and schedule</a>
+      <a href="#interview">5. Interview</a>
+      <a href="#decide">6. Decide</a>
+    </nav>
+
+    <section class="gd-section" id="access">
+      <h2><span class="gd-num">1</span> Get access</h2>
+      <ol class="gd-steps">
+        <li>Sign up at <a href="/signup">alphabook.uk/signup</a> and verify your email.</li>
+        <li>On <a href="/profile">Profile</a>, set Membership to <strong>Quant Analyst</strong> (or
+          <strong>Fundamental Analyst</strong>), enter the analyst password from the committee, and click
+          <strong>Save</strong>.</li>
+        <li>Go to <a href="/apply/admin">alphabook.uk/apply/admin</a>.</li>
+      </ol>
+      <div class="gd-note"><p><strong>How scoring works.</strong> Any number of analysts can score a candidate, and
+        the page shows the average. Everything saves as you go and stays editable. Candidates never see scores or
+        comments.</p></div>
+    </section>
+
+    <section class="gd-section" id="review">
+      <h2><span class="gd-num">2</span> The review page</h2>
+      <figure class="gd-shot">
+        <img src="/guide/img/analyst-review.jpg" alt="The review page: search, stage tabs and the ranked list" loading="lazy">
+        <figcaption>Search, stage tabs and the ranked list.</figcaption>
+      </figure>
+      <ul>
+        <li>The tabs filter by stage. <strong>Fast-Track</strong> holds Fast-Track applicants waiting for their
+          in-person CV round; <strong>My pending interviews</strong> shows interviews assigned to you.</li>
+        <li>The list is ranked by CV score. The Shortlisted tab ranks by the average of CV and interview, each put on
+          a 10-point scale.</li>
+        <li><strong>All unreviewed</strong> shows candidates nobody has scored yet.</li>
+        <li><strong>Scoring guide</strong> has the full rubrics and interview rules; <strong>Export to Excel</strong>
+          downloads everything.</li>
+      </ul>
+    </section>
+
+    <section class="gd-section" id="cv">
+      <h2><span class="gd-num">3</span> Score the CV round</h2>
+      <p>On a candidate's card, click <strong>Score CV and answers</strong> (online applicants) or
+        <strong>Score onsite CV</strong> (Fast-Track, scored at the CV clinic). Pick one option per criterion; the
+        total counts once every criterion is picked. Both rubrics are out of {{ cv_max }}:</p>
+      <table class="gd-table">
+        <thead><tr><th>Criterion</th><th class="gd-n">Online CV</th><th class="gd-n">Onsite CV</th></tr></thead>
+        <tbody>
+          {% for c in cv_summary %}
+          <tr><td>{{ c.label }}</td>
+            <td class="gd-n">{% if c.online is none %}<span class="gd-dash">-</span>{% else %}{{ c.online }}{% endif %}</td>
+            <td class="gd-n">{% if c.onsite is none %}<span class="gd-dash">-</span>{% else %}{{ c.onsite }}{% endif %}</td></tr>
+          {% endfor %}
+          <tr class="gd-total"><td>Total</td><td class="gd-n">{{ cv_max }}</td><td class="gd-n">{{ cv_max }}</td></tr>
+        </tbody>
+      </table>
+      <p>What each score looks like is in the <a href="/apply/admin/interview-guide">Scoring guide</a>, and next to
+        every criterion in the scoring view.</p>
+      <ul>
+        <li>Use the descriptions as a guide. When in doubt, pick the score that best fits your overall impression.</li>
+        <li>Be consistent across candidates, and judge the depth and quality of evidence, not the quantity.</li>
+        <li>Every criterion applies to every applicant, including first years.</li>
+        <li>For finance internships or trading experience, note the firm, role, duration and responsibilities so they
+          can be checked at interview.</li>
+        <li>We aim for Year 1 applicants to make up at least 50% of the interview cohort (exact share to be
+          confirmed).</li>
+        <li>Use <strong>General comments</strong> for notes (one box per candidate, shared across rounds). Click
+          <strong>Close</strong> or press Esc when done; it's already saved.</li>
+      </ul>
+      <div class="gd-note">
+        <p><strong>Automatic shortlist.</strong> A candidate who meets any one of these goes straight to interview
+          with no CV score: click <strong>Automatic shortlist</strong> on their card and choose the criterion.</p>
+        <ul style="margin:8px 0 0;">
+          {% for key, label in auto_shortlist_reasons.items() %}<li>{{ label }}{% if key == "finance_internship" %}
+            (note the firm, role, duration and responsibilities){% endif %}</li>{% endfor %}
+        </ul>
+      </div>
+    </section>
+
+    <section class="gd-section" id="schedule">
+      <h2><span class="gd-num">4</span> Shortlist and schedule</h2>
+      <p>At the bottom of the card, click <strong>Shortlist for interview</strong> or <strong>Reject</strong> (add a
+        note if useful). The candidate is emailed automatically and asked for their availability.</p>
+      <figure class="gd-shot">
+        <img src="/guide/img/analyst-schedule.jpg" alt="The candidate's availability grid and the propose form" loading="lazy">
+        <figcaption>Green slots are when the candidate is free.</figcaption>
+      </figure>
+      <ol class="gd-steps">
+        <li>Click a green slot; the date and time fill in.</li>
+        <li>Choose the interviewer, add an optional message and click <strong>Propose this time</strong>.</li>
+      </ol>
+      <p>The candidate gets a calendar invite with a Google Meet link, with the interviewer copied in. If they can't
+        make it, the interviewer is emailed; propose another time the same way.</p>
+    </section>
+
+    <section class="gd-section" id="interview">
+      <h2><span class="gd-num">5</span> Interview</h2>
+      <p>Click <strong>Interview</strong> on the card. The CV is on the left; use the timer on the right, then score
+        the rubric below it.</p>
+      <figure class="gd-shot">
+        <img src="/guide/img/analyst-interview.jpg" alt="The interview view: CV, timer and rubric" loading="lazy">
+        <figcaption>The timer calls out each step. Here Hint 1 is due.</figcaption>
+      </figure>
+      <table class="gd-table">
+        <thead><tr><th>Part</th><th>Timing</th></tr></thead>
+        <tbody>
+          {% for t in interview_timers %}
+          <tr><td>{{ t.label }}</td><td>{{ t.seconds // 60 }} minutes.
+            {% for c in t.cues if c.at > 0 %}{{ "Move on" if c.label == "Time" else c.label }} at {{ c.at // 60 }}:{{ "%02d" | format(c.at % 60) }}{% if not loop.last %}, {% else %}.{% endif %}{% endfor %}</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p>Give a hint only if they haven't reached that hint's checkpoint. Stop each question at 10:00, and everyone
+        attempts both.</p>
+      <table class="gd-table">
+        <thead><tr><th>Criterion</th><th class="gd-n">Points</th></tr></thead>
+        <tbody>
+          {% for c in interview_rubric %}
+          {% set pts = c.options | map(attribute="points") | list %}
+          <tr><td>{{ c.label }}</td>
+            <td class="gd-n">{% if pts | max <= 0 %}0 to −{{ -(pts | min) }}{% else %}0 to {{ pts | max }}{% endif %}</td></tr>
+          {% endfor %}
+          <tr class="gd-total"><td>Total</td><td class="gd-n">{{ interview_max }}</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="gd-section" id="decide">
+      <h2><span class="gd-num">6</span> Decide</h2>
+      <ul>
+        <li>Click <strong>Accept</strong> or <strong>Reject</strong> on the card. Accept grants membership immediately,
+          so agree it with the committee first.</li>
+        <li>Admins also have <strong>Send reminder</strong>, <strong>Email applicants</strong> (one message to any
+          group you choose), <strong>Let them redo the assessment</strong> and <strong>Delete application</strong>.</li>
+        <li>Score independently, follow the rubric and timings, and keep everything confidential.</li>
+      </ul>
+    </section>
+
+    <p class="gd-foot">Questions about the process: <a href="mailto:oxfordalphafund@gmail.com">oxfordalphafund@gmail.com</a>.</p>
+{% endblock %}

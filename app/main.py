@@ -1031,3 +1031,6 @@ app.include_router(applications.router)
 from app import events
 app.include_router(events.router)
 
+from app import guides
+app.include_router(guides.router)
+
