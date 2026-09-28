@@ -50,11 +50,14 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
+import hmac
 import html
 import io
 import logging
 import os
 import re
+import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -403,6 +406,10 @@ class StartApplication(BaseModel):
     # Only required for a General public applicant — see the eligibility
     # check in the /apply/start handler.
     confirms_oxford_student: bool = False
+
+
+class EmailCode(BaseModel):
+    code: str
 
 
 class EventTicketChoice(BaseModel):
@@ -889,6 +896,7 @@ async def state(user: User = Depends(current_user)):
     out["status"] = application["status"]
     out["programme"] = application.get("programme")
     out["oxford_email"] = application.get("oxford_email") or ""
+    out["needs_email_code"] = _needs_email_code(application)
     out["applied_at"] = application.get("created_at")
     # Carried at every status, not just "cv" — the submitted/shortlisted/
     # decided screens all need to know whether this was a Fast-Track
@@ -1020,11 +1028,15 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         if existing["status"] not in (S_CV, S_OA_READY):
             raise HTTPException(400, "Your application is already under way")
         existing["programme"] = req.programme
+        changed_email = existing.get("oxford_email") != oxford_email
         existing["oxford_email"] = oxford_email
         if membership == mb.M_PUBLIC:
             existing["confirmed_oxford_student"] = True
+        if changed_email:
+            await _require_oxford_email_proof(existing, data)
         await _save(uid, existing)
-        return {"ok": True, "status": existing["status"], "programme": req.programme}
+        return {"ok": True, "status": existing["status"], "programme": req.programme,
+                "needs_email_code": _needs_email_code(existing)}
 
     application = {
         "user_id": uid,
@@ -1057,8 +1069,109 @@ async def start_application(req: StartApplication, user: User = Depends(current_
             # _fast_track_used).
             "event_ticket": existing.get("event_ticket"),
         }
+    await _require_oxford_email_proof(application, data)
     await _save(uid, application)
-    return {"ok": True, "status": application["status"], "programme": req.programme}
+    return {"ok": True, "status": application["status"], "programme": req.programme,
+            "needs_email_code": _needs_email_code(application)}
+
+
+# ── Proving the Oxford email ───────────────────────────────────────────────
+# The account's own email is verified at sign-up, but the Oxford address
+# typed on the application (when the account uses another one) used to be
+# taken on trust, so a made-up ox.ac.uk address could stand in for a real
+# student. Now a 6-digit code goes to that address and the application can't
+# go any further until it comes back. Applications from before this have no
+# ``oxford_email_verified`` field and are left as they were.
+EMAIL_CODE_TTL = dt.timedelta(minutes=30)
+EMAIL_CODE_MAX_TRIES = 5
+EMAIL_CODE_RESEND_GAP = dt.timedelta(seconds=60)
+
+
+def _code_hash(uid: str, code: str) -> str:
+    return hashlib.sha256(f"{uid}:{code}".encode()).hexdigest()
+
+
+def _needs_email_code(application: dict) -> bool:
+    return application.get("oxford_email_verified") is False
+
+
+async def _require_oxford_email_proof(application: dict, account: Dict[str, Any]) -> None:
+    """Mark the application's Oxford email as proven, or send it a code.
+
+    Proven straight away when it's the account's own email: that address was
+    verified when the account was made (no session is issued until it is)."""
+    oxford = (application.get("oxford_email") or "").lower()
+    if oxford and oxford == (account.get("email") or "").strip().lower():
+        application["oxford_email_verified"] = True
+        application.pop("oxford_email_check", None)
+        return
+    application["oxford_email_verified"] = False
+    await _send_email_code(application)
+
+
+async def _send_email_code(application: dict) -> None:
+    code = f"{secrets.randbelow(10 ** 6):06d}"
+    application["oxford_email_check"] = {
+        "hash": _code_hash(application["user_id"], code), "sent_at": _now(),
+        "expires_at": _now() + EMAIL_CODE_TTL, "tries": 0,
+    }
+    await mailer.send_email(
+        to=application["oxford_email"],
+        subject=f"Alpha Fund: your code is {code}",
+        title="Confirm your Oxford email",
+        body_html=(f"<p>Your code to confirm this email for your Alpha Fund application is:</p>"
+                   f"<p style=\"font-size:28px;font-weight:700;letter-spacing:4px;\">{code}</p>"
+                   f"<p>Enter it on the application page. It expires in "
+                   f"{int(EMAIL_CODE_TTL.total_seconds() // 60)} minutes. If you didn't ask for this, "
+                   f"you can ignore this email.</p>"),
+    )
+
+
+def _require_proven_email(application: dict) -> None:
+    if _needs_email_code(application):
+        raise HTTPException(400, "Confirm your Oxford email first: enter the code we sent to it")
+
+
+@router.post("/verify-email")
+async def verify_email(req: EmailCode, user: User = Depends(current_user)):
+    """Check the code sent to the application's Oxford email."""
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None:
+        raise HTTPException(400, "Start an application first")
+    if not _needs_email_code(application):
+        return {"ok": True, "verified": True}
+    check = application.get("oxford_email_check") or {}
+    if not check or (_as_utc(check.get("expires_at")) or _now()) <= _now():
+        raise HTTPException(400, "That code has expired. Send a new one.")
+    if int(check.get("tries") or 0) >= EMAIL_CODE_MAX_TRIES:
+        raise HTTPException(400, "Too many wrong codes. Send a new one.")
+    code = re.sub(r"\D", "", req.code or "")
+    if not hmac.compare_digest(_code_hash(uid, code), check.get("hash", "")):
+        check["tries"] = int(check.get("tries") or 0) + 1
+        application["oxford_email_check"] = check
+        await _save(uid, application)
+        raise HTTPException(400, "That code isn't right. Check the email and try again.")
+    application["oxford_email_verified"] = True
+    application["oxford_email_verified_at"] = _now()
+    application.pop("oxford_email_check", None)
+    await _save(uid, application)
+    return {"ok": True, "verified": True}
+
+
+@router.post("/resend-email-code")
+async def resend_email_code(user: User = Depends(current_user)):
+    """Send a fresh code (at most one a minute)."""
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None or not _needs_email_code(application):
+        raise HTTPException(400, "There's no email waiting to be confirmed")
+    sent = _as_utc((application.get("oxford_email_check") or {}).get("sent_at"))
+    if sent and _now() - sent < EMAIL_CODE_RESEND_GAP:
+        raise HTTPException(400, "Wait a minute before asking for another code")
+    await _send_email_code(application)
+    await _save(uid, application)
+    return {"ok": True}
 
 
 def _fast_track_used(application: dict) -> bool:
@@ -1137,6 +1250,7 @@ async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(curre
         raise HTTPException(400, "Start an application first")
     if application["status"] != S_CV:
         raise HTTPException(400, "Event registration is only available before you confirm your CV")
+    _require_proven_email(application)
     if req.ticket not in EVENT_TICKETS:
         raise HTTPException(400, "Unknown ticket type")
     if req.ticket != EVENT_TICKET_NONE and await outreach.event_has_ended():
@@ -1173,6 +1287,7 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
         raise HTTPException(400, "Start an application first")
     if application["status"] not in (S_CV, S_OA_READY):
         return {"ok": True, "status": application["status"]}
+    _require_proven_email(application)
 
     data = await _user_data(uid)
     if not data.get("cv_blob_path"):
@@ -1235,6 +1350,7 @@ async def start_oa(user: User = Depends(current_user)):
         raise HTTPException(400, "Upload your CV before starting the assessment")
     if application["status"] != S_OA_READY:
         raise HTTPException(400, "You have already sat the assessment")
+    _require_proven_email(application)
 
     # Re-check the CV at the last moment: it can be deleted between confirming
     # and starting, and an application without one is not reviewable.

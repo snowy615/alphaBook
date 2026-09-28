@@ -191,7 +191,7 @@
                value="${esc(state.oxford_email || "")}">
         <p class="apl-hint" id="oxfordHint">
           Your account is signed up with ${state.account_email ? esc(state.account_email) : "a non-Oxford address"}.
-          Updates about this application — and the decision — go to your Oxford email instead.
+          Updates about this application, and the decision, go to your Oxford email instead. We'll email it a code to confirm it's yours.
         </p>
       </div>` : "";
 
@@ -270,6 +270,56 @@
   }
 
   // ── Outreach event registration ───────────────────────────────────────────
+  // Proving the Oxford email: a 6-digit code was sent to it when the
+  // programme was picked (when it isn't the account's own, already-verified
+  // email). Nothing further happens until it's entered.
+  function renderVerifyEmail(state) {
+    $("#app").innerHTML = panel("Confirm your Oxford email", `
+      <p class="msp-muted" style="margin-top:0;">
+        We've sent a 6-digit code to <strong>${esc(state.oxford_email)}</strong>. Enter it below to
+        carry on with your application. Check your junk folder if it hasn't arrived.
+      </p>
+      <div class="field-group">
+        <label for="emailCode">Code</label>
+        <input type="text" id="emailCode" inputmode="numeric" autocomplete="one-time-code" maxlength="6"
+               placeholder="123456" style="max-width:180px;font-size:20px;letter-spacing:4px;">
+      </div>
+      <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;">
+        <button class="btn primary" id="emailCodeGo">Confirm</button>
+        <button class="btn ghost" id="emailCodeResend">Send a new code</button>
+      </div>
+      <details style="margin-top:18px;">
+        <summary class="apl-hint" style="cursor:pointer;">Wrong address?</summary>
+        <div class="field-group" style="margin-top:10px;">
+          <label for="emailChange">Your Oxford email</label>
+          <input type="email" id="emailChange" placeholder="you@college.ox.ac.uk" value="${esc(state.oxford_email)}">
+        </div>
+        <button class="btn" id="emailChangeGo" style="margin-top:10px;">Send the code here instead</button>
+      </details>`);
+
+    const go = async (btn, fn) => {
+      btn.disabled = true;
+      try { await fn(); } catch (err) { flash(err.message, true); }
+      btn.disabled = false;
+    };
+    $("#emailCodeGo").addEventListener("click", (e) => go(e.target, async () => {
+      await api("/apply/verify-email", { code: $("#emailCode").value.trim() });
+      await refresh();
+    }));
+    $("#emailCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#emailCodeGo").click(); });
+    $("#emailCodeResend").addEventListener("click", (e) => go(e.target, async () => {
+      await api("/apply/resend-email-code", {});
+      flash("A new code is on its way.", false);
+    }));
+    $("#emailChangeGo").addEventListener("click", (e) => go(e.target, async () => {
+      await api("/apply/start", { programme: state.programme, oxford_email: $("#emailChange").value.trim(),
+                                  confirms_oxford_student: true });
+      await refresh();
+      flash("A new code is on its way.", false);
+    }));
+    $("#emailCode").focus();
+  }
+
   // The first thing shown once a programme is picked, before the CV step —
   // General Attendance, Fast-Track CV Clinic (capped, first-come), or skip
   // straight to the online application. Once chosen it's locked in server
@@ -1194,6 +1244,7 @@
     switch (state.status) {
       case "none": return "choose";
       case "cv":
+        if (state.needs_email_code) return "verify-email:" + state.oxford_email;
         if (!state.event_ticket) return "event-choice";
         return "cv:" + (state.cv_uploaded ? "yes" : "no");
       case "oa_ready": return "gate";
@@ -1245,6 +1296,7 @@
     switch (state.status) {
       case "none": renderChoose(state); break;
       case "cv":
+        if (state.needs_email_code) { renderVerifyEmail(state); break; }
         if (!state.event_ticket) { renderEventChoice(state); break; }
         renderCv(state); break;
       case "oa_ready": renderOaGate(state); break;

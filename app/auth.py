@@ -224,7 +224,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         # reports the address as verified. Signing in again later with a
         # freshly-issued token (post-verification) picks up email_verified
         # true and sails through this check normally.
-        if email and not email_verified:
+        if not email or not email_verified:
             return JSONResponse({
                 "status": "unverified",
                 "message": "Check your inbox (and your spam/junk folder) to verify your email before continuing.",

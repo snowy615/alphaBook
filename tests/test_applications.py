@@ -3365,3 +3365,85 @@ def test_the_review_card_shows_every_integrity_flag(monkeypatch):
                  "1 screenshot attempt"):
         assert text in html, text
     assert "built-in method" not in html
+
+
+class TestOxfordEmailProof:
+    """An Oxford email typed on the application (rather than the account's
+    own verified email) has to be proven with a code before anything else."""
+
+    def _start(self, monkeypatch, account_email="someone@gmail.com", oxford="jo@merton.ox.ac.uk"):
+        fake_db, sent, _ = _flow_db(monkeypatch, users={"u1": {
+            "username": "jo", "email": account_email, "membership": mb.M_PUBLIC, "cv_blob_path": "cvs/u1.pdf"}})
+        user = User(id="u1", username="jo")
+        result = asyncio.run(ap.start_application(ap.StartApplication(
+            programme=mb.M_QUANT_BOOTCAMP, oxford_email=oxford, confirms_oxford_student=True), user))
+        return fake_db, sent, user, result
+
+    def _code(self, sent):
+        return re.search(r"your code is (\d{6})", sent[-1]["subject"]).group(1)
+
+    def test_a_typed_oxford_email_gets_a_code_and_blocks_the_next_steps(self, monkeypatch):
+        fake_db, sent, user, result = self._start(monkeypatch)
+        assert result["needs_email_code"] is True
+        assert sent[-1]["to"] == "jo@merton.ox.ac.uk"
+        assert asyncio.run(ap.state(user))["needs_email_code"] is True
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), user))
+        assert "code" in exc.value.detail
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.confirm_cv(ap.ConfirmCv(first_name="J", last_name="B", college="Merton",
+                                                   degree="Maths", year_of_study="1st year"), user))
+
+    def test_the_right_code_unlocks_it(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        asyncio.run(ap.verify_email(ap.EmailCode(code=self._code(sent)), user))
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["oxford_email_verified"] is True and "oxford_email_check" not in stored
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), user))
+
+    def test_wrong_codes_run_out(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        right = self._code(sent)
+        wrong = "000000" if right != "000000" else "111111"
+        for _ in range(ap.EMAIL_CODE_MAX_TRIES):
+            with pytest.raises(HTTPException):
+                asyncio.run(ap.verify_email(ap.EmailCode(code=wrong), user))
+        with pytest.raises(HTTPException) as exc:   # even the right one now needs a fresh code
+            asyncio.run(ap.verify_email(ap.EmailCode(code=right), user))
+        assert "new one" in exc.value.detail
+
+    def test_an_expired_code_is_refused(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["expires_at"] = \
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.verify_email(ap.EmailCode(code=self._code(sent)), user))
+        assert "expired" in exc.value.detail
+
+    def test_resend_is_limited_to_one_a_minute(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.resend_email_code(user))
+        fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["sent_at"] = \
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+        asyncio.run(ap.resend_email_code(user))
+        assert len(sent) == 2
+
+    def test_the_accounts_own_verified_oxford_email_needs_no_code(self, monkeypatch):
+        fake_db, sent, user, result = self._start(monkeypatch, account_email="jo@merton.ox.ac.uk", oxford=None)
+        assert result["needs_email_code"] is False and sent == []
+        assert fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_verified"] is True
+
+    def test_changing_the_address_sends_a_new_code_there(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        asyncio.run(ap.start_application(ap.StartApplication(
+            programme=mb.M_QUANT_BOOTCAMP, oxford_email="jo@keble.ox.ac.uk", confirms_oxford_student=True), user))
+        assert sent[-1]["to"] == "jo@keble.ox.ac.uk"
+        assert fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_verified"] is False
+
+    def test_existing_applications_are_left_as_they_were(self, monkeypatch):
+        _flow_db(monkeypatch, applications={"u1": {"user_id": "u1", "status": ap.S_CV,
+                                                    "oxford_email": "x@lol.ox.ac.uk"}})
+        user = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(user))["needs_email_code"] is False
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), user))

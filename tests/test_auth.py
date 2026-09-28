@@ -211,16 +211,17 @@ class TestUnverifiedEmailGate:
         assert result.status_code == 200
         assert "set-cookie" in {k.lower() for k in result.headers.keys()}
 
-    def test_an_account_with_no_email_at_all_is_never_gated(self, monkeypatch):
-        # Direct-created / legacy accounts with no email shouldn't get stuck
-        # behind a check that has nothing to verify.
+    def test_a_sign_in_with_no_email_gets_no_session(self, monkeypatch):
+        # Every sign-in method on the site (Google, email and password)
+        # carries an email; a token without one has nothing verified behind
+        # it, so it doesn't get a session. (Admin's direct login is separate.)
         decoded = {"uid": "fb_uid_11", "email": "", "email_verified": False}
         self._patch(monkeypatch, decoded)
 
         result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
 
-        assert result.status_code == 200
-        assert "set-cookie" in {k.lower() for k in result.headers.keys()}
+        assert result.status_code == 403
+        assert "set-cookie" not in {k.lower() for k in result.headers.keys()}
 
 
 class TestResolveUsername:
