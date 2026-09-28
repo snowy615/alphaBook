@@ -450,6 +450,13 @@ class RemindRequest(BaseModel):
     note: Optional[str] = None
 
 
+class BulkEmail(BaseModel):
+    user_ids: List[str]
+    subject: str
+    message: str
+    button: bool = True
+
+
 class WrittenSubmit(BaseModel):
     text: str = ""
     final: bool = False
@@ -1712,18 +1719,22 @@ async def _with_name(user_id: str, application: dict) -> dict:
     return application
 
 
-async def _people() -> Tuple[Dict[str, str], Dict[str, str]]:
+async def _people() -> Tuple[Dict[str, str], Dict[str, str], set]:
     """Everyone's display name, by user id and by username: their profile's
-    full name, or their username if they haven't set one."""
+    full name, or their username if they haven't set one. Plus the ids of
+    everyone with a CV on their profile."""
     by_id: Dict[str, str] = {}
     by_username: Dict[str, str] = {}
+    with_cv: set = set()
     for d in await db_module.db.collection("users").get():
         data = d.to_dict() or {}
         name = (data.get("full_name") or "").strip() or data.get("username") or ""
         by_id[d.id] = name
         if data.get("username"):
             by_username[data["username"]] = name
-    return by_id, by_username
+        if data.get("cv_blob_path"):
+            with_cv.add(d.id)
+    return by_id, by_username, with_cv
 
 
 async def _use_real_names(rows: List[Dict[str, Any]]) -> None:
@@ -1732,8 +1743,12 @@ async def _use_real_names(rows: List[Dict[str, Any]]) -> None:
     no name of its own, e.g. one from before names were asked for), each
     reviewer, and whoever shortlisted, decided or auto-shortlisted.
     Reviews and decisions store the username (or id) of whoever made them,
-    so a name set or changed later still shows up."""
-    by_id, by_username = await _people()
+    so a name set or changed later still shows up.
+
+    Also marks a CV as on file when it's on the applicant's profile but the
+    application hasn't picked it up yet (uploaded, but "confirm" never
+    clicked): the CV link serves the profile's CV first anyway."""
+    by_id, by_username, with_cv = await _people()
 
     def name(username: str) -> str:
         return by_username.get(username, username) if username else username
@@ -1741,6 +1756,7 @@ async def _use_real_names(rows: List[Dict[str, Any]]) -> None:
     for r in rows:
         if not r.get("full_name"):
             r["full_name"] = by_id.get(r["user_id"], "")
+        r["cv_uploaded"] = r["cv_uploaded"] or r["user_id"] in with_cv
         for e in r["review"]["entries"]:
             e["reviewer_name"] = by_id.get(e.get("reviewer_id"), "") or name(e.get("reviewer_name", ""))
         r["shortlisted_by"] = name(r.get("shortlisted_by") or "")
@@ -1757,7 +1773,7 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
     whose ticket says so, with the application's college/degree/CV where one
     exists. Not the score ranking — a roster reads as "who signed up"."""
     by_uid = {r["user_id"]: r for r in rows}
-    names, _ = await _people()
+    names, _, _ = await _people()
     entries: Dict[str, Dict[str, Any]] = {}
     for s in await outreach.confirmed_signups():
         uid = s.get("user_id")
@@ -2218,6 +2234,99 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
     application["last_reminded_by"] = admin.username
     await _save(user_id, application)
     return {"ok": True, "sent_to": to}
+
+
+# ── Emailing applicants in bulk ────────────────────────────────────────────
+# The admin page picks the recipients (by ticking people, or a category that
+# ticks them) and writes the message; each person gets their own copy, sent
+# from the fund's address, greeted by name wherever the message says so.
+BULK_EMAIL_MAX_RECIPIENTS = 500
+BULK_EMAIL_SUBJECT_MAX = 200
+BULK_EMAIL_MESSAGE_MAX = 5000
+BULK_EMAIL_CONCURRENCY = 4
+BULK_EMAIL_LOG = "admin_emails"
+
+
+def _bulk_email_html(message: str, first_name: str, full_name: str) -> str:
+    """The admin's plain-text message as email HTML: escaped, a paragraph per
+    blank-line-separated block, line breaks kept, and {first_name} / {name}
+    filled in for this recipient."""
+    text = html.escape(message.strip())
+    text = text.replace("{first_name}", html.escape(first_name)).replace("{name}", html.escape(full_name))
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+    return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+
+
+@router.post("/admin/email")
+async def email_applicants(req: BulkEmail, admin: User = Depends(require_admin)):
+    """Send one message to every chosen applicant, each their own copy.
+
+    Addresses come from the applications, never from the page, and anyone
+    listed twice (or sharing an address) gets it once."""
+    subject = " ".join((req.subject or "").split())
+    message = (req.message or "").strip()
+    if not subject or not message:
+        raise HTTPException(400, "Write a subject and a message")
+    if len(subject) > BULK_EMAIL_SUBJECT_MAX:
+        raise HTTPException(400, f"Keep the subject under {BULK_EMAIL_SUBJECT_MAX} characters")
+    if len(message) > BULK_EMAIL_MESSAGE_MAX:
+        raise HTTPException(400, f"Keep the message under {BULK_EMAIL_MESSAGE_MAX} characters")
+    user_ids = list(dict.fromkeys(u for u in req.user_ids if u))
+    if not user_ids:
+        raise HTTPException(400, "Choose at least one person to send it to")
+    if len(user_ids) > BULK_EMAIL_MAX_RECIPIENTS:
+        raise HTTPException(400, f"That's more than {BULK_EMAIL_MAX_RECIPIENTS} people at once")
+
+    recipients: List[Tuple[str, dict]] = []
+    skipped: List[str] = []
+    seen: set = set()
+    for uid in user_ids:
+        application = await _load(uid)
+        if application is None:
+            skipped.append(uid)
+            continue
+        await _with_name(uid, application)
+        to = (application.get("oxford_email") or application.get("email") or "").strip()
+        if not to:
+            skipped.append(application.get("full_name") or application.get("username") or uid)
+            continue
+        if to.lower() in seen:
+            continue
+        seen.add(to.lower())
+        recipients.append((uid, application))
+
+    gate = asyncio.Semaphore(BULK_EMAIL_CONCURRENCY)
+
+    async def send_one(uid: str, application: dict) -> bool:
+        full_name = (application.get("full_name") or "").strip()
+        first_name = (application.get("first_name") or "").strip() or (full_name.split() or ["there"])[0]
+        body = _bulk_email_html(message, first_name, full_name or first_name)
+        async with gate:
+            ok = await mailer.send_email(
+                to=(application.get("oxford_email") or application.get("email")).strip(),
+                subject=subject, title=subject, body_html=body,
+                cta_label="Go to your application" if req.button else None,
+                cta_url=f"{BASE_URL}/apply" if req.button else None,
+            )
+        if ok:
+            await db_module.db.collection(COLLECTION).document(uid).update({
+                "last_emailed_at": _now(), "last_emailed_subject": subject,
+            })
+        return ok
+
+    results = await asyncio.gather(*(send_one(uid, a) for uid, a in recipients))
+    sent = [a.get("oxford_email") or a.get("email") for (_, a), ok in zip(recipients, results) if ok]
+    failed = [a.get("full_name") or a.get("username") or uid
+              for (uid, a), ok in zip(recipients, results) if not ok]
+
+    await db_module.db.collection(BULK_EMAIL_LOG).document(secrets.token_hex(8)).set({
+        "sent_by": admin.username, "sent_at": _now(), "subject": subject, "message": message,
+        "button": req.button, "recipients": [uid for uid, _ in recipients],
+        "sent": len(sent), "failed": failed, "skipped": skipped,
+    })
+    if recipients and not sent:
+        raise HTTPException(502, "Nothing could be sent. Check the email configuration.")
+    return {"ok": True, "sent": len(sent), "failed": failed, "skipped": skipped}
 
 
 # Email copy for each stage of the decision. Shortlisting isn't final, so its

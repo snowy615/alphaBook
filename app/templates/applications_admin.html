@@ -351,6 +351,42 @@
     .apa-modal p { margin: 0 0 22px; color: var(--muted); font-size: 14px; line-height: 1.5; }
     .apa-modal-actions { display: flex; gap: 10px; justify-content: flex-end; }
     .apa-modal-actions .btn.is-danger { background: var(--red); border-color: var(--red); color: #fff; }
+
+    /* ── Email applicants ─────────────────────────────────────────────────── */
+    .apa-modal.apa-mail { max-width: 760px; max-height: 92vh; overflow-y: auto; box-sizing: border-box; }
+    .apa-mail, .apa-mail * { min-width: 0; max-width: 100%; }
+    .apa-mail p { margin-bottom: 14px; }
+    .apa-mail-row { display: flex; gap: 12px; align-items: baseline; margin: 0 0 10px; }
+    .apa-mail-label { flex: 0 0 78px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .apa-mail-seg { display: flex; flex-wrap: wrap; gap: 6px; }
+    .apa-mail-seg button {
+      padding: 6px 11px; border: 1px solid var(--border); background: transparent;
+      color: var(--muted); font: inherit; font-size: 13px; cursor: pointer;
+    }
+    .apa-mail-seg button:hover { color: var(--text); border-color: var(--border-strong); }
+    .apa-mail-seg button.is-active { color: var(--text); border-color: var(--brand); background: var(--brand-wash); }
+    .apa-mail-listhead { display: flex; gap: 8px; margin: 14px 0 6px; }
+    .apa-mail-listhead .btn { white-space: nowrap; }
+    .apa-mail-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--border); }
+    .apa-mail-person {
+      display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center;
+      padding: 7px 10px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px;
+    }
+    .apa-mail-person:last-child { border-bottom: 0; }
+    .apa-mail-person input { grid-row: span 2; }
+    .apa-mail-name { font-weight: 600; }
+    .apa-mail-meta { color: var(--muted); font-size: 12px; text-align: right; }
+    .apa-mail-email { grid-column: 2 / 4; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+    .apa-mail-count { margin: 6px 0 14px !important; font-size: 13px !important; color: var(--text) !important; }
+    #mailSubject { margin-bottom: 8px; }
+    #mailBody { resize: vertical; line-height: 1.5; }
+    .apa-mail-hint { font-size: 12px !important; margin: 6px 0 10px !important; }
+    @media (max-width: 560px) {
+      .apa-modal.apa-mail { width: calc(100vw - 24px); padding: 18px; }
+      .apa-mail-row { flex-direction: column; gap: 6px; }
+      .apa-mail-label { flex: none; }
+      .apa-mail-meta { grid-column: 2 / 4; text-align: left; }
+    }
   </style>
 </head>
 
@@ -384,6 +420,62 @@
       </div>
     </div>
   </div>
+
+  {% if is_admin %}
+  <div class="apa-modal-overlay" id="mailModal">
+    <div class="apa-modal apa-mail">
+      <h3>Email applicants</h3>
+      <p>Pick a group to tick everyone in it, then tick or untick anyone by hand. Each person gets their own
+        copy from oxfordalphafund@gmail.com.</p>
+
+      <div class="apa-mail-row">
+        <span class="apa-mail-label">Programme</span>
+        <div class="apa-mail-seg" data-group="programme">
+          <button type="button" data-v="all" class="is-active">All</button>
+          <button type="button" data-v="Quant Bootcamp">Bootcamp</button>
+          <button type="button" data-v="Quant Analyst">Analyst</button>
+        </div>
+      </div>
+      <div class="apa-mail-row">
+        <span class="apa-mail-label">Who</span>
+        <div class="apa-mail-seg" data-group="stage">
+          <button type="button" data-v="everyone" class="is-active">Everyone</button>
+          <button type="button" data-v="unfinished">Hasn't finished application</button>
+          <button type="button" data-v="nocv">Hasn't uploaded a CV</button>
+          <button type="button" data-v="noassessment">CV in, assessment not done</button>
+          <button type="button" data-v="submitted">Submitted, awaiting decision</button>
+          <button type="button" data-v="fasttrack">Fast-Track ticket</button>
+          <button type="button" data-v="shortlisted">Shortlisted</button>
+          <button type="button" data-v="accepted">Accepted</button>
+          <button type="button" data-v="rejected">Rejected</button>
+        </div>
+      </div>
+
+      <div class="apa-mail-listhead">
+        <input type="search" id="mailSearch" class="apa-search" placeholder="Find someone…" autocomplete="off">
+        <button type="button" class="btn ghost" id="mailNone">Untick all</button>
+      </div>
+      <div class="apa-mail-list" id="mailList"></div>
+      <p class="apa-mail-count" id="mailCount"></p>
+
+      <input type="text" id="mailSubject" class="apa-search" maxlength="200" placeholder="Subject">
+      <textarea id="mailBody" class="apa-search" rows="8" maxlength="5000"
+                placeholder="Hi {first_name},&#10;&#10;Your message…&#10;&#10;Best,&#10;Oxford Alpha Fund"></textarea>
+      <p class="apa-mail-hint">Write <code>{first_name}</code> or <code>{name}</code> and each email fills in that
+        person's name. A blank line starts a new paragraph.</p>
+      <label class="apa-auto-opt"><input type="checkbox" id="mailButton" checked> Add a "Go to your application" button</label>
+      <p class="apa-auto-error" id="mailError"></p>
+      <div class="apa-modal-actions">
+        <button class="btn ghost" id="mailCancel">Cancel</button>
+        <button class="btn primary" id="mailSend">Send</button>
+      </div>
+    </div>
+  </div>
+  <script type="application/json" id="mailRows">[{% for r in rows %}{{ {
+      "id": r.user_id, "name": r.full_name or r.username, "username": r.username,
+      "email": r.oxford_email or r.email, "programme": r.programme, "status": r.status,
+      "ticket": r.event_ticket, "cv": r.cv_uploaded} | tojson }}{% if not loop.last %},{% endif %}{% endfor %}]</script>
+  {% endif %}
 
   <div class="apa-modal-overlay" id="acceptModal">
     <div class="apa-modal">
@@ -454,6 +546,7 @@
         <button type="button" class="btn" id="apaUnreviewed" aria-pressed="false">All unreviewed <span class="n"></span></button>
         <a class="btn ghost" href="/apply/admin/interview-guide">Scoring guide</a>
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
+        {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>{% endif %}
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         <table class="msp-table">
@@ -985,6 +1078,121 @@
         btn.disabled = false;
       }
     }
+
+    // ── Emailing applicants ──────────────────────────────────────────────
+    // A group ticks exactly the people in it (programme and "who" combine);
+    // ticking by hand adjusts from there. The server looks up each address.
+    const MAIL_STAGES = {
+      everyone: () => true,
+      unfinished: (p) => ["cv", "oa_ready", "oa_active"].includes(p.status),
+      nocv: (p) => p.status === "cv" && !p.cv,
+      noassessment: (p) => p.status === "oa_ready" || p.status === "oa_active",
+      submitted: (p) => p.status === "submitted",
+      fasttrack: (p) => p.ticket === "fast_track",
+      shortlisted: (p) => p.status === "shortlisted",
+      accepted: (p) => p.status === "accepted",
+      rejected: (p) => p.status === "rejected",
+    };
+    const MAIL_STATUS = { cv: "CV step", oa_ready: "assessment not started", oa_active: "mid-assessment",
+                          submitted: "submitted", shortlisted: "shortlisted", accepted: "accepted", rejected: "rejected" };
+    let mailPeople = [];
+    const mailPicked = new Set();
+    const mailFilter = { programme: "all", stage: "everyone" };
+
+    function mailMatches(p) {
+      return (mailFilter.programme === "all" || p.programme === mailFilter.programme)
+        && MAIL_STAGES[mailFilter.stage](p);
+    }
+
+    function mailApplyGroup() {
+      mailPicked.clear();
+      mailPeople.filter(mailMatches).forEach((p) => mailPicked.add(p.id));
+      mailRender();
+    }
+
+    function mailRender() {
+      const q = document.getElementById("mailSearch").value.trim().toLowerCase();
+      const list = document.getElementById("mailList");
+      const shown = mailPeople.filter((p) => !q || `${p.name} ${p.username} ${p.email}`.toLowerCase().includes(q));
+      list.innerHTML = shown.map((p) => `
+        <label class="apa-mail-person">
+          <input type="checkbox" data-id="${escHtml(p.id)}" ${mailPicked.has(p.id) ? "checked" : ""}>
+          <span class="apa-mail-name">${escHtml(p.name)}</span>
+          <span class="apa-mail-meta">${escHtml((p.programme || "").replace("Quant ", ""))} · ${escHtml(MAIL_STATUS[p.status] || p.status)}${p.status === "cv" && !p.cv ? " · no CV" : ""}${p.ticket === "fast_track" ? " · Fast-Track" : ""}</span>
+          <span class="apa-mail-email">${escHtml(p.email || "no email")}</span>
+        </label>`).join("") || `<p class="apa-mail-hint" style="padding:10px;">No one matches.</p>`;
+      list.querySelectorAll("input[type=checkbox]").forEach((box) => {
+        box.addEventListener("change", () => {
+          if (box.checked) mailPicked.add(box.dataset.id); else mailPicked.delete(box.dataset.id);
+          mailCount();
+        });
+      });
+      mailCount();
+    }
+
+    function mailCount() {
+      const n = mailPicked.size;
+      document.getElementById("mailCount").textContent = `${n} ${n === 1 ? "person" : "people"} selected`;
+      document.getElementById("mailSend").textContent = n ? `Send to ${n}` : "Send";
+    }
+
+    function openMailer() {
+      mailPeople = JSON.parse(document.getElementById("mailRows").textContent)
+        .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+      document.getElementById("mailError").textContent = "";
+      document.getElementById("mailModal").style.display = "flex";
+      mailApplyGroup();
+    }
+
+    {% if is_admin %}
+    document.querySelectorAll(".apa-mail-seg").forEach((seg) => {
+      seg.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => {
+        seg.querySelectorAll("button").forEach((x) => x.classList.toggle("is-active", x === b));
+        mailFilter[seg.dataset.group] = b.dataset.v;
+        mailApplyGroup();
+      }));
+    });
+    document.getElementById("mailSearch").addEventListener("input", mailRender);
+    document.getElementById("mailNone").addEventListener("click", () => { mailPicked.clear(); mailRender(); });
+    document.getElementById("mailCancel").addEventListener("click", () => {
+      document.getElementById("mailModal").style.display = "none";
+    });
+    document.getElementById("mailSend").addEventListener("click", async (e) => {
+      const err = document.getElementById("mailError");
+      const subject = document.getElementById("mailSubject").value.trim();
+      const message = document.getElementById("mailBody").value.trim();
+      const ids = [...mailPicked];
+      if (!ids.length) { err.textContent = "Tick at least one person."; return; }
+      if (!subject || !message) { err.textContent = "Write a subject and a message."; return; }
+      if (!confirm(`Send "${subject}" to ${ids.length} ${ids.length === 1 ? "person" : "people"} from oxfordalphafund@gmail.com?`)) return;
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      err.textContent = "";
+      try {
+        const r = await fetch("/apply/admin/email", {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ user_ids: ids, subject, message,
+                                 button: document.getElementById("mailButton").checked }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        document.getElementById("mailModal").style.display = "none";
+        let note = `Email sent to ${d.sent} ${d.sent === 1 ? "person" : "people"}.`;
+        if (d.failed.length) note += ` Couldn't send to: ${d.failed.join(", ")}.`;
+        if (d.skipped.length) note += ` Skipped (no email on file): ${d.skipped.join(", ")}.`;
+        flash(note, d.failed.length > 0);
+        document.getElementById("mailSubject").value = "";
+        document.getElementById("mailBody").value = "";
+      } catch (ex) {
+        err.textContent = ex.message;
+      } finally {
+        btn.disabled = false;
+        mailCount();
+      }
+    });
+    {% endif %}
 
     // ── Scoring view ─────────────────────────────────────────────────────
     // One overlay for every applicant and section. Each click and keystroke

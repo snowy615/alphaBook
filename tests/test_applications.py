@@ -3447,3 +3447,74 @@ class TestOxfordEmailProof:
         user = User(id="u1", username="jo")
         assert asyncio.run(ap.state(user))["needs_email_code"] is False
         asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), user))
+
+
+class TestBulkEmail:
+    """The admin page's "Email applicants": one message, each chosen
+    applicant their own copy, greeted by name, from addresses on file."""
+
+    ADMIN = User(id="admin1", username="root", is_admin=True)
+
+    def _apps(self):
+        return {
+            "u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "first_name": "Jo",
+                   "oxford_email": "jo@merton.ox.ac.uk", "status": ap.S_CV},
+            "u2": {"user_id": "u2", "username": "sam", "full_name": "Sam Smith",
+                   "email": "sam@example.com", "status": ap.S_SUBMITTED},
+            "u3": {"user_id": "u3", "username": "dup", "full_name": "Dup",
+                   "oxford_email": "JO@merton.ox.ac.uk", "status": ap.S_CV},
+            "u4": {"user_id": "u4", "username": "nomail", "status": ap.S_CV},
+        }
+
+    def _send(self, monkeypatch, ids, message="Hi {first_name},\n\nLine one\nline two", button=True):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications=self._apps())
+        result = asyncio.run(ap.email_applicants(
+            ap.BulkEmail(user_ids=ids, subject="  Deadline   Friday ", message=message, button=button), self.ADMIN))
+        return fake_db, sent, result
+
+    def test_each_person_gets_their_own_copy_by_name(self, monkeypatch):
+        fake_db, sent, result = self._send(monkeypatch, ["u1", "u2"])
+        assert result["sent"] == 2 and result["failed"] == [] and result["skipped"] == []
+        by_to = {m["to"]: m for m in sent}
+        assert set(by_to) == {"jo@merton.ox.ac.uk", "sam@example.com"}   # the Oxford email first
+        assert by_to["jo@merton.ox.ac.uk"]["subject"] == "Deadline Friday"
+        assert "<p>Hi Jo,</p><p>Line one<br>line two</p>" in by_to["jo@merton.ox.ac.uk"]["body_html"]
+        assert "Hi Sam," in by_to["sam@example.com"]["body_html"]
+        assert fake_db.collections[ap.COLLECTION]["u1"]["last_emailed_subject"] == "Deadline Friday"
+        log = list(fake_db.collections[ap.BULK_EMAIL_LOG].values())
+        assert len(log) == 1 and log[0]["sent"] == 2 and log[0]["sent_by"] == "root"
+
+    def test_duplicates_and_missing_addresses(self, monkeypatch):
+        _, sent, result = self._send(monkeypatch, ["u1", "u1", "u3", "u4", "ghost"])
+        assert [m["to"] for m in sent] == ["jo@merton.ox.ac.uk"]
+        assert sorted(result["skipped"]) == ["ghost", "nomail"]
+
+    def test_the_message_is_escaped(self, monkeypatch):
+        _, sent, _ = self._send(monkeypatch, ["u1"], message="<script>x</script> {name}")
+        body = sent[0]["body_html"]
+        assert "<script>" not in body and "&lt;script&gt;" in body and "Jo Bloggs" in body
+
+    def test_needs_recipients_subject_and_message(self, monkeypatch):
+        _flow_db(monkeypatch, applications=self._apps())
+        for req in (ap.BulkEmail(user_ids=[], subject="s", message="m"),
+                    ap.BulkEmail(user_ids=["u1"], subject=" ", message="m"),
+                    ap.BulkEmail(user_ids=["u1"], subject="s", message=" ")):
+            with pytest.raises(HTTPException):
+                asyncio.run(ap.email_applicants(req, self.ADMIN))
+
+    def test_the_review_page_offers_it_to_admins_with_the_cv_from_the_profile(self, monkeypatch):
+        _flow_db(monkeypatch, applications=self._apps(),
+                 users={"u1": {"username": "jo", "cv_blob_path": "cvs/u1.pdf"}})
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, self.ADMIN)).body.decode()
+        import json
+        import re
+        rows = json.loads(re.search(r'id="mailRows">(.*?)</script>', html, re.S).group(1))
+        by_id = {r["id"]: r for r in rows}
+        assert by_id["u1"]["cv"] is True            # uploaded, never confirmed: still on file
+        assert by_id["u4"]["cv"] is False
+        assert 'onclick="openMailer()"' in html
+        reviewer = asyncio.run(ap.admin_applications(request, User(id="r1", username="rev"))).body.decode()
+        assert 'onclick="openMailer()"' not in reviewer and 'id="mailRows"' not in reviewer
