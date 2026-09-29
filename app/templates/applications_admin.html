@@ -337,6 +337,12 @@
     .apa-stage-tab.is-active { color: var(--text); border-color: var(--brand); background: var(--brand-wash); }
     .apa-stage-tab .n { margin-left: 4px; font-variant-numeric: tabular-nums; opacity: .7; }
     .apa-none { margin: 0; color: var(--muted); font-size: 14px; }
+    .apa-yearbar {
+      display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+      padding: 10px 16px; border-bottom: 1px solid var(--border);
+    }
+    .apa-yearcount { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .apa-yearcount strong { color: var(--text); }
 
     /* ── Reject confirmation ──────────────────────────────────────────────── */
     .apa-modal-overlay {
@@ -549,6 +555,10 @@
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
         {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>{% endif %}
       </div>
+      <div class="apa-yearbar">
+        <button type="button" class="btn" id="apaYear1" aria-pressed="false">Year 1 first</button>
+        <span class="apa-yearcount" id="apaYearCount"></span>
+      </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         <table class="msp-table">
           <thead>
@@ -566,11 +576,12 @@
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
+                data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank" data-rank>{{ r.rank if r.rank else "—" }}</td>
               <td>
                 <a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
-                <div class="msp-muted" style="font-size:12px;">{{ r.username }}</div>
+                <div class="msp-muted" style="font-size:12px;">{{ r.username }}{% if r.year_of_study %} · {{ r.year_of_study }}{% endif %}</div>
               </td>
               <td>{{ r.programme }}</td>
               <td>
@@ -658,6 +669,7 @@
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
+                data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
@@ -1716,6 +1728,9 @@
       const rankNote = document.getElementById("apaRankNote");
       let stage = "all";
       let unreviewed = false;   // the "All unreviewed" toggle, on top of the tabs
+      let year1First = false;   // "Year 1 first": Year 1 to the top of whatever's showing
+      const year1Btn = document.getElementById("apaYear1");
+      const yearCountEl = document.getElementById("apaYearCount");
 
       // "mine" is its own dimension (who's interviewing, not lifecycle
       // stage), so it overrides data-stage entirely rather than combining
@@ -1738,14 +1753,25 @@
           return a.dataset.name.localeCompare(b.dataset.name);
         });
       }
+      // With "Year 1 first" on, Year 1 goes to the top, then Years 2+, then
+      // anyone who hasn't given a year, each group in ranking order. The rank
+      // numbers stay each person's rank in the whole tab, so a Year 1 at the
+      // top still shows where they stand overall.
+      const yearGroup = (el) => el.dataset.year1 === "1" ? 0 : el.dataset.year1 === "0" ? 1 : 2;
+      function grouped(els) {
+        if (!year1First) return els;
+        return els.map((el, i) => [el, i])
+          .sort((a, b) => yearGroup(a[0]) - yearGroup(b[0]) || a[1] - b[1])
+          .map(([el]) => el);
+      }
       function rerank() {
         const key = rankKey();
         rankNote.textContent = unreviewed ? "Submitted, not yet scored by anyone"
           : key === "combined" ? "Ranked by the average of the CV and interview rounds" : "Ranked by CV round score";
         const rows = order(items.filter((el) => el.tagName === "TR"), key);
         const cards = order(items.filter((el) => el.tagName !== "TR"), key);
-        rows.forEach((el) => el.parentNode.appendChild(el));
-        cards.forEach((el) => el.parentNode.appendChild(el));
+        grouped(rows).forEach((el) => el.parentNode.appendChild(el));
+        grouped(cards).forEach((el) => el.parentNode.appendChild(el));
         // Numbered within what's showing, so the shortlist tab reads 1, 2, 3...
         let n = 0;
         const rankOf = {};
@@ -1777,7 +1803,28 @@
         });
         const shown = items.some((el) => el.tagName === "TR" && !el.classList.contains("hidden"));
         noneEl.classList.toggle("hidden", shown);
+        countYears();
       }
+
+      // How the people showing split by year, for the aim of at least half
+      // the interview cohort being Year 1.
+      function countYears() {
+        const showing = items.filter((el) => el.tagName === "TR" && !el.classList.contains("hidden"));
+        const y1 = showing.filter((el) => el.dataset.year1 === "1").length;
+        const later = showing.filter((el) => el.dataset.year1 === "0").length;
+        const unknown = showing.length - y1 - later;
+        const pct = y1 + later ? Math.round(100 * y1 / (y1 + later)) : null;
+        yearCountEl.innerHTML = `<strong>${y1}</strong> Year 1 · <strong>${later}</strong> Years 2+`
+          + (pct === null ? "" : ` (${pct}% Year 1)`)
+          + (unknown ? ` · ${unknown} no year yet` : "");
+      }
+
+      year1Btn.addEventListener("click", () => {
+        year1First = !year1First;
+        year1Btn.setAttribute("aria-pressed", year1First);
+        year1Btn.classList.toggle("primary", year1First);
+        rerank();
+      });
 
       function setUnreviewed(on) {
         unreviewed = on;

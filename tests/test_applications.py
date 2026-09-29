@@ -3518,3 +3518,20 @@ class TestBulkEmail:
         assert 'onclick="openMailer()"' in html
         reviewer = asyncio.run(ap.admin_applications(request, User(id="r1", username="rev"))).body.decode()
         assert 'onclick="openMailer()"' not in reviewer and 'id="mailRows"' not in reviewer
+
+
+def test_the_review_page_can_put_year_1_first_and_count_by_year(monkeypatch):
+    _flow_db(monkeypatch, applications={
+        "u1": {"user_id": "u1", "username": "fresh", "status": ap.S_SUBMITTED, "year_of_study": "1st year"},
+        "u2": {"user_id": "u2", "username": "older", "status": ap.S_SUBMITTED, "year_of_study": "Master's"},
+        "u3": {"user_id": "u3", "username": "new", "status": ap.S_CV},
+    })
+    from starlette.requests import Request
+    request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                       "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+    html = asyncio.run(ap.admin_applications(request, User(id="admin1", username="root", is_admin=True))).body.decode()
+    import re
+    marks = dict(re.findall(r'<tr class="apa-item"[^>]*?data-uid="(\w+)"[^>]*?data-year1="(\d?)"', html, re.S))
+    assert marks == {"u1": "1", "u2": "0", "u3": ""}
+    assert 'id="apaYear1"' in html and 'id="apaYearCount"' in html
+    assert "fresh · 1st year" in html
