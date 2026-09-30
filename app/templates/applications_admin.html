@@ -1845,6 +1845,7 @@
         const shown = items.some((el) => el.tagName === "TR" && !el.classList.contains("hidden"));
         noneEl.classList.toggle("hidden", shown);
         countYears();
+        saveView();
       }
 
       // How the people showing split by year, for the aim of at least half
@@ -1865,7 +1866,7 @@
         year1Btn.setAttribute("aria-pressed", on);
         year1Btn.classList.toggle("primary", on);
       }
-      year1Btn.addEventListener("click", () => { setYear1(!year1First); rerank(); });
+      year1Btn.addEventListener("click", () => { setYear1(!year1First); rerank(); saveView(); });
 
       function setUnreviewed(on) {
         unreviewed = on;
@@ -1899,30 +1900,35 @@
         }
       });
 
-      // Saving a score, a decision or an interview reloads the page. Keep the
-      // reviewer's place through that: the same tab, search and toggles, and
-      // back at the candidate they were on (or the same scroll position).
+      // The reviewer's view sticks for the browser session until they change
+      // it: the tab (CV screen, say) and the toggles come back however they
+      // return to this page. Saving a score, a decision or an interview
+      // reloads the page, and a reload also brings back the search and lands
+      // on the candidate they were on (or the same scroll position).
       const VIEW_KEY = "apaView";
       if ("scrollRestoration" in history) history.scrollRestoration = "manual";
-      window.addEventListener("pagehide", () => {
+      function saveView() {
         try {
           sessionStorage.setItem(VIEW_KEY, JSON.stringify({
             stage, unreviewed, year1First, q: searchEl.value, y: window.scrollY,
             focus: window.apaFocus || null, at: Date.now(),
           }));
         } catch { /* storage off: just start fresh next time */ }
-      });
+      }
+      window.addEventListener("pagehide", saveView);
       function restoreView() {
         let v = null;
         try { v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null"); } catch { return false; }
+        if (!v) return false;
         const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
-        if (!v || !nav || nav.type !== "reload" || Date.now() - v.at > 60 * 60 * 1000) return false;
+        const reloaded = !!nav && nav.type === "reload";
         if (tabs.some((t) => t.dataset.stage === v.stage)) stage = v.stage;
-        searchEl.value = v.q || "";
+        if (reloaded) searchEl.value = v.q || "";
         setYear1(!!v.year1First);
         setUnreviewed(!!v.unreviewed);
         tabs.forEach((t) => t.classList.toggle("is-active", !v.unreviewed && t.dataset.stage === stage));
         apply();
+        if (!reloaded) return true;
         const card = v.focus && document.getElementById("a-" + v.focus);
         // After load, once images and fonts have settled the page's height.
         const land = () => {
