@@ -171,6 +171,8 @@
     }
     .sc-tab.is-on { border-color: var(--brand); background: var(--brand-wash); font-weight: 600; }
     .sc-status { font-size: 12px; color: var(--muted); min-width: 60px; text-align: right; }
+    .sc-nav { display: flex; align-items: center; gap: 6px; }
+    .sc-pos { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; min-width: 48px; text-align: center; }
     .sc-body { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); min-height: 0; }
     .sc-left { border-right: 1px solid var(--border); overflow-y: auto; min-height: 0; }
     .sc-pane-head {
@@ -977,6 +979,11 @@
         <div class="sc-who"><strong id="scTitle"></strong> <span class="msp-muted" id="scSub"></span></div>
         <nav class="sc-tabs" id="scTabs" aria-label="Section"></nav>
         <span class="sc-status" id="scStatus" aria-live="polite"></span>
+        <div class="sc-nav">
+          <button type="button" class="btn ghost" id="scPrev" title="Previous candidate in this list">← Previous</button>
+          <span class="sc-pos" id="scPos"></span>
+          <button type="button" class="btn" id="scNext" title="Next candidate in this list">Next →</button>
+        </div>
         <button type="button" class="btn ghost" id="scClose">Close</button>
       </div>
       <div class="sc-body">
@@ -1219,7 +1226,8 @@
     ];
     const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
     const INTERVIEW_TIMERS = {{ interview_timers | tojson }};
-    const sc = { uid: null, d: null, section: null, changed: false, pending: {}, inFlight: false, noteTimer: null };
+    const sc = { uid: null, d: null, section: null, changed: false, anyChanged: false,
+                 pending: {}, inFlight: false, noteTimer: null };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1240,19 +1248,50 @@
       $sc("scOverlay").classList.remove("hidden");
       document.body.style.overflow = "hidden";
       showSection(section);
+      paintNav();
+    }
+
+    // Save the comment box if it changed, then run `then` once everything
+    // still saving has landed.
+    function flushThen(then) {
+      clearTimeout(sc.noteTimer);
+      if ($sc("scNote").value !== (sc.d.mine.note || "")) queueSave({ note: $sc("scNote").value });
+      const wait = () => (sc.inFlight || Object.keys(sc.pending).length) ? setTimeout(wait, 150) : then();
+      wait();
     }
 
     function closeScoring() {
-      clearTimeout(sc.noteTimer);
-      if ($sc("scNote").value !== (sc.d.mine.note || "")) queueSave({ note: $sc("scNote").value });
-      const finish = () => {
+      flushThen(() => {
         $sc("scOverlay").classList.add("hidden");
         document.body.style.overflow = "";
-        if (sc.changed) location.reload();   // refresh the averages behind it
-      };
-      // Let anything still saving land before leaving.
-      const wait = () => (sc.inFlight || Object.keys(sc.pending).length) ? setTimeout(wait, 150) : finish();
-      wait();
+        window.apaFocus = sc.uid;             // where to land after the reload
+        if (sc.changed || sc.anyChanged) location.reload();   // refresh the averages behind it
+      });
+    }
+
+    // Previous / Next: the candidates in the list as it's showing now (same
+    // tab, filters, search and order), skipping anyone with nothing to score.
+    function scoringQueue() {
+      return Array.from(document.querySelectorAll("tr.apa-item:not(.hidden)"))
+        .map((row) => row.dataset.uid)
+        .filter((uid) => document.getElementById("score-data-" + uid));
+    }
+    function paintNav() {
+      const q = scoringQueue(), i = q.indexOf(sc.uid);
+      $sc("scPos").textContent = i >= 0 ? `${i + 1} of ${q.length}` : "";
+      $sc("scPrev").disabled = i <= 0;
+      $sc("scNext").disabled = i < 0 || i >= q.length - 1;
+    }
+    function stepScoring(delta) {
+      const q = scoringQueue(), i = q.indexOf(sc.uid), next = q[i + delta];
+      if (i < 0 || !next) return;
+      const section = sc.section;
+      flushThen(() => {
+        const anyChanged = sc.anyChanged || sc.changed;
+        const d = JSON.parse($sc("score-data-" + next).textContent);
+        openScoring(next, sectionsFor(d).some((s) => s.key === section) ? section : "cv");
+        sc.anyChanged = anyChanged;
+      });
     }
 
     function showSection(section) {
@@ -1559,6 +1598,8 @@
       sc.noteTimer = setTimeout(() => queueSave({ note: $sc("scNote").value }), 700);
     });
     $sc("scClose").addEventListener("click", closeScoring);
+    $sc("scPrev").addEventListener("click", () => stepScoring(-1));
+    $sc("scNext").addEventListener("click", () => stepScoring(1));
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && !$sc("scOverlay").classList.contains("hidden")) closeScoring();
     });
@@ -1819,12 +1860,12 @@
           + (unknown ? ` · ${unknown} no year yet` : "");
       }
 
-      year1Btn.addEventListener("click", () => {
-        year1First = !year1First;
-        year1Btn.setAttribute("aria-pressed", year1First);
-        year1Btn.classList.toggle("primary", year1First);
-        rerank();
-      });
+      function setYear1(on) {
+        year1First = on;
+        year1Btn.setAttribute("aria-pressed", on);
+        year1Btn.classList.toggle("primary", on);
+      }
+      year1Btn.addEventListener("click", () => { setYear1(!year1First); rerank(); });
 
       function setUnreviewed(on) {
         unreviewed = on;
@@ -1858,7 +1899,42 @@
         }
       });
 
-      apply();
+      // Saving a score, a decision or an interview reloads the page. Keep the
+      // reviewer's place through that: the same tab, search and toggles, and
+      // back at the candidate they were on (or the same scroll position).
+      const VIEW_KEY = "apaView";
+      if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+      window.addEventListener("pagehide", () => {
+        try {
+          sessionStorage.setItem(VIEW_KEY, JSON.stringify({
+            stage, unreviewed, year1First, q: searchEl.value, y: window.scrollY,
+            focus: window.apaFocus || null, at: Date.now(),
+          }));
+        } catch { /* storage off: just start fresh next time */ }
+      });
+      function restoreView() {
+        let v = null;
+        try { v = JSON.parse(sessionStorage.getItem(VIEW_KEY) || "null"); } catch { return false; }
+        const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+        if (!v || !nav || nav.type !== "reload" || Date.now() - v.at > 60 * 60 * 1000) return false;
+        if (tabs.some((t) => t.dataset.stage === v.stage)) stage = v.stage;
+        searchEl.value = v.q || "";
+        setYear1(!!v.year1First);
+        setUnreviewed(!!v.unreviewed);
+        tabs.forEach((t) => t.classList.toggle("is-active", !v.unreviewed && t.dataset.stage === stage));
+        apply();
+        const card = v.focus && document.getElementById("a-" + v.focus);
+        // After load, once images and fonts have settled the page's height.
+        const land = () => {
+          if (card && !card.classList.contains("hidden")) card.scrollIntoView({ block: "start" });
+          else window.scrollTo(0, v.y || 0);
+        };
+        if (document.readyState === "complete") setTimeout(land, 0);
+        else window.addEventListener("load", () => setTimeout(land, 0), { once: true });
+        return true;
+      }
+
+      if (!restoreView()) apply();
     })();
   </script>
 </body>
