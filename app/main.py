@@ -638,6 +638,16 @@ def get_reference(symbol: str):
     return PriceOut(symbol=symbol, price=get_ref_price(symbol))
 
 
+@app.get("/api/market/quotes")
+def market_quotes():
+    """Where each stock's price comes from, for the Market Simulation page:
+    the last real quote, its source and time, and whether the US market is
+    open. Reading this never fetches anything; the book polling does."""
+    from app import market_data
+    quotes = [market_data.quote_status(s) for s in DEFAULT_SYMBOLS]
+    return {"market_open": market_data.us_market_open(), "quotes": quotes}
+
+
 @app.get("/book/{symbol}")
 async def get_book(symbol: str):
     # Advance the price engine and market maker opportunistically: on Cloud

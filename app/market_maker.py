@@ -85,6 +85,13 @@ MAX_DRIFT_BP_PER_TICK: float = 6  # normal cap on center movement per tick
 CATCHUP_DRIFT_BP: float   = 25    # faster cap while the gap is > CATCHUP_GAP_BP
 CATCHUP_GAP_BP: float     = 50
 CENTER_NOISE_BP: float    = 1.0   # random walk noise per tick
+SNAP_GAP_BP: float        = 100   # a real price this far off is jumped to, not crept toward
+
+# ── Never a crossed book ──────────────────────────────────────────────────────
+# If the center has moved this far since the ladder was last fully placed,
+# the whole ladder is re-placed at once: moving it a level at a time would
+# leave stale bids above fresh asks (or the reverse) in the meantime.
+REQUOTE_ALL_BP: float     = 12
 
 # ── Startup ───────────────────────────────────────────────────────────────────
 STARTUP_DELAY_SEC: float = 10.0  # wait for yfinance prices before quoting
@@ -104,6 +111,7 @@ _pending_sweeps: Dict[str, Dict[str, float]] = defaultdict(dict)  # {order_id: s
 _tick_counter: Dict[str, int] = defaultdict(int)
 _last_tick: Dict[str, float] = defaultdict(float)
 _quote_center: Dict[str, float] = {}   # the bot's own market, per symbol
+_ladder_center: Dict[str, float] = {}  # center the whole ladder was last placed around
 
 _broadcast_fn: Optional[Callable] = None
 _fill_handler: Optional[Callable[..., Coroutine]] = None
@@ -134,6 +142,53 @@ def _make_qty(level_index: int) -> Decimal:
     base = BASE_QTY + level_index * QTY_STEP
     jitter = random.randint(-QTY_JITTER, QTY_JITTER)
     return Decimal(str(max(10, base + jitter)))
+
+
+def _tick(ref: float) -> Decimal:
+    return Decimal("0.01") if ref >= 1.0 else Decimal("0.000001")
+
+
+def _best_other(book, side: str) -> Optional[Decimal]:
+    """Best resting price on ``side`` ("BUY" = bids, "SELL" = asks) among
+    everyone's orders but the bot's."""
+    levels = book.bids if side == "BUY" else book.asks
+    prices = [px for px, dq in levels.items() if any(o.user_id != BOT_USER_ID for o in dq)]
+    if not prices:
+        return None
+    return max(prices) if side == "BUY" else min(prices)
+
+
+def _non_crossing(book, side: str, price: Decimal, ref: float) -> Decimal:
+    """The bot's price, moved back if it would cross someone's resting order.
+    The bot puts orders straight into the book without matching, so a bid
+    at or above a resting ask would leave the book crossed."""
+    if side == "BUY":
+        other = _best_other(book, "SELL")
+        if other is not None and price >= other:
+            return other - _tick(ref)
+    else:
+        other = _best_other(book, "BUY")
+        if other is not None and price <= other:
+            return other + _tick(ref)
+    return price
+
+
+def _uncross(book) -> int:
+    """Last line of defence: while the best bid is at or above the best ask,
+    pull the bot's order at whichever top is the bot's. Returns how many
+    orders were pulled."""
+    pulled = 0
+    for _ in range(4 * LEVELS):
+        bb, ba = book._best_bid(), book._best_ask()
+        if bb is None or ba is None or bb < ba:
+            break
+        bot = next((o for o in book.asks[ba] if o.user_id == BOT_USER_ID), None) \
+            or next((o for o in book.bids[bb] if o.user_id == BOT_USER_ID), None)
+        if bot is None:
+            break   # two people's orders crossing can't come from matching; leave it
+        book.cancel(bot.id, BOT_USER_ID)
+        pulled += 1
+    return pulled
 
 
 def _place_bot_order(book, side: str, price: Decimal, level_index: int) -> _Level:
@@ -167,6 +222,20 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
 
     bid_targets, ask_targets = _target_prices(mid)
 
+    # A real move: re-place the whole ladder in one go.
+    last = _ladder_center.get(symbol)
+    if last is None or abs(mid - last) / last * 10_000 > REQUOTE_ALL_BP:
+        for state_list in (bids_state, asks_state):
+            for i, lvl in enumerate(state_list):
+                if lvl is not None:
+                    book.cancel(lvl.order_id, BOT_USER_ID)
+                state_list[i] = None
+        for i in range(LEVELS):
+            bids_state[i] = _place_bot_order(book, "BUY", _non_crossing(book, "BUY", bid_targets[i], mid), i)
+            asks_state[i] = _place_bot_order(book, "SELL", _non_crossing(book, "SELL", ask_targets[i], mid), i)
+        _ladder_center[symbol] = mid
+        return 2 * LEVELS
+
     # Build candidate list: (priority_score, side, level_index, target_price)
     # Higher score → higher update priority
     candidates: List[Tuple[float, str, int, Decimal]] = []
@@ -177,6 +246,8 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
             candidates.append((1e9, "BUY", i, target))           # missing
         elif not book.has_active_order(lvl.order_id):
             candidates.append((1e9 - 1, "BUY", i, target))       # consumed
+        elif lvl.price >= ask_targets[0]:
+            candidates.append((1e9 - 1, "BUY", i, target))       # on the wrong side of the market
         else:
             dev = abs(float(lvl.price) - float(target)) / float(target) * 10_000
             if dev > LEVEL_TOLERANCE_BPS:
@@ -187,6 +258,8 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
         if lvl is None:
             candidates.append((1e9, "SELL", i, target))
         elif not book.has_active_order(lvl.order_id):
+            candidates.append((1e9 - 1, "SELL", i, target))
+        elif lvl.price <= bid_targets[0]:
             candidates.append((1e9 - 1, "SELL", i, target))
         else:
             dev = abs(float(lvl.price) - float(target)) / float(target) * 10_000
@@ -218,8 +291,8 @@ def _update_quotes(symbol: str, book, mid: float) -> int:
             book.cancel(existing.order_id, BOT_USER_ID)
         state_list[i] = None
 
-        # Place fresh order
-        state_list[i] = _place_bot_order(book, side, target_px, i)
+        # Place fresh order, never across someone's resting order
+        state_list[i] = _place_bot_order(book, side, _non_crossing(book, side, target_px, mid), i)
         updates += 1
         if is_refill:
             refills += 1
@@ -339,6 +412,11 @@ def _update_center(symbol: str) -> Optional[float]:
         return _quote_center[symbol]
 
     step = 0.0
+    if fair is not None and fair > 0 and abs(fair - center) / center * 10_000 > SNAP_GAP_BP:
+        # A real price far from where the bot has been quoting (a restart
+        # that started from a stale seed, a gap in quotes): go straight there.
+        _quote_center[symbol] = float(fair)
+        return _quote_center[symbol]
     if fair is not None and fair > 0:
         gap_bp = abs(fair - center) / center * 10_000
         cap_bp = CATCHUP_DRIFT_BP if gap_bp > CATCHUP_GAP_BP else MAX_DRIFT_BP_PER_TICK
@@ -437,6 +515,7 @@ async def _tick_symbol(symbol: str) -> None:
 
         async with lock:
             n_updates    = _update_quotes(symbol, book, mid)
+            n_updates   += _uncross(book)
             sweep_fills  = _check_pending_sweeps(symbol, book, mid)
             print_event  = _maybe_bot_print(symbol, book)
             tick_n       = _tick_counter[symbol]

@@ -544,7 +544,7 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: -.01em;
-  margin: 4px 0 16px;
+  margin: 4px 0 4px;
   transition: color .5s ease;
 }
 
@@ -9084,3 +9084,11 @@ body.tut-locked {
   border-left: 3px solid var(--brand); padding: 8px 12px;
   background: var(--panel-2); font-size: 13px; border-radius: 0 6px 6px 0;
 }
+
+/* Market Simulation: where the prices come from */
+.stock-real {
+  font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums;
+  margin: 0 0 14px; min-height: 1.3em;
+}
+.stock-real.is-sim { color: var(--amber, #d29922); }
+.market-source { font-size: 13px; color: var(--muted); margin: 6px 0 0; }

@@ -61,6 +61,7 @@
                 <span class="stock-name">${esc(subtitleFor(game))}</span>
               </div>
               <div class="stock-price" id="price-${esc(sym)}">—</div>
+              <div class="stock-real" id="real-${esc(sym)}"></div>
               <div class="stock-book">
                 <div class="stock-quote bid">
                   <span class="stock-lbl">Bid</span>
@@ -193,8 +194,47 @@
         }
     }
 
+    // Where the prices come from: each card's last real quote and its time,
+    // and a line under the heading for the market as a whole.
+    const SOURCE = { finnhub: "Finnhub", yahoo: "Yahoo Finance", cache: "last saved quote" };
+    const hhmm = (iso) => {
+        const d = new Date(iso);
+        return isNaN(d) ? "" : d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
+    };
+    async function updateSources() {
+        let data;
+        try { data = await fetchJSON("/api/market/quotes"); } catch { return; }
+        const quotes = data.quotes || [];
+        quotes.forEach((q) => {
+            const el = $(`#real-${q.symbol}`);
+            if (!el) return;
+            if (q.real_price != null) {
+                el.textContent = `Real: ${money(q.real_price)} · ${hhmm(q.quote_time)}`;
+                el.title = `Last real quote, from ${SOURCE[q.source] || q.source}`;
+                el.classList.remove("is-sim");
+            } else {
+                el.textContent = "Simulated: no real quote yet";
+                el.title = "Live data hasn't come through yet, so this price is simulated";
+                el.classList.add("is-sim");
+            }
+        });
+        const note = $("#marketSource");
+        if (!note) return;
+        const real = quotes.filter((q) => q.real_price != null);
+        const sources = [...new Set(real.map((q) => SOURCE[q.source] || q.source))];
+        if (!real.length) {
+            note.textContent = "Live data unavailable right now, so prices are simulated.";
+        } else if (data.market_open) {
+            note.textContent = `Anchored to real US prices from ${sources.join(" and ")}. The book moves around them with the room's trading.`;
+        } else {
+            note.textContent = `The US market is closed, so prices sit at the last real price from ${sources.join(" and ")}.`;
+        }
+    }
+
     buildStockCards();
     initAuthUI();
     updatePrices();
+    updateSources();
     setInterval(updatePrices, 3000);
+    setInterval(updateSources, 20000);
 })();
