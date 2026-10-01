@@ -1741,7 +1741,8 @@
     async function deleteApplication(userId, name) {
       if (!confirm(`Permanently delete ${name}'s application? This removes their CV `
         + `snapshot, every answer, every reviewer score and any decision from the record. `
-        + `This cannot be undone.`)) return;
+        + `If they hold a Fast-Track place, it's freed (they stay registered for the event as `
+        + `General attendance). This cannot be undone.`)) return;
       try {
         const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}`, {
           method: "DELETE",

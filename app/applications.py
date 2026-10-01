@@ -2782,10 +2782,15 @@ async def delete_application(user_id: str, admin: User = Depends(require_admin))
     would need to start a fresh application to appear here again. The
     uploaded CV file itself lives on their profile, not here, so this does
     not touch it.
+
+    A Fast-Track place goes with it: their event sign-up moves to General
+    attendance, so they're still registered for the event and the place is
+    free for someone else.
     """
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
     await _cancel_interview_event(application)
     await db_module.db.collection(COLLECTION).document(user_id).delete()
-    return {"ok": True}
+    released = await outreach.release_fast_track(user_id)
+    return {"ok": True, "fast_track_released": released}

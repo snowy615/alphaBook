@@ -961,7 +961,7 @@ class TestRedoAndDelete:
 
         result = asyncio.run(ap.delete_application("u1", admin))
 
-        assert result == {"ok": True}
+        assert result == {"ok": True, "fast_track_released": False}
         assert "u1" not in fake_db.collections[ap.COLLECTION]
 
     def test_delete_a_missing_application_404s(self, monkeypatch):
@@ -3656,3 +3656,31 @@ class TestEmailPreferences:
         asyncio.run(outreach.send_signup_invite(
             "u1", "jo", {"email": "jo@gmail.com", "email_opt_out": ["jo@merton.ox.ac.uk"]}, "general"))
         assert captured["to"] == "jo@gmail.com"
+
+
+class TestDeleteFreesFastTrack:
+    ADMIN = User(id="admin1", username="root", is_admin=True)
+
+    def test_deleting_an_application_frees_its_fast_track_place(self, monkeypatch):
+        from app import outreach
+        key = f"{outreach.OUTREACH_EVENT_ID}_u1"
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "status": ap.S_SUBMITTED, "event_ticket": "fast_track"}},
+            signups={key: {"user_id": "u1", "ticket": "fast_track", "status": "confirmed"}})
+        assert "u1" in asyncio.run(outreach.fast_track_holders())
+        result = asyncio.run(ap.delete_application("u1", self.ADMIN))
+        assert result["fast_track_released"] is True
+        assert "u1" not in fake_db.collections[ap.COLLECTION]
+        assert fake_db.collections["event_signups"][key]["ticket"] == "general"   # still coming
+        assert "u1" not in asyncio.run(outreach.fast_track_holders())
+
+    def test_general_attendance_is_left_alone(self, monkeypatch):
+        from app import outreach
+        key = f"{outreach.OUTREACH_EVENT_ID}_u1"
+        fake_db, _, _ = _flow_db(
+            monkeypatch,
+            applications={"u1": {"user_id": "u1", "status": ap.S_CV}},
+            signups={key: {"user_id": "u1", "ticket": "general", "status": "confirmed"}})
+        assert asyncio.run(ap.delete_application("u1", self.ADMIN))["fast_track_released"] is False
+        assert fake_db.collections["event_signups"][key]["ticket"] == "general"

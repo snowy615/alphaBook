@@ -201,6 +201,19 @@ async def event_summary() -> Optional[Dict[str, Any]]:
     }
 
 
+async def release_fast_track(uid: str) -> bool:
+    """Free someone's Fast-Track place by moving their sign-up to General
+    attendance: they stay registered for the event, and the place can go to
+    someone else. Returns whether there was a place to free."""
+    ref = _ref(uid)
+    doc = await ref.get()
+    if not doc.exists or (doc.to_dict() or {}).get("ticket") != EVENT_TICKET_FAST_TRACK:
+        return False
+    await ref.update({"ticket": EVENT_TICKET_GENERAL, "updated_at": _now(),
+                      "fast_track_released_at": _now()})
+    return True
+
+
 async def confirmed_signups() -> List[Dict[str, Any]]:
     # A scan rather than a query: the collection is small (one society's
     # events), and it matches how the Fast-Track count has always been read.
