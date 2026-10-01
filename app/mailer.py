@@ -252,6 +252,16 @@ async def _send_via_gmail(to: str, subject: str, html: str, text: str,
         return False
 
 
+def apply_preferences(addresses: List[str], opted_out) -> List[str]:
+    """The addresses someone still wants email at: ``addresses`` less the
+    ones they've unticked in their profile (``opted_out``, any case). If that
+    would leave none (an address changed since they set it), all of them, so
+    nobody silently stops hearing about their own application."""
+    off = {(a or "").strip().lower() for a in (opted_out or [])}
+    kept = [a for a in addresses if a.strip().lower() not in off]
+    return kept or list(addresses)
+
+
 def sender() -> Optional[str]:
     """The address emails are currently going out from, or None if neither
     route is set up. The Gmail route is reported optimistically until Google

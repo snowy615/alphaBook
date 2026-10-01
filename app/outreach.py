@@ -292,6 +292,7 @@ async def send_signup_invite(uid: str, username: str, udata: Dict[str, Any], tic
     oxford = ((app_doc.to_dict() or {}).get("oxford_email") or "") if app_doc.exists else ""
     addresses = [a.strip() for a in [oxford] + addresses if a and a.strip()]
     addresses = [a for i, a in enumerate(addresses) if a.lower() not in (b.lower() for b in addresses[:i])]
+    addresses = mailer.apply_preferences(addresses, udata.get("email_opt_out"))
     if not addresses:
         return False
     to = ", ".join(addresses)

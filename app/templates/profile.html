@@ -184,6 +184,17 @@
       </span>
     </label>
 
+    <hr class="divider">
+
+    <!-- Email preferences: which of their addresses we send to. -->
+    <h3 style="margin:0 0 6px;">Email preferences</h3>
+    <p style="color:var(--muted);font-size:13px;margin:0 0 16px;">
+      We send application and event emails to every address ticked here. Untick one to stop emails
+      going there, and tick it again to get them back. Sign-in and verification emails always go to
+      your sign-in email.
+    </p>
+    <div id="emailPrefs"></div>
+
     <!-- Apply to a programme. General public and general members only; anyone
          already on a programme has nothing to apply for. -->
     <div id="applySection" style="display:none;">
@@ -554,6 +565,7 @@
         // Opt-ins
         document.getElementById('optContact').checked = data.opt_in_contact !== false;
         document.getElementById('optCvBook').checked = !!data.cv_book_included;
+        renderEmailPrefs(data.email_addresses || []);
         renderIdentity(data);
         renderRole(data);
         renderApply(data);
@@ -625,7 +637,7 @@
      * the summary and /apply stays the flow. */
     const APPLY_STATUS_LINE = {
       cv: 'Your application needs an up-to-date CV before the assessment opens.',
-      oa_ready: 'Your assessment is ready — sit it whenever you have 15 clear minutes.',
+      oa_ready: 'Your assessment is ready. Sit it whenever you have 8 clear minutes.',
       oa_active: 'Your assessment is under way. The clock is running.',
       submitted: 'Your application is in and waiting on the committee.',
       shortlisted: "You've been shortlisted for interview — the committee will be in touch.",
@@ -670,6 +682,44 @@
           You have applied to <strong>${esc(state.programme || '')}</strong>. ${esc(line)}
         </p>
         ${cta}`;
+    }
+
+    function renderEmailPrefs(addresses) {
+      const box = document.getElementById('emailPrefs');
+      if (!addresses.length) {
+        box.innerHTML = '<p style="color:var(--muted);font-size:13px;margin:0;">No email address on file.</p>';
+        return;
+      }
+      box.innerHTML = addresses.map((a, i) => `
+        <label class="optin" for="emailPref${i}">
+          <input type="checkbox" id="emailPref${i}" data-address="${esc(a.address)}" ${a.enabled ? 'checked' : ''}>
+          <span>
+            <strong>${esc(a.address)}</strong>
+            <span class="optin-sub">${esc(a.label)}${a.enabled ? '' : ' · not receiving emails'}</span>
+          </span>
+        </label>`).join('');
+      box.querySelectorAll('input[type=checkbox]').forEach((el) => {
+        el.addEventListener('change', () => saveEmailPref(el));
+      });
+    }
+
+    async function saveEmailPref(el) {
+      el.disabled = true;
+      try {
+        const res = await fetch('/me/email-preferences', {
+          method: 'PUT', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: el.dataset.address, enabled: el.checked }),
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(d.detail || 'Failed');
+        renderEmailPrefs(d.email_addresses || []);
+        showToast(el.checked ? 'Emails will go to this address' : "Emails won't go to this address", 'success');
+      } catch (err) {
+        el.checked = !el.checked;
+        el.disabled = false;
+        showToast(err.message, 'error');
+      }
     }
 
     async function saveOptIns() {

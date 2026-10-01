@@ -3543,13 +3543,13 @@ class TestBothAddresses:
     file. The Oxford-email code goes only to the address being proven."""
 
     def test_addresses(self):
+        to = lambda a: asyncio.run(ap._applicant_to(a))
         both = {"oxford_email": "jo@merton.ox.ac.uk", "email": "jo@gmail.com"}
-        assert ap._applicant_to(both) == "jo@merton.ox.ac.uk, jo@gmail.com"
-        assert ap._applicant_to({"oxford_email": "Jo@Merton.ox.ac.uk", "email": "jo@merton.ox.ac.uk"}) \
-            == "Jo@Merton.ox.ac.uk"
-        assert ap._applicant_to({"email": "jo@merton.ox.ac.uk"}) == "jo@merton.ox.ac.uk"
-        assert ap._applicant_to({"oxford_email": "jo@merton.ox.ac.uk", "email": ""}) == "jo@merton.ox.ac.uk"
-        assert ap._applicant_to({}) == ""
+        assert to(both) == "jo@merton.ox.ac.uk, jo@gmail.com"
+        assert to({"oxford_email": "Jo@Merton.ox.ac.uk", "email": "jo@merton.ox.ac.uk"}) == "Jo@Merton.ox.ac.uk"
+        assert to({"email": "jo@merton.ox.ac.uk"}) == "jo@merton.ox.ac.uk"
+        assert to({"oxford_email": "jo@merton.ox.ac.uk", "email": ""}) == "jo@merton.ox.ac.uk"
+        assert to({}) == ""
 
     def test_reminder_and_bulk_email_reach_both(self, monkeypatch):
         apps = {"u1": {"user_id": "u1", "username": "jo", "status": ap.S_CV,
@@ -3593,3 +3593,66 @@ def test_the_event_invite_goes_to_both_addresses(monkeypatch):
     asyncio.run(outreach.send_signup_invite("u1", "jo", {"email": "jo@gmail.com"}, "general"))
     assert captured["to"] == "jo@merton.ox.ac.uk, jo@gmail.com"
     assert b"jo@merton.ox.ac.uk" in captured["ics"] and b"jo@gmail.com" not in captured["ics"]
+
+
+class TestEmailPreferences:
+    """Profile > Email preferences: every address is ticked by default;
+    unticked ones stop getting application and event emails; at least one
+    stays ticked."""
+
+    def _setup(self, monkeypatch, opt_out=None):
+        from app import me
+        users = {"u1": {"username": "jo", "email": "jo@gmail.com", **({"email_opt_out": opt_out} if opt_out else {})}}
+        apps = {"u1": {"user_id": "u1", "username": "jo", "status": ap.S_CV,
+                       "oxford_email": "jo@merton.ox.ac.uk", "email": "jo@gmail.com"}}
+        fake_db, sent, _ = _flow_db(monkeypatch, applications=apps, users=users)
+        monkeypatch.setattr(me.db_module, "db", fake_db)
+        return me, fake_db, sent, User(id="u1", username="jo")
+
+    def test_both_ticked_by_default(self, monkeypatch):
+        me, _, _, user = self._setup(monkeypatch)
+        prefs = asyncio.run(me.get_my_profile(user))["email_addresses"]
+        assert [(p["address"], p["enabled"]) for p in prefs] == [
+            ("jo@merton.ox.ac.uk", True), ("jo@gmail.com", True)]
+
+    def test_unticking_stops_emails_there_and_ticking_brings_them_back(self, monkeypatch):
+        me, fake_db, sent, user = self._setup(monkeypatch)
+        admin = User(id="admin1", username="root", is_admin=True)
+        asyncio.run(me.set_email_preference(me.EmailPreference(address="JO@gmail.com", enabled=False), user))
+        assert fake_db.collections["users"]["u1"]["email_opt_out"] == ["jo@gmail.com"]
+        asyncio.run(ap.remind("u1", ap.RemindRequest(), admin))
+        assert sent[-1]["to"] == "jo@merton.ox.ac.uk"
+        asyncio.run(me.set_email_preference(me.EmailPreference(address="jo@gmail.com", enabled=True), user))
+        asyncio.run(ap.remind("u1", ap.RemindRequest(), admin))
+        assert sent[-1]["to"] == "jo@merton.ox.ac.uk, jo@gmail.com"
+
+    def test_at_least_one_stays_ticked(self, monkeypatch):
+        me, _, _, user = self._setup(monkeypatch, opt_out=["jo@gmail.com"])
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(me.set_email_preference(me.EmailPreference(address="jo@merton.ox.ac.uk", enabled=False), user))
+        assert "at least one" in exc.value.detail
+
+    def test_only_your_own_addresses(self, monkeypatch):
+        me, _, _, user = self._setup(monkeypatch)
+        with pytest.raises(HTTPException):
+            asyncio.run(me.set_email_preference(me.EmailPreference(address="x@evil.com", enabled=False), user))
+
+    def test_if_every_address_ends_up_unticked_they_still_hear_from_us(self):
+        from app import mailer
+        assert mailer.apply_preferences(["a@ox.ac.uk", "b@x.com"], ["A@ox.ac.uk", "b@x.com"]) == ["a@ox.ac.uk", "b@x.com"]
+        assert mailer.apply_preferences(["a@ox.ac.uk", "b@x.com"], ["b@x.com"]) == ["a@ox.ac.uk"]
+
+    def test_the_event_invite_follows_it(self, monkeypatch):
+        from app import outreach
+        starts = dt.datetime(2026, 10, 8, 17, tzinfo=dt.timezone.utc)
+        _flow_db(monkeypatch, applications={"u1": {"oxford_email": "jo@merton.ox.ac.uk"}},
+                 events={outreach.OUTREACH_EVENT_ID: {"starts_at": starts, "ends_at": starts + dt.timedelta(hours=1)}})
+        captured = {}
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            captured.update(to=to)
+            return True
+        monkeypatch.setattr(outreach.mailer, "send_email", fake_send)
+        asyncio.run(outreach.send_signup_invite(
+            "u1", "jo", {"email": "jo@gmail.com", "email_opt_out": ["jo@merton.ox.ac.uk"]}, "general"))
+        assert captured["to"] == "jo@gmail.com"

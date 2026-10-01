@@ -408,10 +408,32 @@ class ProfileUpdate(BaseModel):
     opt_in_cv_book: Optional[bool] = None
 
 
+class EmailPreference(BaseModel):
+    address: str
+    enabled: bool
+
+
 class RoleRequest(BaseModel):
     role: str
     firm: Optional[str] = None
     note: Optional[str] = None
+
+
+async def _email_addresses(uid: str, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Every address we email this person at, for Email preferences: their
+    sign-in email, and the Oxford email on their application when that's a
+    different address. Each is ticked unless they've unticked it."""
+    found = [(data.get("email") or "", "Sign-in email")]
+    app_doc = await db_module.db.collection("applications").document(uid).get()
+    if app_doc.exists:
+        found.insert(0, ((app_doc.to_dict() or {}).get("oxford_email") or "", "Oxford email on your application"))
+    off = {(a or "").lower() for a in (data.get("email_opt_out") or [])}
+    out: List[Dict[str, Any]] = []
+    for address, label in found:
+        address = address.strip()
+        if address and address.lower() not in (o["address"].lower() for o in out):
+            out.append({"address": address, "label": label, "enabled": address.lower() not in off})
+    return out
 
 
 @router.get("/me/profile")
@@ -430,8 +452,34 @@ async def get_my_profile(user: User = Depends(current_user)):
         "opt_in_cv_book": data.get("opt_in_cv_book"),
         "role_request": ({"role": req.get("role"), "status": req.get("status"),
                           "firm": req.get("firm", "")} if req else None),
+        "email_addresses": await _email_addresses(str(user.id), data),
         "vocabulary": mb.vocabulary(),
     }
+
+
+@router.put("/me/email-preferences")
+async def set_email_preference(payload: EmailPreference, user: User = Depends(current_user)):
+    """Tick or untick one of your own addresses. Unticked addresses stop
+    getting application and event emails (sign-in and verification emails
+    still go to the sign-in email). At least one stays ticked, so there's
+    always somewhere to tell you about your application."""
+    uid = str(user.id)
+    doc_ref = db_module.db.collection("users").document(uid)
+    doc = await doc_ref.get()
+    data = doc.to_dict() if doc.exists else {}
+    addresses = await _email_addresses(uid, data)
+    target = payload.address.strip().lower()
+    if target not in (a["address"].lower() for a in addresses):
+        raise HTTPException(400, "That isn't one of your email addresses")
+    off = {(a or "").lower() for a in (data.get("email_opt_out") or [])}
+    if payload.enabled:
+        off.discard(target)
+    else:
+        off.add(target)
+    if all(a["address"].lower() in off for a in addresses):
+        raise HTTPException(400, "Keep at least one address ticked, so we can reach you about your application")
+    await doc_ref.update({"email_opt_out": sorted(off)})
+    return {"ok": True, "email_addresses": await _email_addresses(uid, {**data, "email_opt_out": sorted(off)})}
 
 
 @router.put("/me/profile")
