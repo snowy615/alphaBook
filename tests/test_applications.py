@@ -602,7 +602,7 @@ class TestDecideFlow:
         result = asyncio.run(ap.decide("u1", ap.Decision(decision="shortlist"), admin))
         assert result["status"] == ap.S_SHORTLISTED
         assert store["u1"]["status"] == ap.S_SHORTLISTED
-        assert sent == [("jo@merton.ox.ac.uk", ap._DECISION_COPY[ap.S_SHORTLISTED]["subject"])]
+        assert sent == [("jo@merton.ox.ac.uk, jo@example.com", ap._DECISION_COPY[ap.S_SHORTLISTED]["subject"])]
 
     def test_cannot_accept_a_submitted_application_that_was_never_shortlisted(self, monkeypatch):
         _, sent, _ = self._patch(monkeypatch, self._base(ap.S_SUBMITTED))
@@ -617,7 +617,7 @@ class TestDecideFlow:
         result = asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
         assert result["status"] == ap.S_ACCEPTED
         assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
-        assert sent[-1] == ("jo@merton.ox.ac.uk", ap._DECISION_COPY[ap.S_ACCEPTED]["subject"])
+        assert sent[-1] == ("jo@merton.ox.ac.uk, jo@example.com", ap._DECISION_COPY[ap.S_ACCEPTED]["subject"])
 
     @pytest.mark.parametrize("status", [ap.S_SUBMITTED, ap.S_SHORTLISTED])
     def test_reject_is_allowed_from_submitted_or_shortlisted(self, monkeypatch, status):
@@ -1112,7 +1112,7 @@ class TestInterviewScheduling:
         assert stored["interviewer_email"] == "priya@ox.ac.uk"
         assert stored["message"] == "Looking forward to it"
         assert len(sent) == 1
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
         # The candidate gets a calendar invite (and the interviewer's email
         # address, in the body) as soon as a time is proposed, not just once
         # they confirm — so they can hold the slot while they decide.
@@ -1152,7 +1152,7 @@ class TestInterviewScheduling:
         assert stored["meet_link"] == "https://meet.google.com/abc-defg-hij"
         assert stored["gcal_event_id"] == "ev1"
         assert result["interview"]["meet_link"] == "https://meet.google.com/abc-defg-hij"
-        assert created[0]["attendee_emails"] == ["jo@merton.ox.ac.uk", "priya@ox.ac.uk"]
+        assert created[0]["attendee_emails"] == ["jo@merton.ox.ac.uk", "jo@example.com", "priya@ox.ac.uk"]
         # The link is in the proposal email body and in the attached .ics.
         assert "https://meet.google.com/abc-defg-hij" in sent[0]["body_html"]
         assert b"https://meet.google.com/abc-defg-hij" in sent[0]["ics"]
@@ -1232,7 +1232,7 @@ class TestInterviewScheduling:
         assert stored["responded_at"] is not None
         assert len(sent) == 1
         assert sent[0]["has_ics"] is True
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
         assert sent[0]["cc"] == "priya@ox.ac.uk"
 
     def test_confirm_still_emails_whichever_side_has_an_address(self, monkeypatch):
@@ -1246,7 +1246,7 @@ class TestInterviewScheduling:
         asyncio.run(ap.confirm_interview(user))
 
         assert len(sent) == 1
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
         assert sent[0]["cc"] is None
 
     def test_decline_requires_a_pending_proposal(self, monkeypatch):
@@ -1930,7 +1930,7 @@ class TestConfirmCvWithApplicantInfo:
         assert "submitted_at" in stored and "shortlisted_at" not in stored
         assert "oa" not in stored   # never sat one
         assert len(sent) == 1
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
         assert sent[0]["title"] == "Application received"
 
     def test_fast_track_confirmation_email_is_sent_only_once(self, monkeypatch):
@@ -3535,3 +3535,61 @@ def test_the_review_page_can_put_year_1_first_and_count_by_year(monkeypatch):
     assert marks == {"u1": "1", "u2": "0", "u3": ""}
     assert 'id="apaYear1"' in html and 'id="apaYearCount"' in html
     assert "fresh · 1st year" in html
+
+
+class TestBothAddresses:
+    """Applicant emails go to the Oxford email and the sign-in email when
+    they differ, and to one address when they're the same or only one is on
+    file. The Oxford-email code goes only to the address being proven."""
+
+    def test_addresses(self):
+        both = {"oxford_email": "jo@merton.ox.ac.uk", "email": "jo@gmail.com"}
+        assert ap._applicant_to(both) == "jo@merton.ox.ac.uk, jo@gmail.com"
+        assert ap._applicant_to({"oxford_email": "Jo@Merton.ox.ac.uk", "email": "jo@merton.ox.ac.uk"}) \
+            == "Jo@Merton.ox.ac.uk"
+        assert ap._applicant_to({"email": "jo@merton.ox.ac.uk"}) == "jo@merton.ox.ac.uk"
+        assert ap._applicant_to({"oxford_email": "jo@merton.ox.ac.uk", "email": ""}) == "jo@merton.ox.ac.uk"
+        assert ap._applicant_to({}) == ""
+
+    def test_reminder_and_bulk_email_reach_both(self, monkeypatch):
+        apps = {"u1": {"user_id": "u1", "username": "jo", "status": ap.S_CV,
+                       "oxford_email": "jo@merton.ox.ac.uk", "email": "jo@gmail.com"}}
+        _, sent, _ = _flow_db(monkeypatch, applications=apps)
+        admin = User(id="admin1", username="root", is_admin=True)
+        asyncio.run(ap.remind("u1", ap.RemindRequest(), admin))
+        asyncio.run(ap.email_applicants(ap.BulkEmail(user_ids=["u1"], subject="s", message="m"), admin))
+        assert [m["to"] for m in sent] == ["jo@merton.ox.ac.uk, jo@gmail.com"] * 2
+
+    def test_the_interviewer_is_not_copied_on_their_own_address(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        application = {"user_id": "u1", "full_name": "Jo", "programme": mb.M_QUANT_ANALYST,
+                       "oxford_email": "jo@merton.ox.ac.uk", "email": "priya@ox.ac.uk"}
+        interview = {"interviewer_name": "Priya", "interviewer_email": "Priya@ox.ac.uk",
+                     "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)}
+        asyncio.run(ap._send_interview_proposal_email(application, interview))
+        assert sent[0]["cc"] is None
+
+    def test_the_oxford_email_code_only_goes_to_the_oxford_email(self, monkeypatch):
+        _, sent, _ = _flow_db(monkeypatch)
+        application = {"user_id": "u1", "oxford_email": "jo@merton.ox.ac.uk", "email": "jo@gmail.com"}
+        asyncio.run(ap._send_email_code(application))
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk"
+
+
+def test_the_event_invite_goes_to_both_addresses(monkeypatch):
+    from app import outreach
+    starts = dt.datetime(2026, 10, 8, 17, tzinfo=dt.timezone.utc)
+    _, sent, _ = _flow_db(
+        monkeypatch,
+        applications={"u1": {"oxford_email": "jo@merton.ox.ac.uk"}},
+        events={outreach.OUTREACH_EVENT_ID: {"title": "Quant Outreach", "starts_at": starts,
+                                             "ends_at": starts + dt.timedelta(hours=1)}})
+    captured = {}
+
+    async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+        captured.update(to=to, ics=ics)
+        return True
+    monkeypatch.setattr(outreach.mailer, "send_email", fake_send)
+    asyncio.run(outreach.send_signup_invite("u1", "jo", {"email": "jo@gmail.com"}, "general"))
+    assert captured["to"] == "jo@merton.ox.ac.uk, jo@gmail.com"
+    assert b"jo@merton.ox.ac.uk" in captured["ics"] and b"jo@gmail.com" not in captured["ics"]

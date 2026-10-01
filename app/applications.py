@@ -735,9 +735,26 @@ def resolve(application: dict) -> bool:
     return changed
 
 
+def _applicant_addresses(application: dict) -> List[str]:
+    """Where an applicant hears from us: the Oxford email on the application
+    and the account's sign-in email, each once (Oxford first). One address
+    when they signed up with their Oxford email."""
+    out: List[str] = []
+    for addr in (application.get("oxford_email"), application.get("email")):
+        addr = (addr or "").strip()
+        if addr and addr.lower() not in (a.lower() for a in out):
+            out.append(addr)
+    return out
+
+
+def _applicant_to(application: dict) -> str:
+    """The applicant's addresses as one To line ("" when there are none)."""
+    return ", ".join(_applicant_addresses(application))
+
+
 async def _send_submission_confirmation(application: dict) -> None:
     """The one email every candidate gets: proof their assessment went in."""
-    to = application.get("oxford_email") or application.get("email")
+    to = _applicant_to(application)
     if not to:
         return
     name = html.escape(application.get("full_name") or application.get("username") or "there")
@@ -758,7 +775,7 @@ async def _send_submission_confirmation(application: dict) -> None:
 async def _send_fast_track_confirmation(application: dict) -> None:
     """The Fast-Track counterpart to _send_submission_confirmation: no
     online written questions, since their CV round happens in person."""
-    to = application.get("oxford_email") or application.get("email")
+    to = _applicant_to(application)
     if not to:
         return
     name = html.escape(application.get("full_name") or application.get("username") or "there")
@@ -2123,12 +2140,11 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
     elif gcal_event_id:
         await _cancel_interview_event(application)
     if not moved:
-        candidate_email = application.get("oxford_email") or application.get("email") or ""
         created = await gcal.create_meet_event(
             summary=f"Alpha Fund interview with {application.get('full_name') or application.get('username')}",
             description=f"{application.get('programme') or 'Alpha Fund'} interview.",
             start=when, end=end,
-            attendee_emails=[e for e in (candidate_email, interviewer["email"]) if e],
+            attendee_emails=_applicant_addresses(application) + ([interviewer["email"]] if interviewer["email"] else []),
         )
         meet_link = created["meet_link"] if created else None
         gcal_event_id = created["event_id"] if created else None
@@ -2212,7 +2228,7 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
             "already submitted, or already decided.",
         )
 
-    to = application.get("oxford_email") or application.get("email")
+    to = _applicant_to(application)
     if not to:
         raise HTTPException(400, "This applicant has no email address on file")
 
@@ -2286,13 +2302,13 @@ async def email_applicants(req: BulkEmail, admin: User = Depends(require_admin))
             skipped.append(uid)
             continue
         await _with_name(uid, application)
-        to = (application.get("oxford_email") or application.get("email") or "").strip()
-        if not to:
+        addresses = [a.lower() for a in _applicant_addresses(application)]
+        if not addresses:
             skipped.append(application.get("full_name") or application.get("username") or uid)
             continue
-        if to.lower() in seen:
+        if any(a in seen for a in addresses):
             continue
-        seen.add(to.lower())
+        seen.update(addresses)
         recipients.append((uid, application))
 
     gate = asyncio.Semaphore(BULK_EMAIL_CONCURRENCY)
@@ -2303,7 +2319,7 @@ async def email_applicants(req: BulkEmail, admin: User = Depends(require_admin))
         body = _bulk_email_html(message, first_name, full_name or first_name)
         async with gate:
             ok = await mailer.send_email(
-                to=(application.get("oxford_email") or application.get("email")).strip(),
+                to=_applicant_to(application),
                 subject=subject, title=subject, body_html=body,
                 cta_label="Go to your application" if req.button else None,
                 cta_url=f"{BASE_URL}/apply" if req.button else None,
@@ -2315,7 +2331,7 @@ async def email_applicants(req: BulkEmail, admin: User = Depends(require_admin))
         return ok
 
     results = await asyncio.gather(*(send_one(uid, a) for uid, a in recipients))
-    sent = [a.get("oxford_email") or a.get("email") for (_, a), ok in zip(recipients, results) if ok]
+    sent = [_applicant_to(a) for (_, a), ok in zip(recipients, results) if ok]
     failed = [a.get("full_name") or a.get("username") or uid
               for (uid, a), ok in zip(recipients, results) if not ok]
 
@@ -2367,7 +2383,7 @@ _REJECTED_BODY_ANALYST = (
 
 
 async def _send_decision_email(application: dict, status: str) -> None:
-    to = application.get("oxford_email") or application.get("email")
+    to = _applicant_to(application)
     copy = _DECISION_COPY.get(status)
     if not to or not copy:
         return
@@ -2462,11 +2478,12 @@ async def _send_interview_proposal_email(application: dict, interview: dict) -> 
     """To the candidate, with the interviewer cc'd, the same as the
     confirmation: the interviewer gets the proposed slot (and its calendar
     invite) straight away, rather than only hearing once it's confirmed."""
-    to = application.get("oxford_email") or application.get("email")
+    to = _applicant_to(application)
     if not to:
         return
     raw_interviewer_email = interview.get("interviewer_email") or ""
-    cc = raw_interviewer_email if raw_interviewer_email and raw_interviewer_email != to else None
+    cc = (raw_interviewer_email if raw_interviewer_email and raw_interviewer_email.lower()
+          not in (a.lower() for a in _applicant_addresses(application)) else None)
     # Every value below is user- or reviewer-entered (names, the note, an
     # email address) — escaped so none of it can become markup in an email
     # sent from our own address.
@@ -2504,7 +2521,7 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
     thread rather than two separate copies, so a reply-all from either side
     reaches the other directly (to share a call link, say) instead of
     landing on the noreply address neither of them can do anything with."""
-    candidate_to = application.get("oxford_email") or application.get("email")
+    candidate_to = _applicant_to(application)
     candidate_name = application.get("full_name") or application.get("username") or "Candidate"
     interviewer_name = interview.get("interviewer_name") or "Interviewer"
     interviewer_email = interview.get("interviewer_email") or ""
@@ -2514,7 +2531,8 @@ async def _send_interview_confirmed_emails(application: dict, interview: dict) -
     to = candidate_to or interviewer_email
     if not to:
         return
-    cc = interviewer_email if (candidate_to and interviewer_email and interviewer_email != to) else None
+    cc = (interviewer_email if (candidate_to and interviewer_email and interviewer_email.lower()
+          not in (a.lower() for a in _applicant_addresses(application))) else None)
 
     # Escaped for the body only — the raw values still address the email.
     e_candidate, e_interviewer = html.escape(candidate_name), html.escape(interviewer_name)

@@ -285,9 +285,16 @@ async def send_signup_invite(uid: str, username: str, udata: Dict[str, Any], tic
     Gmail's calendar card try to load it from one and fail. The UID is fixed
     per person, so signing up again after cancelling updates the same
     calendar entry rather than adding a second."""
-    to = udata.get("email") or ""
-    if not to:
+    # The sign-in email, plus the Oxford email on their application when it's
+    # a different address, so it reaches both like every application email.
+    addresses = [udata.get("email") or ""]
+    app_doc = await db_module.db.collection("applications").document(uid).get()
+    oxford = ((app_doc.to_dict() or {}).get("oxford_email") or "") if app_doc.exists else ""
+    addresses = [a.strip() for a in [oxford] + addresses if a and a.strip()]
+    addresses = [a for i, a in enumerate(addresses) if a.lower() not in (b.lower() for b in addresses[:i])]
+    if not addresses:
         return False
+    to = ", ".join(addresses)
     doc = await db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID).get()
     if not doc.exists:
         return False
@@ -322,7 +329,7 @@ async def send_signup_invite(uid: str, username: str, udata: Dict[str, Any], tic
         description=ics_description,
         start=starts, end=ends,
         organizer_name="Alpha Fund", organizer_email=mailer.sender() or gcal.ACCOUNT_EMAIL,
-        attendee_name=name, attendee_email=to,
+        attendee_name=name, attendee_email=addresses[0],
         location=location or "Location to be confirmed",
         method="PUBLISH",
     )
