@@ -3803,3 +3803,19 @@ def test_the_review_page_closes_out_an_assessment_whose_time_ran_out(monkeypatch
     assert [m["to"] for m in sent] == ["jo@merton.ox.ac.uk"]   # the usual confirmation, once
     asyncio.run(ap._ranked_rows(viewer_id="r1"))
     assert len(sent) == 1
+
+
+def test_the_review_page_can_list_bootcamp_or_analyst_first(monkeypatch):
+    _flow_db(monkeypatch, applications={
+        "u1": {"user_id": "u1", "username": "boot", "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP},
+        "u2": {"user_id": "u2", "username": "ana", "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST},
+    })
+    from starlette.requests import Request
+    request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                       "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+    html = asyncio.run(ap.admin_applications(request, User(id="admin1", username="root", is_admin=True))).body.decode()
+    import re
+    tracks = dict(re.findall(r'<tr class="apa-item"[^>]*?data-uid="(\w+)"[^>]*?data-track="(\w+)"', html, re.S))
+    assert tracks == {"u1": "bootcamp", "u2": "analyst"}
+    assert 'id="apaTrackOrder"' in html and ">Bootcamp first</button>" in html
+    assert "analystFirst" in html          # remembered with the rest of the view

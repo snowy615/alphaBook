@@ -558,6 +558,8 @@
         {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>{% endif %}
       </div>
       <div class="apa-yearbar">
+        <button type="button" class="btn" id="apaTrackOrder" aria-pressed="false"
+                title="Which programme is listed (and stepped through with Next) first">Bootcamp first</button>
         <button type="button" class="btn" id="apaYear1" aria-pressed="false">Year 1 first</button>
         <span class="apa-yearcount" id="apaYearCount"></span>
       </div>
@@ -579,6 +581,7 @@
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
                 data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
+                data-track="{{ 'analyst' if 'Analyst' in (r.programme or '') else 'bootcamp' }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank" data-rank>{{ r.rank if r.rank else "—" }}</td>
               <td>
@@ -672,6 +675,7 @@
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
                 data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
+                data-track="{{ 'analyst' if 'Analyst' in (r.programme or '') else 'bootcamp' }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
@@ -1770,6 +1774,8 @@
       let stage = "all";
       let unreviewed = false;   // the "All unreviewed" toggle, on top of the tabs
       let year1First = false;   // "Year 1 first": Year 1 to the top of whatever's showing
+      let analystFirst = false; // programme order: Bootcamp first unless switched
+      const trackBtn = document.getElementById("apaTrackOrder");
       const year1Btn = document.getElementById("apaYear1");
       const yearCountEl = document.getElementById("apaYearCount");
 
@@ -1794,15 +1800,18 @@
           return a.dataset.name.localeCompare(b.dataset.name);
         });
       }
-      // With "Year 1 first" on, Year 1 goes to the top, then Years 2+, then
-      // anyone who hasn't given a year, each group in ranking order. The rank
-      // numbers stay each person's rank in the whole tab, so a Year 1 at the
-      // top still shows where they stand overall.
-      const yearGroup = (el) => el.dataset.year1 === "1" ? 0 : el.dataset.year1 === "0" ? 1 : 2;
+      // Every tab lists one programme before the other: Bootcamp first by
+      // default, Analyst first once switched. Within each, "Year 1 first"
+      // puts Year 1 on top (then Years 2+, then anyone without a year), and
+      // each group stays in ranking order. Previous / Next in the scoring
+      // view walk the list in this same order. The rank numbers stay each
+      // person's rank in the whole tab, so they still show where someone
+      // stands overall.
+      const trackGroup = (el) => (el.dataset.track === "analyst") === analystFirst ? 0 : 1;
+      const yearGroup = (el) => !year1First ? 0 : el.dataset.year1 === "1" ? 0 : el.dataset.year1 === "0" ? 1 : 2;
       function grouped(els) {
-        if (!year1First) return els;
         return els.map((el, i) => [el, i])
-          .sort((a, b) => yearGroup(a[0]) - yearGroup(b[0]) || a[1] - b[1])
+          .sort((a, b) => trackGroup(a[0]) - trackGroup(b[0]) || yearGroup(a[0]) - yearGroup(b[0]) || a[1] - b[1])
           .map(([el]) => el);
       }
       function rerank() {
@@ -1858,7 +1867,9 @@
         const pct = y1 + later ? Math.round(100 * y1 / (y1 + later)) : null;
         yearCountEl.innerHTML = `<strong>${y1}</strong> Year 1 · <strong>${later}</strong> Years 2+`
           + (pct === null ? "" : ` (${pct}% Year 1)`)
-          + (unknown ? ` · ${unknown} no year yet` : "");
+          + (unknown ? ` · ${unknown} no year yet` : "")
+          + ` &nbsp;|&nbsp; <strong>${showing.filter((el) => el.dataset.track !== "analyst").length}</strong> Bootcamp`
+          + ` · <strong>${showing.filter((el) => el.dataset.track === "analyst").length}</strong> Analyst`;
       }
 
       function setYear1(on) {
@@ -1867,6 +1878,14 @@
         year1Btn.classList.toggle("primary", on);
       }
       year1Btn.addEventListener("click", () => { setYear1(!year1First); rerank(); saveView(); });
+
+      function setTrackOrder(analyst) {
+        analystFirst = analyst;
+        trackBtn.textContent = analyst ? "Analyst first" : "Bootcamp first";
+        trackBtn.setAttribute("aria-pressed", analyst);
+        trackBtn.classList.toggle("primary", analyst);
+      }
+      trackBtn.addEventListener("click", () => { setTrackOrder(!analystFirst); rerank(); saveView(); });
 
       function setUnreviewed(on) {
         unreviewed = on;
@@ -1910,7 +1929,7 @@
       function saveView() {
         try {
           sessionStorage.setItem(VIEW_KEY, JSON.stringify({
-            stage, unreviewed, year1First, q: searchEl.value, y: window.scrollY,
+            stage, unreviewed, year1First, analystFirst, q: searchEl.value, y: window.scrollY,
             focus: window.apaFocus || null, at: Date.now(),
           }));
         } catch { /* storage off: just start fresh next time */ }
@@ -1925,6 +1944,7 @@
         if (tabs.some((t) => t.dataset.stage === v.stage)) stage = v.stage;
         if (reloaded) searchEl.value = v.q || "";
         setYear1(!!v.year1First);
+        setTrackOrder(!!v.analystFirst);
         setUnreviewed(!!v.unreviewed);
         tabs.forEach((t) => t.classList.toggle("is-active", !v.unreviewed && t.dataset.stage === stage));
         apply();
