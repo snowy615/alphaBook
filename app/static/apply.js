@@ -376,8 +376,7 @@
     const fastBlurb = fastDisabled
       ? fastNote
       : `Do your CV round in person at the event, with an analyst, in place of the online written ` +
-        `questions. After that it's the same interview process as everyone else. ` +
-        `as everyone else. ${placesLine}`;
+        `questions. After that it's the same interview process as everyone else. ${placesLine}`;
     const TICKET_NAME = { fast_track: "CV clinic + Fast-Track", general: "General attendance" };
 
     const card = (key, title, blurb, disabled, note) => `
@@ -441,6 +440,23 @@
   //   "info"  — CV in hand; collecting college/degree/year/LinkedIn before cv-confirm
   let cvScreen = null;
 
+  // On the CV screens: which event ticket this application is on, especially
+  // when it came straight from an events-page sign-up and they never saw the
+  // choice step. Fast-Track means this is the last step online.
+  function ticketNote(state) {
+    if (state.event_ticket === "fast_track") {
+      return `<div class="apl-ticket-note"><strong>You're on the CV clinic + Fast-Track</strong> for Quant Outreach.
+        Your CV round happens in person at the event, so there's no online assessment: once you confirm
+        your CV and details, your application is in. To change your ticket, use the
+        <a href="/events">Events</a> page.</div>`;
+    }
+    if (state.event_ticket === "general") {
+      return `<div class="apl-ticket-note">You're signed up for Quant Outreach (general attendance). After
+        your CV and details comes the ${CFG.sessionMinutes}-minute online assessment.</div>`;
+    }
+    return "";
+  }
+
   function renderCv(state) {
     const has = state.cv_uploaded;
     if (cvScreen === "info") { renderCvInfo(state); return; }
@@ -458,6 +474,7 @@
         Applying for <strong>${esc(state.programme || "")}</strong>. You already have a CV
         on your AlphaBook profile — this is the copy the committee would read.
       </p>
+      ${ticketNote(state)}
       <div class="cv-status-banner uploaded"
            style="display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;font-size:14px;font-weight:600;
                   border:1px solid var(--green);color:var(--green);">
@@ -510,6 +527,7 @@
         up-to-date CV on your profile — this is the copy the committee reads, and
         it is the same file that appears everywhere else on your profile.
       </p>
+      ${ticketNote(state)}
       <div class="cv-status-banner ${state.cv_uploaded ? "uploaded" : "missing"}"
            style="display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;font-size:14px;font-weight:600;
                   border:1px solid ${state.cv_uploaded ? "var(--green)" : "var(--border)"};color:${state.cv_uploaded ? "var(--green)" : "var(--muted)"};">
@@ -590,6 +608,7 @@
       <p class="msp-muted" style="margin-top:0;">
         Applying for <strong>${esc(state.programme || "")}</strong>.
       </p>
+      ${ticketNote(state)}
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <div class="field-group" style="flex:1 1 180px;">
           <label>First name</label>

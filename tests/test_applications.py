@@ -2033,7 +2033,8 @@ class TestChoiceIsTheEventSignup:
         user = User(id="u1", username="jo")
         result = asyncio.run(ap.state(user))
         assert result["event_signup"] == "fast_track"
-        assert not result["event_ticket"]   # not yet confirmed on the application itself
+        # Taken straight onto the application: no ticket choice to make again.
+        assert result["event_ticket"] == "fast_track"
 
     def test_the_state_says_nothing_signed_up_when_there_is_no_signup(self, monkeypatch):
         self._patch(monkeypatch, self._cv_stage())
@@ -3706,3 +3707,76 @@ class TestOneTrackOnly:
         faq = (root / "templates" / "faq.html").read_text()
         assert "You can apply to either Quant or Fundamental, not both." in faq
         assert "welcome to apply to both" not in faq
+
+
+class TestEventSignupCarriesIntoTheApplication:
+    """Someone who signed up for Quant Outreach on the events page before
+    applying isn't asked to pick a ticket again: the application takes their
+    sign-up and goes straight to the CV and details."""
+
+    def _setup(self, monkeypatch, ticket, applications=None, ended=False):
+        from app import outreach
+        key = f"{outreach.OUTREACH_EVENT_ID}_u1"
+        fake_db, sent, _ = _flow_db(
+            monkeypatch, applications=applications or {},
+            users={"u1": {"username": "jo", "email": "jo@merton.ox.ac.uk", "membership": mb.M_PUBLIC}},
+            signups={key: {"user_id": "u1", "ticket": ticket, "status": "confirmed"}})
+
+        async def has_ended():
+            return ended
+        monkeypatch.setattr(outreach, "event_has_ended", has_ended)
+        return fake_db
+
+    def _start(self):
+        return asyncio.run(ap.start_application(
+            ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP, confirms_oxford_student=True,
+                                confirms_one_track=True), User(id="u1", username="jo")))
+
+    def test_a_fast_track_signup_becomes_the_applications_ticket(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track")
+        self._start()
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["event_ticket"] == "fast_track" and stored["event_ticket_from_signup"] is True
+        state = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert state["event_ticket"] == "fast_track" and state["is_fast_tracked"] is True
+
+    def test_and_confirming_the_cv_then_submits_it_like_any_fast_track(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track")
+        fake_db.collections["users"]["u1"]["cv_blob_path"] = "cvs/u1.pdf"
+        self._start()
+        result = asyncio.run(ap.confirm_cv(ap.ConfirmCv(
+            first_name="Jo", last_name="Bloggs", college="Merton", degree="Maths", year_of_study="1st year"),
+            User(id="u1", username="jo")))
+        assert result["status"] == ap.S_SUBMITTED
+
+    def test_general_attendance_carries_over_too(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "general")
+        self._start()
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "general"
+
+    def test_not_once_fast_track_has_been_used(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track", applications={"u1": {
+            "user_id": "u1", "status": ap.S_REJECTED, "programme": mb.M_QUANT_BOOTCAMP,
+            "event_ticket": "fast_track"}})
+        self._start()
+        assert not fake_db.collections[ap.COLLECTION]["u1"].get("event_ticket")
+
+    def test_not_after_the_event(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track", ended=True)
+        self._start()
+        assert not fake_db.collections[ap.COLLECTION]["u1"].get("event_ticket")
+
+    def test_someone_already_part_way_through_is_carried_over_on_their_next_visit(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track", applications={"u1": {
+            "user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+            "oxford_email": "jo@merton.ox.ac.uk"}})
+        state = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert state["event_ticket"] == "fast_track"
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "fast_track"
+
+    def test_a_ticket_already_chosen_is_left_alone(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, "fast_track", applications={"u1": {
+            "user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+            "oxford_email": "jo@merton.ox.ac.uk", "event_ticket": "none"}})
+        asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "none"

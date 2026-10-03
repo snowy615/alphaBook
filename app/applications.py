@@ -927,6 +927,8 @@ async def state(user: User = Depends(current_user)):
         return out
 
     await _resolve_and_notify(uid, application)
+    if await _adopt_event_signup(uid, application):
+        await _save(uid, application)
 
     out["status"] = application["status"]
     out["programme"] = application.get("programme")
@@ -1112,6 +1114,7 @@ async def start_application(req: StartApplication, user: User = Depends(current_
             # _fast_track_used).
             "event_ticket": existing.get("event_ticket"),
         }
+    await _adopt_event_signup(uid, application)
     await _require_oxford_email_proof(application, data)
     await _save(uid, application)
     return {"ok": True, "status": application["status"], "programme": req.programme,
@@ -1228,6 +1231,34 @@ def _fast_track_used(application: dict) -> bool:
     previous = application.get("previous_application") or {}
     return (previous.get("event_ticket") == EVENT_TICKET_FAST_TRACK
             or application.get("redo_previous_ticket") == EVENT_TICKET_FAST_TRACK)
+
+
+async def _adopt_event_signup(uid: str, application: dict) -> bool:
+    """Someone who signed up for Quant Outreach on the events page before
+    applying shouldn't be asked to pick a ticket again: their sign-up becomes
+    the application's ticket, and they go straight on to the CV and details.
+    Not when Fast-Track has already been used (they choose again, without
+    it), or once the event is over (the choice step records "not attending").
+    Returns whether the application took a ticket from the sign-up."""
+    if application.get("status") != S_CV or application.get("event_ticket"):
+        return False
+    try:
+        signup = await outreach.ticket_of(uid)
+    except Exception:
+        # A convenience, never a blocker: if the sign-up can't be read, they
+        # simply see the ticket choice as before.
+        log.warning("applications: couldn't read %s's event sign-up", uid)
+        return False
+    if signup not in (EVENT_TICKET_FAST_TRACK, EVENT_TICKET_GENERAL):
+        return False
+    if signup == EVENT_TICKET_FAST_TRACK and _fast_track_used(application):
+        return False
+    if await outreach.event_has_ended():
+        return False
+    application["event_ticket"] = signup
+    application["event_registered_at"] = _now()
+    application["event_ticket_from_signup"] = True
+    return True
 
 
 async def fast_track_refusal(uid: str) -> Optional[str]:
