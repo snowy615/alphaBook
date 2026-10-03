@@ -755,7 +755,7 @@ class TestOxfordStudentConfirmation:
         user = User(id="u1", username="jo")
         with pytest.raises(HTTPException):
             asyncio.run(ap.start_application(
-                ap.StartApplication(programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
+                ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
                                      confirms_oxford_student=False),
                 user))
 
@@ -763,7 +763,7 @@ class TestOxfordStudentConfirmation:
         store = self._patch(monkeypatch, {"email": "jo@gmail.com", "membership": mb.M_PUBLIC})
         user = User(id="u1", username="jo")
         result = asyncio.run(ap.start_application(
-            ap.StartApplication(programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
+            ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk",
                                  confirms_oxford_student=True),
             user))
         assert result["ok"] is True
@@ -773,7 +773,7 @@ class TestOxfordStudentConfirmation:
     def test_general_alpha_fund_member_does_not_need_to_confirm(self, monkeypatch):
         store = self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
         user = User(id="u1", username="jo")
-        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+        result = asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST), user))
         assert result["ok"] is True
         assert store["u1"]["confirmed_oxford_student"] is False
         assert store["u1"]["applicant_category"] == mb.M_MEMBER
@@ -806,12 +806,12 @@ class TestDisabledProgrammeRejection:
         self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
         user = User(id="u1", username="jo")
         with pytest.raises(HTTPException):
-            asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_FUND_BOOTCAMP), user))
+            asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, programme=mb.M_FUND_BOOTCAMP), user))
 
     def test_quant_bootcamp_still_works(self, monkeypatch):
         store = self._patch(monkeypatch, {"email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER})
         user = User(id="u1", username="jo")
-        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP), user))
+        result = asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_BOOTCAMP), user))
         assert result["ok"] is True
         assert store["u1"]["programme"] == mb.M_QUANT_BOOTCAMP
 
@@ -851,7 +851,7 @@ class TestNewApplicationAlwaysStartsAtCv:
         })
         user = User(id="u1", username="jo")
 
-        result = asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+        result = asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST), user))
 
         assert result["status"] == ap.S_CV
         stored = store["u1"]
@@ -866,7 +866,7 @@ class TestNewApplicationAlwaysStartsAtCv:
             "cv_blob_path": "cvs/2027/Quant/u1.pdf", "full_name": "Jo Bloggs",
         })
         user = User(id="u1", username="jo")
-        asyncio.run(ap.start_application(ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+        asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST), user))
 
         asyncio.run(ap.confirm_cv(
             ap.ConfirmCv(first_name="Jo", last_name="Bloggs", college="Merton", degree="Computer Science", year_of_study="2nd year"), user))
@@ -1390,7 +1390,7 @@ class TestReapplyAfterDecision:
         user = User(id="u1", username="jo")
 
         result = asyncio.run(ap.start_application(
-            ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+            ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST), user))
 
         assert result["ok"] is True
         stored = fake_db.collections[ap.COLLECTION]["u1"]
@@ -1413,7 +1413,7 @@ class TestReapplyAfterDecision:
 
         with pytest.raises(HTTPException):
             asyncio.run(ap.start_application(
-                ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP), user))
+                ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_BOOTCAMP), user))
 
     def test_a_live_application_still_cannot_be_restarted(self, monkeypatch):
         self._patch(
@@ -1425,7 +1425,7 @@ class TestReapplyAfterDecision:
 
         with pytest.raises(HTTPException):
             asyncio.run(ap.start_application(
-                ap.StartApplication(programme=mb.M_QUANT_ANALYST), user))
+                ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_ANALYST), user))
 
 
 class TestAvailabilityWindow:
@@ -2294,7 +2294,7 @@ class TestFastTrackOnlyOnce:
         )
         user = User(id="u1", username="jo")
         asyncio.run(ap.start_application(
-            ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP, confirms_oxford_student=True), user))
+            ap.StartApplication(confirms_one_track=True, programme=mb.M_QUANT_BOOTCAMP, confirms_oxford_student=True), user))
         return fake_db, user
 
     def test_the_breadcrumb_remembers_the_old_ticket(self, monkeypatch):
@@ -3350,7 +3350,7 @@ class TestOxfordEmailProof:
         fake_db, sent, _ = _flow_db(monkeypatch, users={"u1": {
             "username": "jo", "email": account_email, "membership": mb.M_PUBLIC, "cv_blob_path": "cvs/u1.pdf"}})
         user = User(id="u1", username="jo")
-        result = asyncio.run(ap.start_application(ap.StartApplication(
+        result = asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, 
             programme=mb.M_QUANT_BOOTCAMP, oxford_email=oxford, confirms_oxford_student=True), user))
         return fake_db, sent, user, result
 
@@ -3411,7 +3411,7 @@ class TestOxfordEmailProof:
 
     def test_changing_the_address_sends_a_new_code_there(self, monkeypatch):
         fake_db, sent, user, _ = self._start(monkeypatch)
-        asyncio.run(ap.start_application(ap.StartApplication(
+        asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True, 
             programme=mb.M_QUANT_BOOTCAMP, oxford_email="jo@keble.ox.ac.uk", confirms_oxford_student=True), user))
         assert sent[-1]["to"] == "jo@keble.ox.ac.uk"
         assert fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_verified"] is False
@@ -3659,3 +3659,50 @@ class TestDeleteFreesFastTrack:
             signups={key: {"user_id": "u1", "ticket": "general", "status": "confirmed"}})
         assert asyncio.run(ap.delete_application("u1", self.ADMIN))["fast_track_released"] is False
         assert fake_db.collections["event_signups"][key]["ticket"] == "general"
+
+
+class TestOneTrackOnly:
+    """Applicants can apply to Quant or Fundamental, not both: every new
+    application has to confirm that, and it's recorded."""
+
+    def _start(self, monkeypatch, confirms, existing=None):
+        fake_db, _, _ = _flow_db(monkeypatch, applications={"u1": existing} if existing else {},
+                                 users={"u1": {"username": "jo", "email": "jo@merton.ox.ac.uk",
+                                               "membership": mb.M_PUBLIC}})
+        req = ap.StartApplication(programme=mb.M_QUANT_BOOTCAMP, confirms_oxford_student=True,
+                                  confirms_one_track=confirms)
+        return fake_db, lambda: asyncio.run(ap.start_application(req, User(id="u1", username="jo")))
+
+    def test_a_new_application_needs_the_confirmation(self, monkeypatch):
+        fake_db, start = self._start(monkeypatch, confirms=False)
+        with pytest.raises(HTTPException) as exc:
+            start()
+        assert "Quant or Fundamental, not both" in exc.value.detail
+        assert "u1" not in fake_db.collections[ap.COLLECTION]
+
+    def test_it_is_recorded(self, monkeypatch):
+        fake_db, start = self._start(monkeypatch, confirms=True)
+        start()
+        assert fake_db.collections[ap.COLLECTION]["u1"]["confirmed_one_track_at"] is not None
+
+    def test_a_reapplication_after_a_decision_asks_again(self, monkeypatch):
+        _, start = self._start(monkeypatch, confirms=False,
+                               existing={"user_id": "u1", "status": ap.S_REJECTED, "programme": mb.M_QUANT_BOOTCAMP})
+        with pytest.raises(HTTPException):
+            start()
+
+    def test_an_application_under_way_isnt_asked_again(self, monkeypatch):
+        _, start = self._start(monkeypatch, confirms=False,
+                               existing={"user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+                                         "oxford_email": "jo@merton.ox.ac.uk"})
+        assert start()["ok"] is True
+
+    def test_the_form_and_faq_say_so(self):
+        from pathlib import Path
+        root = Path(ap.__file__).parent
+        js = (root / "static" / "apply.js").read_text()
+        assert 'id="confirmOneTrack"' in js and "confirms_one_track: true" in js
+        assert "Quant</strong> or" in js and "not both" in js
+        faq = (root / "templates" / "faq.html").read_text()
+        assert "You can apply to either Quant or Fundamental, not both." in faq
+        assert "welcome to apply to both" not in faq

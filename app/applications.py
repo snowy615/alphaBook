@@ -408,6 +408,9 @@ class StartApplication(BaseModel):
     # Only required for a General public applicant — see the eligibility
     # check in the /apply/start handler.
     confirms_oxford_student: bool = False
+    # Everyone starting a new application confirms they're applying to one
+    # track (Quant or Fundamental), not both.
+    confirms_one_track: bool = False
 
 
 class EmailCode(BaseModel):
@@ -1052,6 +1055,14 @@ async def start_application(req: StartApplication, user: User = Depends(current_
     oxford_email = _resolve_oxford_email(data.get("email") or "", req.oxford_email)
 
     existing = await _load(uid)
+    # Applicants can apply to Quant or Fundamental, not both: asked of every
+    # new application (switching programme or fixing the Oxford email on one
+    # that's already under way doesn't ask again).
+    if (existing is None or existing["status"] in DECIDED) and not req.confirms_one_track:
+        raise HTTPException(
+            400,
+            "Confirm you're applying to either Quant or Fundamental, not both, to continue.",
+        )
     if existing is not None and existing["status"] not in DECIDED:
         # Switching programme (or fixing the Oxford address) before the
         # assessment starts is free; afterwards the paper has already been
@@ -1077,6 +1088,7 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         "oxford_email": oxford_email,
         "applicant_category": membership,
         "confirmed_oxford_student": membership == mb.M_PUBLIC,
+        "confirmed_one_track_at": _now(),
         "programme": req.programme,
         # Always start at the CV step, even for someone whose profile already
         # has one on file — jumping straight to oa_ready here used to skip

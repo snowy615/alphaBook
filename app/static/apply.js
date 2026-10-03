@@ -209,19 +209,28 @@
       <p class="msp-muted" style="margin-top:0;">
         Pick the programme you want. Next, register for the outreach event if you'd like to,
         then put an up-to-date CV on your profile and sit a ${CFG.sessionMinutes}-minute
-        assessment — you can start it whenever suits you, but once it starts it runs to the
-        end in one sitting. Want both Fundamental and Quant? Apply to them separately, one
-        at a time — there's no combined option, but once this one is decided you can come
-        back and apply for the other.
+        assessment. You can start it whenever suits you, but once it starts it runs to the
+        end in one sitting.
       </p>
+      <div class="apl-one-track" role="note">
+        <strong>One track only.</strong> You can apply to either <strong>Quant</strong> or
+        <strong>Fundamental</strong>, not both. If you apply to Quant here, don't also apply to
+        Fundamental through its separate form.
+      </div>
       ${options}
       ${oxfordField}
+      <label class="apl-ack" style="margin-top:16px;">
+        <input type="checkbox" id="confirmOneTrack">
+        <span>I understand I can apply to either Quant or Fundamental, not both, and I'm only
+          applying to this one.</span>
+      </label>
       ${studentConfirm}
       <button class="btn primary" id="applyBtn" style="margin-top:16px;" disabled>Continue</button>`);
 
     function refreshApplyBtn() {
       const okStudent = !isGeneralPublic || $("#confirmOxfordStudent").checked;
-      $("#applyBtn").disabled = !pickedProgramme || !okStudent;
+      const okTrack = $("#confirmOneTrack").checked;
+      $("#applyBtn").disabled = !pickedProgramme || !okStudent || !okTrack;
     }
 
     $("#app").querySelectorAll(".apl-choice").forEach((el) => {
@@ -236,10 +245,15 @@
     if (isGeneralPublic) {
       $("#confirmOxfordStudent").addEventListener("change", refreshApplyBtn);
     }
+    $("#confirmOneTrack").addEventListener("change", refreshApplyBtn);
 
     $("#applyBtn").addEventListener("click", async (e) => {
       if (!pickedProgramme) return;
-      const payload = { programme: pickedProgramme };
+      if (!$("#confirmOneTrack").checked) {
+        flash("Confirm you're applying to either Quant or Fundamental, not both, to continue.", true);
+        return;
+      }
+      const payload = { programme: pickedProgramme, confirms_one_track: true };
       if (isGeneralPublic) {
         payload.confirms_oxford_student = !!$("#confirmOxfordStudent").checked;
         if (!payload.confirms_oxford_student) {
