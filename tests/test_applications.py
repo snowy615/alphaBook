@@ -1108,16 +1108,22 @@ class TestInterviewScheduling:
                                         message="Looking forward to it"), reviewer))
 
         stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
-        assert stored["status"] == ap.INTERVIEW_PROPOSED
+        # Scheduled outright: the time came from the candidate's availability,
+        # so nobody confirms it.
+        assert stored["status"] == ap.INTERVIEW_CONFIRMED
         assert stored["interviewer_email"] == "priya@ox.ac.uk"
         assert stored["message"] == "Looking forward to it"
+        # One email on a shared thread: the candidate (both addresses) with
+        # the interviewer copied in, each with the other's contact.
         assert len(sent) == 1
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
-        # The candidate gets a calendar invite (and the interviewer's email
-        # address, in the body) as soon as a time is proposed, not just once
-        # they confirm — so they can hold the slot while they decide.
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"
+        assert sent[0]["cc"] == "priya@ox.ac.uk"
         assert sent[0]["has_ics"] is True
-        assert result["interview"]["status"] == ap.INTERVIEW_PROPOSED
+        body = sent[0]["body_html"]
+        assert "priya@ox.ac.uk" in body and "jo@merton.ox.ac.uk" in body
+        assert "nothing to confirm" in body.lower()
+        assert sent[0]["subject"].startswith("Alpha Fund interview scheduled for")
+        assert result["interview"]["status"] == ap.INTERVIEW_CONFIRMED
 
     def test_a_fast_tracked_candidate_gets_scheduled_the_same_way(self, monkeypatch):
         application = self._shortlisted_application()
@@ -1130,7 +1136,7 @@ class TestInterviewScheduling:
             "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), reviewer))
 
         stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
-        assert stored["status"] == ap.INTERVIEW_PROPOSED
+        assert stored["status"] == ap.INTERVIEW_CONFIRMED
         assert len(sent) == 1
 
     def test_schedule_interview_attaches_a_meet_link_when_gcal_is_configured(self, monkeypatch):
@@ -1200,6 +1206,9 @@ class TestInterviewScheduling:
         assert result["interview"]["meet_link"] == "https://meet.google.com/existing-link"
         stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
         assert stored["gcal_event_id"] == "ev-existing"
+        # Both are told it moved.
+        assert sent[0]["subject"].startswith("Alpha Fund interview moved to")
+        assert "replaces the earlier time" in sent[0]["body_html"]
 
     def _proposed_application(self):
         application = self._shortlisted_application()
@@ -1211,63 +1220,32 @@ class TestInterviewScheduling:
         }
         return application
 
-    def test_confirm_requires_a_pending_proposal(self, monkeypatch):
-        self._patch(monkeypatch, self._shortlisted_application())
-        user = User(id="u1", username="jo")
+    def test_there_is_no_confirm_or_decline_step(self):
+        assert not hasattr(ap, "confirm_interview") and not hasattr(ap, "decline_interview")
+        paths = {r.path for r in ap.router.routes}
+        assert "/apply/interview/confirm" not in paths and "/apply/interview/decline" not in paths
 
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.confirm_interview(user))
-
-    def test_confirm_moves_to_confirmed_and_emails_both_sides_together(self, monkeypatch):
-        # One email on a shared thread, not two separate copies — so either
-        # side can reply-all and actually reach the other one directly.
-        fake_db, sent = self._patch(monkeypatch, self._proposed_application())
-        user = User(id="u1", username="jo")
-
-        result = asyncio.run(ap.confirm_interview(user))
-
-        assert result["interview"]["status"] == ap.INTERVIEW_CONFIRMED
-        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
-        assert stored["status"] == ap.INTERVIEW_CONFIRMED
-        assert stored["responded_at"] is not None
+    def test_still_emails_the_candidate_when_the_interviewer_has_no_address(self, monkeypatch):
+        users = self._reviewer_users()
+        fake_db, sent = self._patch(monkeypatch, self._shortlisted_application(), users)
+        async def reviewers():
+            return [{"id": "qa1", "name": "Priya Patel", "email": ""}]
+        monkeypatch.setattr(ap, "_list_reviewers", reviewers)
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), User(id="qa1", username="priya")))
         assert len(sent) == 1
-        assert sent[0]["has_ics"] is True
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
-        assert sent[0]["cc"] == "priya@ox.ac.uk"
-
-    def test_confirm_still_emails_whichever_side_has_an_address(self, monkeypatch):
-        # No interviewer email on file: still just one email, to the
-        # candidate, with nothing cc'd rather than a silent no-op.
-        application = self._proposed_application()
-        application["interview"]["interviewer_email"] = ""
-        fake_db, sent = self._patch(monkeypatch, application)
-        user = User(id="u1", username="jo")
-
-        asyncio.run(ap.confirm_interview(user))
-
-        assert len(sent) == 1
-        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"   # Oxford email and sign-in email
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"
         assert sent[0]["cc"] is None
 
-    def test_decline_requires_a_pending_proposal(self, monkeypatch):
-        self._patch(monkeypatch, self._shortlisted_application())
-        user = User(id="u1", username="jo")
-
-        with pytest.raises(HTTPException):
-            asyncio.run(ap.decline_interview(ap.InterviewDecline(note="busy"), user))
-
-    def test_decline_moves_to_declined_and_emails_only_the_interviewer(self, monkeypatch):
-        fake_db, sent = self._patch(monkeypatch, self._proposed_application())
-        user = User(id="u1", username="jo")
-
-        result = asyncio.run(ap.decline_interview(ap.InterviewDecline(note="Can we do next week?"), user))
-
-        assert result["interview"]["status"] == ap.INTERVIEW_DECLINED
-        stored = fake_db.collections[ap.COLLECTION]["u1"]["interview"]
-        assert stored["candidate_note"] == "Can we do next week?"
-        assert len(sent) == 1
-        assert sent[0]["to"] == "priya@ox.ac.uk"
-        assert "different interview time" in sent[0]["subject"]
+    def test_scheduling_locks_the_candidates_availability(self, monkeypatch):
+        fake_db, _ = self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)
+        asyncio.run(ap.schedule_interview(
+            "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), User(id="qa1", username="priya")))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), User(id="u1", username="jo")))
+        assert "already scheduled" in exc.value.detail
 
     def test_redo_also_clears_a_pending_interview(self, monkeypatch):
         application = self._proposed_application()
@@ -2531,16 +2509,13 @@ class TestEmailEscaping:
         interview = {"interviewer_name": "Eve<script>x</script>", "interviewer_email": "e@ox.ac.uk",
                      "message": '<img src=x onerror="alert(1)">', "candidate_note": EVIL_NAME,
                      "when": dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=2)}
-        asyncio.run(ap._send_interview_proposal_email(application, interview))
-        asyncio.run(ap._send_interview_confirmed_emails(application, interview))
-        asyncio.run(ap._send_interview_declined_email(application, interview))
+        asyncio.run(ap._send_interview_scheduled_email(application, interview))
+        asyncio.run(ap._send_interview_scheduled_email(application, interview, dt.datetime.now(dt.timezone.utc)))
 
-        proposal, confirmed, declined = (m["body_html"] for m in sent)
-        for body in (proposal, confirmed, declined):
+        for body in (m["body_html"] for m in sent):
             assert "<script>" not in body
-        assert "<img" not in proposal and "&lt;img" in proposal
-        self._assert_escaped(confirmed)
-        self._assert_escaped(declined)
+            assert "<img" not in body and "&lt;img" in body
+            self._assert_escaped(body)
 
     def test_the_plain_text_part_reads_normally(self, monkeypatch):
         # mailer.deliver derives a text part from the HTML; the escaped name
@@ -2667,14 +2642,13 @@ class TestNoDashesInEmails:
         for status in (ap.S_SHORTLISTED, ap.S_ACCEPTED, ap.S_REJECTED):
             asyncio.run(ap._send_decision_email(application, status))
         asyncio.run(ap._send_decision_email({**application, "programme": mb.M_QUANT_BOOTCAMP}, ap.S_REJECTED))
-        asyncio.run(ap._send_interview_proposal_email(application, interview))
-        asyncio.run(ap._send_interview_confirmed_emails(application, interview))
-        asyncio.run(ap._send_interview_declined_email(application, interview))
+        asyncio.run(ap._send_interview_scheduled_email(application, interview))
+        asyncio.run(ap._send_interview_scheduled_email(application, interview, interview["when"] - dt.timedelta(days=1)))
         for status in (ap.S_CV, ap.S_OA_READY):
             fake_db.collections[ap.COLLECTION]["u1"] = {**application, "status": status}
             asyncio.run(ap.remind("u1", ap.RemindRequest(note="Soon"), admin))
 
-        assert len(sent) == 11
+        assert len(sent) == 10
         for subject, body, ics in sent:
             for dash in self.DASHES:
                 assert dash not in subject, subject
@@ -2732,9 +2706,8 @@ class TestInterviewInviteMatchesTheCalendarEvent:
         when = dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)
         asyncio.run(ap.schedule_interview(
             "u1", ap.ScheduleInterview(interviewer_id="qa1", when=when), User(id="qa1", username="priya")))
-        asyncio.run(ap.confirm_interview(User(id="u1", username="jo")))
-
-        for ics in captured:   # the proposal and the confirmation
+        assert len(captured) == 1   # one email: scheduled outright
+        for ics in captured:
             assert "UID:ev9@google.com\r\n" in ics
             assert "METHOD:REQUEST" in ics
             assert "ORGANIZER;CN=Alpha Fund:mailto:oxfordalphafund@gmail.com" in ics
@@ -3172,9 +3145,9 @@ def test_export_wraps_the_written_answers(monkeypatch):
     assert ws.cell(row=2, column=headers.index("Username") + 1).alignment.wrap_text is not True
 
 
-def test_the_interviewer_is_copied_on_the_proposal(monkeypatch):
-    """The interviewer hears about a proposed slot (and gets its invite)
-    when it's proposed, not only once the candidate confirms it."""
+def test_the_interviewer_is_copied_on_the_scheduled_email(monkeypatch):
+    """One email, to the candidate with the interviewer copied in, carrying
+    each other's contact: nobody has to confirm anything."""
     _, sent, _ = _flow_db(
         monkeypatch,
         applications={"u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
@@ -3188,7 +3161,9 @@ def test_the_interviewer_is_copied_on_the_proposal(monkeypatch):
         User(id="qa1", username="priya")))
     assert len(sent) == 1
     assert sent[0]["to"] == "jo@merton.ox.ac.uk" and sent[0]["cc"] == "priya@gmail.com"
-    assert "copied in" in sent[0]["body_html"]
+    body = sent[0]["body_html"]
+    assert "Interviewer:</strong> Priya Patel" in body and "priya@gmail.com" in body
+    assert "Candidate:</strong> Jo Bloggs" in body and "jo@merton.ox.ac.uk" in body
 
 
 def test_confirming_the_membership_password_keeps_the_rest_of_the_form():
@@ -3566,7 +3541,7 @@ class TestBothAddresses:
                        "oxford_email": "jo@merton.ox.ac.uk", "email": "priya@ox.ac.uk"}
         interview = {"interviewer_name": "Priya", "interviewer_email": "Priya@ox.ac.uk",
                      "when": dt.datetime(2026, 10, 5, 9, tzinfo=dt.timezone.utc)}
-        asyncio.run(ap._send_interview_proposal_email(application, interview))
+        asyncio.run(ap._send_interview_scheduled_email(application, interview))
         assert sent[0]["cc"] is None
 
     def test_the_oxford_email_code_only_goes_to_the_oxford_email(self, monkeypatch):

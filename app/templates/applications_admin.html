@@ -862,10 +862,8 @@
             <p style="margin:0 0 6px;">
               <strong>{{ r.interview.interviewer_name }}</strong>
               {% if r.interview.interviewer_email %}({{ r.interview.interviewer_email }}){% endif %}
-              proposed <strong>{{ r.interview.when_london.strftime("%a %d %b %Y, %H:%M") }} London</strong>
-              {% if r.interview.status == "proposed" %}<span class="apa-tag is-warn">awaiting response</span>
-              {% elif r.interview.status == "confirmed" %}<span class="apa-tag is-good">confirmed</span>
-              {% elif r.interview.status == "declined" %}<span class="apa-tag is-bad">declined</span>{% endif %}
+              <strong>{{ r.interview.when_london.strftime("%a %d %b %Y, %H:%M") }} London</strong>
+              <span class="apa-tag is-good">scheduled</span>
             </p>
             {% if r.interview.meet_link %}
             <p style="font-size:13px;margin:0 0 4px;">
@@ -874,9 +872,6 @@
             {% endif %}
             {% if r.interview.message %}
             <p class="msp-muted" style="font-size:13px;margin:0 0 4px;">Note sent: &ldquo;{{ r.interview.message }}&rdquo;</p>
-            {% endif %}
-            {% if r.interview.status == "declined" and r.interview.candidate_note %}
-            <p class="msp-muted" style="font-size:13px;margin:0;">Their note: &ldquo;{{ r.interview.candidate_note }}&rdquo;</p>
             {% endif %}
           </div>
           {% endif %}
@@ -916,7 +911,7 @@
               <input type="text" id="interview-msg-{{ r.user_id }}" maxlength="500" placeholder="e.g. looking forward to it">
             </div>
             <button class="btn primary" type="submit">
-              {{ "Propose a new time" if r.interview else "Propose this time" }}
+              {{ "Move to this time" if r.interview else "Schedule interview" }}
             </button>
           </form>
           {% else %}
@@ -1618,6 +1613,10 @@
       // this browser's local time, and toISOString() converts that to UTC
       // for the backend, so "2pm" here means 2pm wherever the reviewer is.
       const whenIso = new Date(whenEl.value).toISOString();
+      // Scheduling is final (nobody confirms it), so check before emailing both.
+      const who = interviewerEl.options[interviewerEl.selectedIndex].text;
+      const at = new Date(whenEl.value).toLocaleString(undefined, { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+      if (!confirm(`Schedule the interview for ${at} with ${who}? The candidate and ${who} are emailed straight away with the meeting link.`)) return false;
       btn.disabled = true;
       try {
         const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/interview`, {
@@ -1632,7 +1631,7 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        flash("Interview proposed — the candidate has been emailed.", false);
+        flash("Interview scheduled. The candidate and interviewer have both been emailed.", false);
         location.reload();
       } catch (err) {
         flash(err.message, true);

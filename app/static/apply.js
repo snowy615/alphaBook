@@ -743,81 +743,27 @@
     } catch { return iso; }
   }
 
-  // The interview block for a shortlisted applicant: nothing yet, a time
-  // waiting for a response, or the outcome of that response.
+  // The interview block for a shortlisted applicant: nothing yet, or the
+  // scheduled time. There's nothing to confirm: the time came from their own
+  // availability, and the interviewer's contact is right there if it changes.
   function renderInterviewBlock(interview) {
     if (!interview) {
       return `<p class="msp-muted">The committee will be in touch to arrange an interview.</p>`;
     }
-    if (interview.status === "confirmed") {
-      return `
-        <div class="apl-interview is-confirmed">
-          <p><strong>Interview confirmed</strong> for ${esc(fmtLocal(interview.when))}
-             with ${esc(interview.interviewer_name || "")}.</p>
-          ${interview.meet_link ? `<p><a href="${esc(interview.meet_link)}" target="_blank" rel="noopener">Join with Google Meet ↗</a></p>` : ""}
-          <p class="msp-muted">A calendar invite has been sent to your email.</p>
-        </div>`;
-    }
-    if (interview.status === "declined") {
-      return `
-        <div class="apl-interview is-declined">
-          <p>You let us know that time doesn't work.
-             ${esc(interview.interviewer_name || "The interviewer")} will be in touch directly
-             to find another.</p>
-        </div>`;
-    }
-    // proposed — waiting on the candidate
     const note = interview.message ? `
       <p class="apl-interview-note">A note from ${esc(interview.interviewer_name || "")}:
         &ldquo;${esc(interview.message)}&rdquo;</p>` : "";
     return `
-      <div class="apl-interview is-proposed">
-        <p><strong>Proposed time:</strong> ${esc(fmtLocal(interview.when))}<br>
+      <div class="apl-interview is-confirmed">
+        <p><strong>Interview scheduled</strong> for ${esc(fmtLocal(interview.when))}<br>
            <strong>Interviewer:</strong> ${esc(interview.interviewer_name || "")}
            ${interview.interviewer_email ? `(<a href="mailto:${esc(interview.interviewer_email)}">${esc(interview.interviewer_email)}</a>)` : ""}
         </p>
         ${interview.meet_link ? `<p><a href="${esc(interview.meet_link)}" target="_blank" rel="noopener">Join with Google Meet ↗</a></p>` : ""}
         ${note}
-        <div class="apl-interview-actions">
-          <button class="btn primary" id="confirmInterviewBtn">Confirm this time</button>
-          <button class="btn ghost" id="declineInterviewToggle">I can't make it</button>
-        </div>
-        <div id="declineForm" style="display:none;margin-top:12px;">
-          <input type="text" id="declineNote" class="msp-input"
-                 placeholder="What times might work better? (optional)">
-          <button class="btn ghost" id="declineInterviewBtn" style="margin-top:8px;">Send</button>
-        </div>
+        <p class="msp-muted">The details and a calendar invite are in your email. If you need to change
+           the time, contact your interviewer directly.</p>
       </div>`;
-  }
-
-  function wireInterviewActions() {
-    const confirmBtn = $("#confirmInterviewBtn");
-    const declineToggle = $("#declineInterviewToggle");
-    const declineForm = $("#declineForm");
-    const declineBtn = $("#declineInterviewBtn");
-
-    confirmBtn?.addEventListener("click", async () => {
-      confirmBtn.disabled = true;
-      try {
-        await api("/apply/interview/confirm", {});
-        flash("Interview confirmed — check your email for the calendar invite.", false);
-        drawnKey = "";
-        await refresh();
-      } catch (err) { flash(err.message, true); confirmBtn.disabled = false; }
-    });
-    declineToggle?.addEventListener("click", () => {
-      declineForm.style.display = declineForm.style.display === "none" ? "block" : "none";
-    });
-    declineBtn?.addEventListener("click", async () => {
-      declineBtn.disabled = true;
-      const note = $("#declineNote")?.value.trim() || "";
-      try {
-        await api("/apply/interview/decline", { note });
-        flash("Got it — they'll be in touch to find another time.", false);
-        drawnKey = "";
-        await refresh();
-      } catch (err) { flash(err.message, true); declineBtn.disabled = false; }
-    });
   }
 
   // ── Interview availability (candidate side) ───────────────────────────────
@@ -905,13 +851,14 @@
             <p class="apl-hint" style="margin:0 0 10px;font-size:13px;">
               <strong style="color:var(--text);">Your availability.</strong> Each box is a
               30-minute interview slot between 7am and 7pm. Click every slot you could make,
-              and an analyst will pick one and confirm it with you.
+              and an analyst will pick one and schedule your interview. You'll get an email
+              with the time and the meeting link; there's nothing to confirm.
             </p>
             <div id="availGrid">${renderAvailabilityGrid(availabilitySelected)}</div>
             <p class="apl-hint" id="availSavedNote">Times shown are London time. Saved automatically.</p>
           </div>`;
       } else if (state.interview && state.interview.status === "confirmed") {
-        body += `<p class="aval-locked-note">Your interview time is confirmed, so availability is locked.</p>`;
+        body += `<p class="aval-locked-note">Your interview is scheduled, so availability is locked.</p>`;
       }
     } else if (state.is_fast_tracked) {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> is in. As a
@@ -940,9 +887,6 @@
       <div class="apl-done-tick">✓</div>${body}
       <a class="btn" href="/" style="margin-top:16px;">Back to the trading floor</a>${againBtn}`);
 
-    if (shortlisted && state.interview && state.interview.status === "proposed") {
-      wireInterviewActions();
-    }
     if (showAvailability) {
       wireAvailabilityGrid($("#availGrid"), availabilitySelected);
     }
@@ -1255,10 +1199,10 @@
         return "oa";
       }
       default: {
-        // Interview status is folded in so a poll that picks up a fresh
-        // proposal, or the candidate's own confirm/decline landing, forces
-        // a redraw even though the outer application status hasn't moved.
-        const iv = state.interview ? state.interview.status : "none";
+        // The interview is folded in so a poll that picks up a newly
+        // scheduled (or moved) time forces a redraw even though the outer
+        // application status hasn't moved.
+        const iv = state.interview ? `${state.interview.status}@${state.interview.when}` : "none";
         return "done:" + state.status + ":" + iv;
       }
     }

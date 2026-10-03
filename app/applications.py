@@ -374,9 +374,11 @@ def _cv_rubric_for(fast_tracked: bool) -> List[Dict[str, Any]]:
 def _cv_max(fast_tracked: bool) -> int:
     return sum(max(o["points"] for o in c["options"]) for c in _cv_rubric_for(fast_tracked))
 
-# How an interview record moves: a reviewer proposes a time, and the
-# candidate either confirms it (a calendar invite follows) or declines it
-# (the assigned interviewer is emailed to sort out an alternative directly).
+# An interview is scheduled the moment a reviewer picks a time from the
+# candidate's availability: there's no confirm step on either side. Both get
+# one email with the time, the Meet link and each other's contact, so any
+# change is sorted out between them directly (or by scheduling a new time).
+# "proposed" and "declined" only appear on interviews from before that.
 INTERVIEW_PROPOSED = "proposed"
 INTERVIEW_CONFIRMED = "confirmed"
 INTERVIEW_DECLINED = "declined"
@@ -491,10 +493,6 @@ class ScheduleInterview(BaseModel):
     interviewer_id: str
     when: dt.datetime          # candidate-facing slot, any ISO 8601 the browser sends
     message: Optional[str] = None
-
-
-class InterviewDecline(BaseModel):
-    note: Optional[str] = None
 
 
 class AvailabilitySubmit(BaseModel):
@@ -987,7 +985,6 @@ def _interview_view(interview: Dict[str, Any]) -> Dict[str, Any]:
         "interviewer_name": interview.get("interviewer_name"),
         "interviewer_email": interview.get("interviewer_email"),
         "message": interview.get("message") or "",
-        "responded_at": interview.get("responded_at"),
         "meet_link": interview.get("meet_link") or "",
     }
 
@@ -1537,7 +1534,7 @@ async def submit_availability(req: AvailabilitySubmit, user: User = Depends(curr
         raise HTTPException(400, "Availability can only be set once you've been shortlisted for interview")
     interview = application.get("interview")
     if interview and interview.get("status") == INTERVIEW_CONFIRMED:
-        raise HTTPException(400, "Your interview is already confirmed — there's nothing left to set")
+        raise HTTPException(400, "Your interview is already scheduled, so there's nothing left to set")
 
     application["availability"] = _valid_availability_slots(req.slots)
     application["availability_slot_minutes"] = AVAILABILITY_SLOT_MINUTES
@@ -1607,7 +1604,6 @@ def _admin_interview_view(interview: Optional[Dict[str, Any]]) -> Optional[Dict[
         "when": when,
         "when_london": when.astimezone(LONDON_TZ) if when else None,
         "scheduled_at": _as_utc(interview.get("scheduled_at")),
-        "responded_at": _as_utc(interview.get("responded_at")),
     }
 
 
@@ -2105,12 +2101,13 @@ async def submit_score(user_id: str, payload: ReviewScore, reviewer: User = Depe
 async def schedule_interview(user_id: str, payload: ScheduleInterview,
                               reviewer: User = Depends(require_reviewer)):
     """
-    Propose an interview slot — open to any reviewer, not just admins,
-    since deciding *who* interviews someone is exactly the kind of call a
-    Quant Analyst member should be able to make without needing an admin in
-    the loop. Only available once shortlisted: that's the whole point of the
-    shortlist stage. Re-submitting (a different interviewer, a different
-    time) overwrites whatever was pending and sends a fresh proposal.
+    Schedule an interview: open to any reviewer, not just admins, since
+    deciding *who* interviews someone is exactly the kind of call a Quant
+    Analyst member should be able to make without needing an admin in the
+    loop. Only once shortlisted. The time comes from the candidate's own
+    availability, so it's scheduled straight away: nobody has to confirm it.
+    Scheduling again (a different interviewer or time) replaces the old one
+    and emails both people the new details.
     """
     application = await _load(user_id)
     if application is None:
@@ -2170,18 +2167,18 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
         "interviewer_email": interviewer["email"],
         "message": (payload.message or "").strip()[:1000],
         "when": when,
-        "status": INTERVIEW_PROPOSED,
+        "status": INTERVIEW_CONFIRMED,
         "scheduled_by": reviewer.username,
         "scheduled_at": _now(),
-        "responded_at": None,
-        "candidate_note": None,
         "meet_link": meet_link,
         "gcal_event_id": gcal_event_id,
         **ics_identity,
     }
     application["interview"] = interview
     await _save(user_id, application)
-    await _send_interview_proposal_email(application, interview)
+    previous_when = _as_utc(previous.get("when"))
+    rescheduled_from = previous_when if previous_when and previous_when != _as_utc(when) else None
+    await _send_interview_scheduled_email(application, interview, rescheduled_from)
     return {"ok": True, "interview": interview}
 
 
@@ -2485,155 +2482,55 @@ def _meet_block(interview: dict) -> str:
     return f'<p><strong>Meeting link:</strong> <a href="{link}">{link}</a></p>'
 
 
-async def _send_interview_proposal_email(application: dict, interview: dict) -> None:
-    """To the candidate, with the interviewer cc'd, the same as the
-    confirmation: the interviewer gets the proposed slot (and its calendar
-    invite) straight away, rather than only hearing once it's confirmed."""
-    addresses = await _applicant_addresses(application)
-    to = ", ".join(addresses)
-    if not to:
-        return
-    raw_interviewer_email = interview.get("interviewer_email") or ""
-    cc = (raw_interviewer_email if raw_interviewer_email and raw_interviewer_email.lower()
-          not in (a.lower() for a in addresses) else None)
-    # Every value below is user- or reviewer-entered (names, the note, an
-    # email address) — escaped so none of it can become markup in an email
-    # sent from our own address.
-    name = html.escape(application.get("full_name") or application.get("username") or "there")
-    programme = html.escape(application.get("programme") or "the programme")
-    interviewer_name = html.escape(interview.get("interviewer_name") or "")
-    interviewer_email = html.escape(interview.get("interviewer_email") or "")
-    note_block = ""
-    if interview.get("message"):
-        note_block = (f'<p style="color:#555;">A note from {interviewer_name}: '
-                      f'&ldquo;{html.escape(interview["message"])}&rdquo;</p>')
-    body = (
-        f"<p>Hi {name},</p>"
-        f"<p>The committee would like to interview you for <strong>{programme}</strong>.</p>"
-        f"<p><strong>Proposed time:</strong> {_fmt_when(interview['when'])}<br>"
-        f"<strong>Interviewer:</strong> {interviewer_name} "
-        f"(<a href=\"mailto:{interviewer_email}\">{interviewer_email}</a>), copied in</p>"
-        f"{_meet_block(interview)}"
-        f"{note_block}"
-        f"<p>A calendar invite for this slot is attached, so you can hold it while you decide.</p>"
-        f"<p>Sign in and open your application to confirm this time. If it doesn't work, "
-        f"you can say so there too, and {interviewer_name} will be in touch "
-        f"directly to find another.</p>"
-    )
-    await mailer.send_email(
-        to=to, cc=cc, subject=f"Alpha Fund interview proposed for {_fmt_when(interview['when'])}",
-        title="Interview time proposed", body_html=body,
-        cta_label="Review and confirm", cta_url=f"{BASE_URL}/apply",
-        ics=_build_interview_ics(application, interview),
-    )
-
-
-async def _send_interview_confirmed_emails(application: dict, interview: dict) -> None:
-    """One email, to the candidate with the interviewer cc'd — a shared
-    thread rather than two separate copies, so a reply-all from either side
-    reaches the other directly (to share a call link, say) instead of
-    landing on the noreply address neither of them can do anything with."""
+async def _send_interview_scheduled_email(application: dict, interview: dict,
+                                         rescheduled_from: Optional[dt.datetime] = None) -> None:
+    """One email to the candidate with the interviewer cc'd: the time, the
+    Meet link and each other's contact, plus the calendar invite. A shared
+    thread rather than two copies, so a reply-all from either side reaches
+    the other directly if anything needs to change."""
     candidate_addresses = await _applicant_addresses(application)
     candidate_to = ", ".join(candidate_addresses)
-    candidate_name = application.get("full_name") or application.get("username") or "Candidate"
-    interviewer_name = interview.get("interviewer_name") or "Interviewer"
     interviewer_email = interview.get("interviewer_email") or ""
-    programme = application.get("programme") or "the programme"
-    when = interview["when"]
-
     to = candidate_to or interviewer_email
     if not to:
         return
     cc = (interviewer_email if (candidate_to and interviewer_email and interviewer_email.lower()
           not in (a.lower() for a in candidate_addresses)) else None)
 
-    # Escaped for the body only — the raw values still address the email.
-    e_candidate, e_interviewer = html.escape(candidate_name), html.escape(interviewer_name)
+    # Every value below is user- or reviewer-entered (names, the note, an
+    # email address), escaped so none of it can become markup in an email
+    # sent from our own address.
+    candidate_name = html.escape(application.get("full_name") or application.get("username") or "Candidate")
+    interviewer_name = html.escape(interview.get("interviewer_name") or "Interviewer")
+    programme = html.escape(application.get("programme") or "the programme")
+    when = _fmt_when(interview["when"])
+    contact = lambda addr: (f'<a href="mailto:{html.escape(addr)}">{html.escape(addr)}</a>'
+                            if addr else "no email on file")
+    note_block = ""
+    if interview.get("message"):
+        note_block = (f'<p style="color:#555;">A note from {interviewer_name}: '
+                      f'&ldquo;{html.escape(interview["message"])}&rdquo;</p>')
+    moved = (f"<p>This replaces the earlier time of {_fmt_when(rescheduled_from)}.</p>"
+             if rescheduled_from else "")
     body = (
-        f"<p>Hi {e_candidate} and {e_interviewer},</p>"
-        f"<p>This confirms the <strong>{html.escape(programme)}</strong> interview for "
-        f"<strong>{_fmt_when(when)}</strong>.</p>"
-        f"<p>{e_candidate}: {html.escape(candidate_to or 'no email on file')}<br>"
-        f"{e_interviewer}: {html.escape(interviewer_email or 'no email on file')}</p>"
+        f"<p>Hi {candidate_name} and {interviewer_name},</p>"
+        f"<p>The <strong>{programme}</strong> interview is scheduled for "
+        f"<strong>{when}</strong>. There's nothing to confirm.</p>"
+        f"{moved}"
         f"{_meet_block(interview)}"
-        f"<p>A calendar invite is attached. Reply-all on this email to "
-        f"{'sort out any last details' if interview.get('meet_link') else 'share a call link or sort out any last details'}"
-        f" directly.</p>"
+        f"<p><strong>Candidate:</strong> {candidate_name}, {', '.join(contact(a) for a in candidate_addresses) or contact('')}<br>"
+        f"<strong>Interviewer:</strong> {interviewer_name}, {contact(interviewer_email)}</p>"
+        f"{note_block}"
+        f"<p>A calendar invite is attached. If anything needs to change, reply all to this "
+        f"email to sort it out with each other directly.</p>"
     )
     await mailer.send_email(
-        to=to, cc=cc, subject=f"Alpha Fund interview confirmed for {_fmt_when(when)}",
-        title="Interview confirmed", body_html=body,
+        to=to, cc=cc,
+        subject=f"Alpha Fund interview {'moved to' if rescheduled_from else 'scheduled for'} {when}",
+        title="Interview rescheduled" if rescheduled_from else "Interview scheduled",
+        body_html=body,
         ics=_build_interview_ics(application, interview),
     )
-
-
-async def _send_interview_declined_email(application: dict, interview: dict) -> None:
-    interviewer_email = interview.get("interviewer_email")
-    if not interviewer_email:
-        return
-    interviewer_name = interview.get("interviewer_name") or "there"
-    candidate_name = application.get("full_name") or application.get("username") or "The candidate"
-    candidate_email = application.get("oxford_email") or application.get("email") or ""
-    note_block = ""
-    if interview.get("candidate_note"):
-        note_block = (f'<p style="color:#555;">Their note: '
-                      f'&ldquo;{html.escape(interview["candidate_note"])}&rdquo;</p>')
-    e_email = html.escape(candidate_email)
-    body = (
-        f"<p>Hi {html.escape(interviewer_name)},</p>"
-        f"<p><strong>{html.escape(candidate_name)}</strong> can't make the proposed interview time "
-        f"({_fmt_when(interview['when'])}).</p>"
-        f"{note_block}"
-        f"<p>Please reach out directly to arrange another time. Their email is "
-        f"<a href=\"mailto:{e_email}\">{e_email}</a>.</p>"
-    )
-    await mailer.send_email(
-        to=interviewer_email,
-        subject=f"Alpha Fund: {candidate_name} needs a different interview time",
-        title="Interview time declined", body_html=body,
-    )
-
-
-@router.post("/interview/confirm")
-async def confirm_interview(user: User = Depends(current_user)):
-    """The candidate accepts the proposed time — both sides get a calendar invite."""
-    uid = str(user.id)
-    application = await _load(uid)
-    if application is None:
-        raise HTTPException(404, "No application on file")
-    await _with_name(uid, application)
-    interview = application.get("interview")
-    if not interview or interview.get("status") != INTERVIEW_PROPOSED:
-        raise HTTPException(400, "There's no interview time waiting for a response")
-
-    interview["status"] = INTERVIEW_CONFIRMED
-    interview["responded_at"] = _now()
-    application["interview"] = interview
-    await _save(uid, application)
-    await _send_interview_confirmed_emails(application, interview)
-    return {"ok": True, "interview": _interview_view(interview)}
-
-
-@router.post("/interview/decline")
-async def decline_interview(payload: InterviewDecline, user: User = Depends(current_user)):
-    """The candidate can't make the proposed time — the assigned interviewer
-    is emailed directly to sort out an alternative."""
-    uid = str(user.id)
-    application = await _load(uid)
-    if application is None:
-        raise HTTPException(404, "No application on file")
-    await _with_name(uid, application)
-    interview = application.get("interview")
-    if not interview or interview.get("status") != INTERVIEW_PROPOSED:
-        raise HTTPException(400, "There's no interview time waiting for a response")
-
-    interview["status"] = INTERVIEW_DECLINED
-    interview["responded_at"] = _now()
-    interview["candidate_note"] = (payload.note or "").strip()[:500]
-    application["interview"] = interview
-    await _save(uid, application)
-    await _send_interview_declined_email(application, interview)
-    return {"ok": True, "interview": _interview_view(interview)}
 
 
 @router.post("/admin/{user_id}/decide")
