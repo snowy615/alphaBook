@@ -206,12 +206,16 @@
 
     $("#app").innerHTML = panel("Apply to Alpha Fund", `
       ${categoryBanner}
-      <p class="msp-muted" style="margin-top:0;">
+      ${state.event_signup === "fast_track" ? "" : `<p class="msp-muted" style="margin-top:0;">
         Pick the programme you want. Next, register for the outreach event if you'd like to,
         then put an up-to-date CV on your profile and sit a ${CFG.sessionMinutes}-minute
         assessment. You can start it whenever suits you, but once it starts it runs to the
         end in one sitting.
-      </p>
+      </p>`}
+      ${state.event_signup === "fast_track" ? `<div class="apl-ticket-note">
+        <strong>You're signed up for the CV clinic + Fast-Track</strong> at Quant Outreach. Pick your
+        programme below; after that you only need to add your CV and a few details, and your
+        application is in. No online assessment.</div>` : ""}
       <div class="apl-one-track" role="note">
         <strong>One track only.</strong> You can apply to either <strong>Quant</strong> or
         <strong>Fundamental</strong>, not both. If you apply to Quant here, don't also apply to

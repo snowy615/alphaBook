@@ -3749,10 +3749,16 @@ class TestEventSignupCarriesIntoTheApplication:
             User(id="u1", username="jo")))
         assert result["status"] == ap.S_SUBMITTED
 
-    def test_general_attendance_carries_over_too(self, monkeypatch):
+    def test_general_attendance_is_not_carried_over(self, monkeypatch):
+        # Fast-Track only: general attendance still sees the choice step.
         fake_db = self._setup(monkeypatch, "general")
         self._start()
-        assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "general"
+        assert not fake_db.collections[ap.COLLECTION]["u1"].get("event_ticket")
+
+    def test_the_programme_step_knows_about_a_held_fast_track_place(self, monkeypatch):
+        self._setup(monkeypatch, "fast_track")
+        state = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert state["status"] == "none" and state["event_signup"] == "fast_track"
 
     def test_not_once_fast_track_has_been_used(self, monkeypatch):
         fake_db = self._setup(monkeypatch, "fast_track", applications={"u1": {

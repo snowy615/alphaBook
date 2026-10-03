@@ -924,6 +924,12 @@ async def state(user: User = Depends(current_user)):
     application = await _load(uid)
     if application is None:
         out["status"] = "none"
+        # A Fast-Track place held from the events page: the programme step
+        # says so, since after it they only need their CV and details.
+        try:
+            out["event_signup"] = await outreach.ticket_of(uid)
+        except Exception:
+            out["event_signup"] = None
         return out
 
     await _resolve_and_notify(uid, application)
@@ -1234,12 +1240,14 @@ def _fast_track_used(application: dict) -> bool:
 
 
 async def _adopt_event_signup(uid: str, application: dict) -> bool:
-    """Someone who signed up for Quant Outreach on the events page before
-    applying shouldn't be asked to pick a ticket again: their sign-up becomes
-    the application's ticket, and they go straight on to the CV and details.
-    Not when Fast-Track has already been used (they choose again, without
-    it), or once the event is over (the choice step records "not attending").
-    Returns whether the application took a ticket from the sign-up."""
+    """Someone who signed up for the CV clinic + Fast-Track on the events
+    page before applying shouldn't be asked to pick a ticket again: their
+    place becomes the application's ticket, and they go straight on to the
+    CV and details, which is all a Fast-Track application needs. Fast-Track
+    only: a general-attendance sign-up still sees the choice step (with it
+    pre-selected), since that route goes on to the online assessment. Not
+    when Fast-Track has already been used, or once the event is over.
+    Returns whether the application took the ticket from the sign-up."""
     if application.get("status") != S_CV or application.get("event_ticket"):
         return False
     try:
@@ -1249,9 +1257,7 @@ async def _adopt_event_signup(uid: str, application: dict) -> bool:
         # simply see the ticket choice as before.
         log.warning("applications: couldn't read %s's event sign-up", uid)
         return False
-    if signup not in (EVENT_TICKET_FAST_TRACK, EVENT_TICKET_GENERAL):
-        return False
-    if signup == EVENT_TICKET_FAST_TRACK and _fast_track_used(application):
+    if signup != EVENT_TICKET_FAST_TRACK or _fast_track_used(application):
         return False
     if await outreach.event_has_ended():
         return False
