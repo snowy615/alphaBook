@@ -3786,3 +3786,20 @@ class TestEventSignupCarriesIntoTheApplication:
             "oxford_email": "jo@merton.ox.ac.uk", "event_ticket": "none"}})
         asyncio.run(ap.state(User(id="u1", username="jo")))
         assert fake_db.collections[ap.COLLECTION]["u1"]["event_ticket"] == "none"
+
+
+def test_the_review_page_closes_out_an_assessment_whose_time_ran_out(monkeypatch):
+    """Someone who started the assessment and walked away shows as submitted
+    once their time is up, not "sitting now" forever."""
+    stale = make_app(started_seconds_ago=3 * 24 * 3600)
+    stale.update({"user_id": "u1", "oxford_email": "jo@merton.ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP})
+    live = make_app(started_seconds_ago=30)
+    live.update({"user_id": "u2", "username": "live", "oxford_email": "x@merton.ox.ac.uk"})
+    fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": stale, "u2": live})
+    rows = {r["user_id"]: r for r in asyncio.run(ap._ranked_rows(viewer_id="r1"))}
+    assert rows["u1"]["status"] == ap.S_SUBMITTED
+    assert fake_db.collections[ap.COLLECTION]["u1"]["status"] == ap.S_SUBMITTED
+    assert rows["u2"]["status"] == ap.S_OA_ACTIVE           # still within time: left alone
+    assert [m["to"] for m in sent] == ["jo@merton.ox.ac.uk"]   # the usual confirmation, once
+    asyncio.run(ap._ranked_rows(viewer_id="r1"))
+    assert len(sent) == 1

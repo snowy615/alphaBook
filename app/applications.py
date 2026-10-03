@@ -1756,7 +1756,15 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     reading as a zero, since they haven't had their turn.
     """
     docs = await db_module.db.collection(COLLECTION).get()
-    rows = [_review_row(d.id, d.to_dict() or {}, viewer_id=viewer_id) for d in docs]
+    applications = [(d.id, d.to_dict() or {}) for d in docs]
+    # An assessment only closes itself when the candidate's own page checks
+    # in after the clock runs out, so someone who walked away mid-sitting
+    # would read "sitting now" here forever. Close those out on the way past
+    # (submitting whatever was saved, and sending the usual confirmation).
+    for uid, application in applications:
+        if application.get("status") == S_OA_ACTIVE:
+            await _resolve_and_notify(uid, application)
+    rows = [_review_row(uid, application, viewer_id=viewer_id) for uid, application in applications]
     await _use_real_names(rows)
 
     def _on_ten(avg: Optional[float], out_of: int) -> Optional[float]:
