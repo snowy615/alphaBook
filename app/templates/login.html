@@ -20,6 +20,10 @@
       </div>
     </div>
     {% if error %}<div class="err">{{error}}</div>{% endif %}
+    <div id="inAppNote" class="err" style="display:none;">
+      You're in an app's built-in browser, where Google sign-in doesn't work.
+      Use <a href="#" data-show-link>Email me a sign-in link</a> below, or open this page in Safari or Chrome.
+    </div>
 
     <button type="button" id="googleBtn" class="auth-google">
       <svg width="18" height="18" viewBox="0 0 18 18">
@@ -44,12 +48,82 @@
       <div id="login-error" class="err" style="display:none;"></div>
     </div>
 
+    <!-- Works whichever way the account was made (Google or password) and in
+         any browser: a one-time link to the sign-in email, or to the Oxford
+         email on an application. -->
+    <div class="auth-link-box">
+      <a href="#" id="showLinkForm" data-show-link>Can't sign in? Email me a sign-in link</a>
+      <form id="link-form" style="display:none;">
+        <label>Your Oxford email, or the email you signed up with</label>
+        <input name="email" type="email" required placeholder="name@college.ox.ac.uk" />
+        <button type="submit" class="btn auth-submit">Email me a sign-in link</button>
+        <div id="link-msg" class="msp-muted" style="display:none;margin-top:10px;font-size:13px;"></div>
+      </form>
+    </div>
+
     <script type="module">
       import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js";
       import {
         getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
       import { showVerificationNeeded } from "/static/verify_email.js";
+
+      // Back to where they came from (the application page, from an email
+      // button) rather than the home page. Same-site paths only.
+      const NEXT = (() => {
+        const n = new URLSearchParams(location.search).get("next") || "/";
+        return n.startsWith("/") && !n.startsWith("//") && !n.includes("\\") ? n : "/";
+      })();
+      const go = () => { window.location.href = NEXT; };
+
+      const LINK_HINT = " If you're not sure which account you used, choose \"Email me a sign-in link\" below.";
+      function friendly(error) {
+        const code = (error && error.code) || "";
+        if (["auth/invalid-credential", "auth/wrong-password", "auth/user-not-found", "auth/invalid-login-credentials"].includes(code))
+          return "That email and password don't match an account. If you signed up with Google, use Continue with Google." + LINK_HINT;
+        if (code === "auth/invalid-email") return "That doesn't look like an email address.";
+        if (code === "auth/too-many-requests") return "Too many attempts for now. Wait a few minutes, or use \"Email me a sign-in link\" below.";
+        if (code === "auth/network-request-failed") return "Couldn't reach the sign-in service. Check your connection and try again.";
+        if (["auth/popup-blocked", "auth/operation-not-supported-in-this-environment", "auth/web-storage-unsupported", "auth/internal-error"].includes(code))
+          return "Google sign-in couldn't open in this browser." + LINK_HINT;
+        return ((error && error.message) || "Sign-in failed.").replace(/^Firebase: /, "") + LINK_HINT;
+      }
+
+      function showLinkForm(prefill) {
+        const f = document.getElementById("link-form");
+        f.style.display = "block";
+        if (prefill && prefill.includes("@") && !f.email.value) f.email.value = prefill;
+        f.email.focus();
+      }
+      document.querySelectorAll("[data-show-link]").forEach((a) => a.addEventListener("click", (e) => {
+        e.preventDefault();
+        showLinkForm(document.querySelector('#login-form [name="identifier"]').value.trim());
+      }));
+      document.getElementById("link-form").addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const f = e.target, btn = f.querySelector("button"), msg = document.getElementById("link-msg");
+        btn.disabled = true;
+        msg.style.display = "none";
+        try {
+          const body = new FormData();
+          body.append("email", f.email.value.trim());
+          body.append("next", NEXT);
+          const res = await fetch("/auth/email-link", { method: "POST", body, credentials: "include" });
+          const data = await res.json().catch(() => ({}));
+          msg.textContent = data.message || "Something went wrong. Try again.";
+        } catch (err) {
+          msg.textContent = "Couldn't reach AlphaBook. Check your connection and try again.";
+        }
+        msg.style.display = "block";
+        btn.disabled = false;
+      });
+
+      // Google refuses to sign in inside apps' built-in browsers (Android
+      // WebView, iOS in-app views without Safari, social apps). Say so up front.
+      const ua = navigator.userAgent;
+      if (/; wv\)|FBAN|FBAV|Instagram|LinkedInApp|Line\//.test(ua) || (/iPhone|iPad/.test(ua) && !/Safari\//.test(ua))) {
+        document.getElementById("inAppNote").style.display = "block";
+      }
 
       async function init() {
         let firebaseAuth = null;
@@ -110,7 +184,7 @@
               });
 
               if (res.ok) {
-                window.location.href = "/";
+                go();
                 return;
               } else {
                 const data = await res.json();
@@ -150,12 +224,12 @@
               let { res: loginRes, data } = await postToken(false);
 
               if (loginRes.ok && data.status === "ok") {
-                window.location.href = "/";
+                go();
               } else if (data.status === "unverified") {
                 await showVerificationNeeded({ user, email: identifier });
                 ({ res: loginRes } = await postToken(true)); // fresh token now carries email_verified
                 if (loginRes.ok) {
-                  window.location.href = "/";
+                  go();
                 } else {
                   errDiv.textContent = "Something went wrong — please sign in again.";
                   errDiv.style.display = "block";
@@ -170,7 +244,7 @@
               }
             } catch (error) {
               console.error(error);
-              errDiv.textContent = error.message;
+              errDiv.textContent = friendly(error);
               errDiv.style.display = "block";
               btn.disabled = false;
               btn.innerText = "Sign in";
@@ -186,12 +260,18 @@
         } else {
           const googleBtnDefault = googleBtn.innerHTML;
           const provider = new GoogleAuthProvider();
+          let slowGoogle = null;
           googleBtn.addEventListener('click', async () => {
             googleBtn.disabled = true;
             googleBtn.textContent = "Connecting…";
             errDiv.style.display = "none";
+            slowGoogle = setTimeout(() => {
+              errDiv.textContent = "Google sign-in not opening? Use \"Email me a sign-in link\" below instead.";
+              errDiv.style.display = "block";
+            }, 12000);
             try {
               const cred = await signInWithPopup(firebaseAuth, provider);
+              clearTimeout(slowGoogle);
               const token = await cred.user.getIdToken();
 
               // An existing account is found by firebase_uid regardless of
@@ -217,7 +297,7 @@
               }
 
               if (loginRes.ok) {
-                window.location.href = "/";
+                go();
               } else {
                 const err2 = await loginRes.json().catch(() => ({}));
                 errDiv.textContent = err2.message || err2.detail || "Google sign-in failed";
@@ -227,8 +307,9 @@
               }
             } catch (error) {
               console.error(error);
+              clearTimeout(slowGoogle);
               if (error.code !== "auth/popup-closed-by-user" && error.code !== "auth/cancelled-popup-request") {
-                errDiv.textContent = error.message;
+                errDiv.textContent = friendly(error);
                 errDiv.style.display = "block";
               }
               googleBtn.disabled = false;

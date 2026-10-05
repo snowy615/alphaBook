@@ -324,3 +324,150 @@ class TestDirectAdminLoginFailsClosed:
         monkeypatch.setattr(auth, "ADMIN_PASSWORD", "the-real-one")
         result = asyncio.run(auth.direct_login(_FakeRequest(), username="admin", password="Alphabook"))
         assert result.status_code == 401
+
+
+# ── Emailed sign-in links ────────────────────────────────────────────────────
+
+import json
+import re as _re
+import pytest
+import datetime as _dt
+from starlette.requests import Request as _Request
+
+
+def _req(origin=None, path="/auth/email-link"):
+    headers = [(b"host", b"alphabook.uk"), (b"x-forwarded-proto", b"https")]
+    if origin:
+        headers.append((b"origin", origin.encode()))
+    return _Request({"type": "http", "method": "POST", "path": path, "headers": headers,
+                     "query_string": b"", "server": ("alphabook.uk", 443), "scheme": "https", "root_path": ""})
+
+
+class TestEmailSignInLink:
+    def _setup(self, monkeypatch, users=None, applications=None, fb_verified=True):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = users or {}
+        fake_db.collections["applications"] = applications or {}
+        monkeypatch.setattr(db_module, "db", fake_db)
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            sent.append({"to": to, "subject": subject, "body": body_html, "cta_url": cta_url})
+            return True
+        monkeypatch.setattr(auth.mailer, "send_email", fake_send)
+        verified_calls = []
+
+        class _FbUser:
+            def __init__(self, uid):
+                self.email_verified = fb_verified
+                self.email = (fake_db.collections["users"].get(uid) or {}).get("email")
+        monkeypatch.setattr(auth.fb_auth, "get_user", lambda uid: _FbUser(uid))
+        monkeypatch.setattr(auth.fb_auth, "update_user", lambda uid, **kw: verified_calls.append((uid, kw)))
+        return fake_db, sent, verified_calls
+
+    def _ask(self, email, next="/apply"):
+        res = asyncio.run(auth.request_email_link(email=email, next=next))
+        return json.loads(res.body)
+
+    def _token(self, mail):
+        url = mail["cta_url"] or _re.search(r'href="([^"]+)"', mail["body"]).group(1)
+        return url.split("t=", 1)[1]
+
+    def test_the_sign_in_email_gets_a_link_stored_only_as_a_hash(self, monkeypatch):
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "toby", "email": "toby@gmail.com"}})
+        assert self._ask("Toby@gmail.com")["status"] == "ok"
+        assert len(sent) == 1 and sent[0]["to"] == "Toby@gmail.com"
+        token = self._token(sent[0])
+        stored = fake_db.collections[auth.LOGIN_LINKS]
+        assert token not in stored and auth._hash(token) in stored
+        assert stored[auth._hash(token)]["uid"] == "u1" and stored[auth._hash(token)]["next"] == "/apply"
+
+    def test_a_confirmed_oxford_email_signs_in_to_the_gmail_account(self, monkeypatch):
+        _, sent, _ = self._setup(
+            monkeypatch, users={"u1": {"username": "toby", "email": "therealtobygu@gmail.com"}},
+            applications={"u1": {"oxford_email": "cunji.gu@spc.ox.ac.uk", "oxford_email_verified": True}})
+        self._ask("cunji.gu@spc.ox.ac.uk")
+        assert len(sent) == 1 and sent[0]["to"] == "cunji.gu@spc.ox.ac.uk"
+
+    def test_an_unconfirmed_oxford_email_gets_nothing_but_the_same_reply(self, monkeypatch):
+        _, sent, _ = self._setup(
+            monkeypatch, users={"u1": {"username": "x", "email": "x@gmail.com"}},
+            applications={"u1": {"oxford_email": "abc123+anything@ox.ac.uk", "oxford_email_verified": False}})
+        assert self._ask("abc123+anything@ox.ac.uk")["message"] == auth.LOGIN_LINK_SENT
+        assert sent == []
+
+    def test_an_unknown_email_gets_the_same_reply_and_nothing_sent(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch)
+        assert self._ask("nobody@ox.ac.uk")["message"] == auth.LOGIN_LINK_SENT
+        assert sent == []
+
+    def test_one_send_per_address_per_minute(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        self._ask("t@gmail.com")
+        assert len(sent) == 1
+
+    def test_suspended_accounts_get_nothing(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com",
+                                                             "is_blacklisted": True}})
+        self._ask("t@gmail.com")
+        assert sent == []
+
+    def test_two_accounts_on_one_address_get_a_link_each(self, monkeypatch):
+        _, sent, _ = self._setup(
+            monkeypatch,
+            users={"a": {"username": "chris_ox", "email": "c@kellogg.ox.ac.uk"},
+                   "b": {"username": "chris_g", "email": "c@gmail.com"}},
+            applications={"b": {"oxford_email": "c@kellogg.ox.ac.uk", "oxford_email_verified": True}})
+        self._ask("c@kellogg.ox.ac.uk")
+        assert len(sent) == 1 and sent[0]["cta_url"] is None
+        assert "Sign in as chris_ox" in sent[0]["body"] and "Sign in as chris_g" in sent[0]["body"]
+
+    def test_opening_the_link_does_not_use_it_up(self, monkeypatch):
+        """Mail scanners open links first; only the button press signs in."""
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "toby", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        token = self._token(sent[0])
+        page = asyncio.run(auth.email_link_page(_req(), t=token)).body.decode()
+        assert "Sign me in" in page and "toby" in page
+        assert fake_db.collections[auth.LOGIN_LINKS][auth._hash(token)]["used_at"] is None
+
+    def test_the_button_signs_in_once_and_returns_to_the_application(self, monkeypatch):
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "toby", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com", next="/apply")
+        token = self._token(sent[0])
+        res = asyncio.run(auth.confirm_email_link(_req(origin="https://alphabook.uk"), t=token))
+        assert res.status_code == 303 and res.headers["location"] == "/apply"
+        cookie = res.headers["set-cookie"]
+        session = _re.search(r"__session=([^;]+)", cookie).group(1)
+        assert auth.jwt.decode(session, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])["sub"] == "u1"
+        again = asyncio.run(auth.confirm_email_link(_req(), t=token))
+        assert again.status_code == 400 and "already been used" in again.body.decode()
+
+    def test_an_expired_link_is_refused(self, monkeypatch):
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        token = self._token(sent[0])
+        fake_db.collections[auth.LOGIN_LINKS][auth._hash(token)]["expires_at"] = \
+            _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=1)
+        assert asyncio.run(auth.confirm_email_link(_req(), t=token)).status_code == 400
+
+    def test_a_post_from_another_site_is_refused(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        with pytest.raises(auth.HTTPException):
+            asyncio.run(auth.confirm_email_link(_req(origin="https://evil.example"), t=self._token(sent[0])))
+
+    def test_signing_in_from_the_inbox_verifies_an_unverified_sign_in_email(self, monkeypatch):
+        _, sent, verified = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@ox.ac.uk"}},
+                                        fb_verified=False)
+        self._ask("t@ox.ac.uk")
+        asyncio.run(auth.confirm_email_link(_req(), t=self._token(sent[0])))
+        assert verified == [("u1", {"email_verified": True})]
+
+    @pytest.mark.parametrize("given, expected", [
+        ("/apply", "/apply"), ("/apply?x=1", "/apply?x=1"), ("", "/"), (None, "/"),
+        ("//evil.com", "/"), ("https://evil.com", "/"), ("/\\evil.com", "/"), ("apply", "/"),
+    ])
+    def test_only_same_site_paths_are_followed(self, given, expected):
+        assert auth.safe_next(given) == expected

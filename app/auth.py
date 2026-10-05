@@ -1,6 +1,6 @@
 from __future__ import annotations
-import asyncio, os, datetime as dt, html, logging
-from typing import Optional
+import asyncio, os, datetime as dt, hashlib, html, logging, secrets
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
 from fastapi.responses import RedirectResponse, JSONResponse
@@ -338,6 +338,174 @@ async def direct_login(request: Request, username: str = Form(...), password: st
 @router.get("/login", include_in_schema=False)
 def login_form(request: Request):
     return templates.TemplateResponse("login.html", {"request": request, "error": None})
+
+
+# ----- emailed sign-in links -----
+# A way in that doesn't depend on how the account was made or which browser
+# it's opened in: Google sign-in fails inside some mail apps' browsers, and
+# people often try the Oxford address their emails arrive at when the account
+# itself is a Gmail. Typing either address emails a one-time link to it, and
+# being able to open that inbox is the proof. Only addresses we already trust
+# get one: an account's own sign-in email, or an Oxford email on an
+# application that was confirmed with an emailed code.
+LOGIN_LINKS = "login_links"
+LOGIN_LINK_REQUESTS = "login_link_requests"
+LOGIN_LINK_TTL = dt.timedelta(minutes=30)
+LOGIN_LINK_COOLDOWN = dt.timedelta(seconds=60)
+LOGIN_LINK_SENT = ("If that email belongs to an AlphaBook account, a sign-in link is on its way. "
+                   "Check your inbox (and junk folder); the link works once, for 30 minutes.")
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _as_utc(value) -> Optional[dt.datetime]:
+    if not isinstance(value, dt.datetime):
+        return None
+    return value if value.tzinfo else value.replace(tzinfo=dt.timezone.utc)
+
+
+def safe_next(path: Optional[str]) -> str:
+    """A same-site path to land on after signing in, or "/". Anything that
+    could point off-site ("//evil.com", "https://...", backslashes) is refused."""
+    path = (path or "").strip()
+    if not path.startswith("/") or path.startswith("//") or "\\" in path:
+        return "/"
+    return path
+
+
+def _hash(value: str) -> str:
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+async def _accounts_for_email(email: str) -> Dict[str, Dict]:
+    """Every account this address may sign in to, by user id: accounts whose
+    sign-in email it is, and accounts whose application has it as a
+    code-confirmed Oxford email. Suspended accounts are left out."""
+    variants = {email, email.lower()}
+    found: Dict[str, Dict] = {}
+    for v in variants:
+        for d in await db_module.db.collection("users").where("email", "==", v).get():
+            found[d.id] = {**(d.to_dict() or {}), "_via": "account"}
+    for v in variants:
+        for d in await db_module.db.collection("applications").where("oxford_email", "==", v).get():
+            a = d.to_dict() or {}
+            if a.get("oxford_email_verified") is not True or d.id in found:
+                continue
+            udoc = await db_module.db.collection("users").document(d.id).get()
+            if udoc.exists:
+                found[d.id] = {**(udoc.to_dict() or {}), "_via": "oxford"}
+    return {uid: u for uid, u in found.items() if not u.get("is_blacklisted")}
+
+
+@router.post("/auth/email-link", include_in_schema=False)
+async def request_email_link(email: str = Form(...), next: str = Form("/")):
+    """Email a one-time sign-in link to ``email``, if it's an address on file.
+
+    The reply is the same whether or not anything was sent, so this can't be
+    used to find out who has an account. One send per address per minute."""
+    email = (email or "").strip()
+    if "@" not in email or len(email) > 254:
+        return JSONResponse({"status": "error", "message": "Enter the email address you use with AlphaBook."},
+                            status_code=400)
+    key = _hash(email.lower())
+    req_ref = db_module.db.collection(LOGIN_LINK_REQUESTS).document(key)
+    last = await req_ref.get()
+    last_sent = _as_utc((last.to_dict() or {}).get("sent_at")) if last.exists else None
+    if last_sent and _now() - last_sent < LOGIN_LINK_COOLDOWN:
+        return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+
+    accounts = await _accounts_for_email(email)
+    if not accounts:
+        return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+
+    nxt = safe_next(next)
+    links: List[tuple] = []
+    for uid, u in accounts.items():
+        token = secrets.token_urlsafe(32)
+        await db_module.db.collection(LOGIN_LINKS).document(_hash(token)).set({
+            "uid": uid, "email": email.lower(), "via": u["_via"], "next": nxt,
+            "created_at": _now(), "expires_at": _now() + LOGIN_LINK_TTL, "used_at": None,
+        })
+        label = u.get("username") or u.get("email") or "your account"
+        links.append((f"{BASE_URL}/auth/email-link?t={token}", label, u.get("email") or ""))
+    await req_ref.set({"sent_at": _now()})
+
+    if len(links) == 1:
+        body = ("<p>Use the button below to sign in to AlphaBook. The link works once and expires in "
+                "30 minutes.</p><p>If you didn't ask for this, you can ignore this email.</p>")
+        cta_label, cta_url = "Sign in to AlphaBook", links[0][0]
+    else:
+        items = "".join(
+            f'<li><a href="{html.escape(url)}">Sign in as {html.escape(label)}</a>'
+            f'{f" ({html.escape(acct)})" if acct else ""}</li>' for url, label, acct in links)
+        body = ("<p>This email is linked to more than one AlphaBook account. Choose the one to sign in "
+                f"to:</p><ul>{items}</ul><p>Each link works once and expires in 30 minutes. If you "
+                "didn't ask for this, you can ignore this email.</p>")
+        cta_label = cta_url = None
+    await mailer.send_email(to=email, subject="Your AlphaBook sign-in link", title="Sign in to AlphaBook",
+                            body_html=body, cta_label=cta_label, cta_url=cta_url)
+    return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+
+
+async def _live_link(token: str):
+    """The stored link for ``token`` if it's unused and unexpired, else None."""
+    if not token:
+        return None, None
+    ref = db_module.db.collection(LOGIN_LINKS).document(_hash(token))
+    doc = await ref.get()
+    if not doc.exists:
+        return None, None
+    link = doc.to_dict() or {}
+    expires = _as_utc(link.get("expires_at"))
+    if link.get("used_at") or not expires or expires < _now():
+        return None, None
+    return ref, link
+
+
+@router.get("/auth/email-link", include_in_schema=False)
+async def email_link_page(request: Request, t: str = ""):
+    """The page the emailed link opens: a button that signs in, rather than
+    signing in on arrival. Mail scanners (Microsoft's Safe Links on Oxford
+    mail) open every link before the person does, and a link used up on
+    arrival would be spent by the scanner."""
+    _, link = await _live_link(t)
+    account = None
+    if link:
+        udoc = await db_module.db.collection("users").document(link["uid"]).get()
+        account = (udoc.to_dict() or {}) if udoc.exists else None
+    return templates.TemplateResponse("login_link.html", {
+        "request": request, "token": t if account else "",
+        "who": (account or {}).get("username") or (account or {}).get("email") or "",
+    })
+
+
+@router.post("/auth/email-link/confirm", include_in_schema=False)
+async def confirm_email_link(request: Request, t: str = Form("")):
+    origin = request.headers.get("origin")
+    if origin and origin.rstrip("/") not in (BASE_URL, f"{request.url.scheme}://{request.url.netloc}"):
+        raise HTTPException(403, "Sign in from the link in your email")
+    ref, link = await _live_link(t)
+    if not link:
+        return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
+                                          status_code=400)
+    udoc = await db_module.db.collection("users").document(link["uid"]).get()
+    if not udoc.exists or (udoc.to_dict() or {}).get("is_blacklisted"):
+        return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
+                                          status_code=400)
+    await ref.update({"used_at": _now()})
+
+    # The link was opened from this address's inbox, so when it's the
+    # account's own sign-in email that still shows unverified, it's verified now.
+    if link.get("via") == "account":
+        try:
+            fb_user = await asyncio.to_thread(fb_auth.get_user, link["uid"])
+            if not fb_user.email_verified and (fb_user.email or "").lower() == link.get("email"):
+                await asyncio.to_thread(fb_auth.update_user, link["uid"], email_verified=True)
+        except Exception:
+            log.warning("auth: couldn't mark %s's email verified after an emailed sign-in", link["uid"])
+    return _make_redirect_with_cookie(request, create_token(link["uid"]), safe_next(link.get("next")))
 
 
 @router.post("/logout", include_in_schema=False)

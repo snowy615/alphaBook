@@ -1303,7 +1303,7 @@
       // A session that expired mid-visit — genuinely different from a guest
       // who was never signed in, which the outer bootstrap below handles by
       // showing the public intro instead of bouncing straight to /login.
-      if (err.status === 401) { window.location.href = "/login"; return; }
+      if (err.status === 401) { window.location.href = "/login?next=/apply"; return; }
       flash(err.message, true);
     }
   }
@@ -1331,7 +1331,7 @@
       </p>
       <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
         <a class="btn primary" href="/signup">Sign up to apply</a>
-        <a class="btn" href="/login">Log in</a>
+        <a class="btn" href="/login?next=/apply">Log in</a>
       </div>
       <p class="apl-hint" style="margin-top:18px;">
         Read more about Alpha Fund at

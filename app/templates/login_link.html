@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+
+<head>
+  <meta charset="utf-8" />
+  <title>Sign in · AlphaBook</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="robots" content="noindex" />
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body class="auth-body">
+  <div class="auth-card">
+    <div class="auth-brand">
+      <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+      <div class="titles">
+        <h1>AlphaBook</h1>
+        <div class="subtitle">Sign in</div>
+      </div>
+    </div>
+
+    {% if token %}
+    <!-- A button rather than signing in on arrival: mail scanners open every
+         link before the person does, and would otherwise use this one up. -->
+    <p style="margin:0 0 16px;">You're signing in as <strong>{{ who }}</strong>.</p>
+    <form method="post" action="/auth/email-link/confirm">
+      <input type="hidden" name="t" value="{{ token }}">
+      <button type="submit" class="btn primary auth-submit">Sign me in</button>
+    </form>
+    {% else %}
+    <div class="err">This sign-in link has expired or has already been used.</div>
+    <p style="margin:12px 0 0;">Sign-in links work once, for 30 minutes.
+      <a href="/login">Request a new one</a> from the sign-in page.</p>
+    {% endif %}
+  </div>
+</body>
+</html>

@@ -6751,6 +6751,12 @@ body.tut-locked {
   font-weight: 600;
 }
 
+.auth-link-box {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 13px;
+}
+.auth-link-box form { text-align: left; margin-top: 10px; }
 .auth-alt {
   margin-top: 18px;
   padding-top: 14px;
