@@ -348,10 +348,18 @@ def login_form(request: Request):
 # being able to open that inbox is the proof. Only addresses we already trust
 # get one: an account's own sign-in email, or an Oxford email on an
 # application that was confirmed with an emailed code.
+#
+# It is a way back in, never a way past the checks: only accounts that have
+# already passed verification (Google, or a verified password sign-up) get a
+# link, and signing in by link verifies nothing. A fresh or throwaway account
+# still has to verify its email the normal way, and an application still can't
+# move past the CV step until its Oxford email is confirmed by code.
 LOGIN_LINKS = "login_links"
 LOGIN_LINK_REQUESTS = "login_link_requests"
 LOGIN_LINK_TTL = dt.timedelta(minutes=30)
 LOGIN_LINK_COOLDOWN = dt.timedelta(seconds=60)
+LOGIN_LINKS_PER_DAY = 5         # per address
+LOGIN_LINK_REQUESTS_PER_HOUR = 20   # per connection (IP), across all addresses
 LOGIN_LINK_SENT = ("If that email belongs to an AlphaBook account, a sign-in link is on its way. "
                    "Check your inbox (and junk folder); the link works once, for 30 minutes.")
 
@@ -379,10 +387,21 @@ def _hash(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
+async def _verified_firebase_user(uid: str) -> bool:
+    """Whether this account has passed verification: a Firebase user that
+    isn't disabled and whose sign-in email is verified (always so for Google)."""
+    try:
+        fb_user = await asyncio.to_thread(fb_auth.get_user, uid)
+    except Exception:
+        return False
+    return bool(fb_user.email_verified) and not fb_user.disabled
+
+
 async def _accounts_for_email(email: str) -> Dict[str, Dict]:
     """Every account this address may sign in to, by user id: accounts whose
     sign-in email it is, and accounts whose application has it as a
-    code-confirmed Oxford email. Suspended accounts are left out."""
+    code-confirmed Oxford email. Suspended accounts, disabled ones and any
+    that haven't verified their sign-in email are left out."""
     variants = {email, email.lower()}
     found: Dict[str, Dict] = {}
     for v in variants:
@@ -396,28 +415,53 @@ async def _accounts_for_email(email: str) -> Dict[str, Dict]:
             udoc = await db_module.db.collection("users").document(d.id).get()
             if udoc.exists:
                 found[d.id] = {**(udoc.to_dict() or {}), "_via": "oxford"}
-    return {uid: u for uid, u in found.items() if not u.get("is_blacklisted")}
+    return {uid: u for uid, u in found.items()
+            if not u.get("is_blacklisted") and await _verified_firebase_user(uid)}
+
+
+def _client_ip(request: Request) -> str:
+    """The visitor's address: Firebase Hosting and Cloud Run put the original
+    client first in X-Forwarded-For."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    return forwarded.split(",")[0].strip() or (request.client.host if request.client else "") or "unknown"
+
+
+async def _within_limit(doc_id: str, window: dt.timedelta, limit: int, min_gap: Optional[dt.timedelta] = None) -> bool:
+    """Record one use against ``doc_id`` if it's under ``limit`` uses in the
+    last ``window`` (and at least ``min_gap`` after the previous one)."""
+    ref = db_module.db.collection(LOGIN_LINK_REQUESTS).document(doc_id)
+    doc = await ref.get()
+    now = _now()
+    times = [t for t in ((doc.to_dict() or {}).get("times") or []) if _as_utc(t) and now - _as_utc(t) < window] \
+        if doc.exists else []
+    if len(times) >= limit or (min_gap and times and now - max(_as_utc(t) for t in times) < min_gap):
+        return False
+    await ref.set({"times": times + [now]})
+    return True
 
 
 @router.post("/auth/email-link", include_in_schema=False)
-async def request_email_link(email: str = Form(...), next: str = Form("/")):
+async def request_email_link(request: Request, email: str = Form(...), next: str = Form("/")):
     """Email a one-time sign-in link to ``email``, if it's an address on file.
 
     The reply is the same whether or not anything was sent, so this can't be
-    used to find out who has an account. One send per address per minute."""
+    used to find out who has an account. Limits: one send per address per
+    minute and LOGIN_LINKS_PER_DAY a day, and LOGIN_LINK_REQUESTS_PER_HOUR
+    requests an hour from one connection, so it can't be used to flood inboxes."""
     email = (email or "").strip()
     if "@" not in email or len(email) > 254:
         return JSONResponse({"status": "error", "message": "Enter the email address you use with AlphaBook."},
                             status_code=400)
-    key = _hash(email.lower())
-    req_ref = db_module.db.collection(LOGIN_LINK_REQUESTS).document(key)
-    last = await req_ref.get()
-    last_sent = _as_utc((last.to_dict() or {}).get("sent_at")) if last.exists else None
-    if last_sent and _now() - last_sent < LOGIN_LINK_COOLDOWN:
-        return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+    if not await _within_limit("ip_" + _hash(_client_ip(request)), dt.timedelta(hours=1),
+                               LOGIN_LINK_REQUESTS_PER_HOUR):
+        return JSONResponse({"status": "error", "message": "Too many sign-in link requests. Try again later."},
+                            status_code=429)
 
     accounts = await _accounts_for_email(email)
     if not accounts:
+        return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+    if not await _within_limit("email_" + _hash(email.lower()), dt.timedelta(days=1),
+                               LOGIN_LINKS_PER_DAY, min_gap=LOGIN_LINK_COOLDOWN):
         return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
 
     nxt = safe_next(next)
@@ -430,7 +474,6 @@ async def request_email_link(email: str = Form(...), next: str = Form("/")):
         })
         label = u.get("username") or u.get("email") or "your account"
         links.append((f"{BASE_URL}/auth/email-link?t={token}", label, u.get("email") or ""))
-    await req_ref.set({"sent_at": _now()})
 
     if len(links) == 1:
         body = ("<p>Use the button below to sign in to AlphaBook. The link works once and expires in "
@@ -490,21 +533,14 @@ async def confirm_email_link(request: Request, t: str = Form("")):
     if not link:
         return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
                                           status_code=400)
+    # Re-checked at sign-in, not just when the link was sent: an account
+    # suspended or disabled in the meantime doesn't get in.
     udoc = await db_module.db.collection("users").document(link["uid"]).get()
-    if not udoc.exists or (udoc.to_dict() or {}).get("is_blacklisted"):
+    if (not udoc.exists or (udoc.to_dict() or {}).get("is_blacklisted")
+            or not await _verified_firebase_user(link["uid"])):
         return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
                                           status_code=400)
     await ref.update({"used_at": _now()})
-
-    # The link was opened from this address's inbox, so when it's the
-    # account's own sign-in email that still shows unverified, it's verified now.
-    if link.get("via") == "account":
-        try:
-            fb_user = await asyncio.to_thread(fb_auth.get_user, link["uid"])
-            if not fb_user.email_verified and (fb_user.email or "").lower() == link.get("email"):
-                await asyncio.to_thread(fb_auth.update_user, link["uid"], email_verified=True)
-        except Exception:
-            log.warning("auth: couldn't mark %s's email verified after an emailed sign-in", link["uid"])
     return _make_redirect_with_cookie(request, create_token(link["uid"]), safe_next(link.get("next")))
 
 

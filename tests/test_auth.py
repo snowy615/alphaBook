@@ -335,8 +335,10 @@ import datetime as _dt
 from starlette.requests import Request as _Request
 
 
-def _req(origin=None, path="/auth/email-link"):
+def _req(origin=None, path="/auth/email-link", forwarded_for=None):
     headers = [(b"host", b"alphabook.uk"), (b"x-forwarded-proto", b"https")]
+    if forwarded_for:
+        headers.append((b"x-forwarded-for", f"{forwarded_for}, 130.211.0.1".encode()))
     if origin:
         headers.append((b"origin", origin.encode()))
     return _Request({"type": "http", "method": "POST", "path": path, "headers": headers,
@@ -344,7 +346,7 @@ def _req(origin=None, path="/auth/email-link"):
 
 
 class TestEmailSignInLink:
-    def _setup(self, monkeypatch, users=None, applications=None, fb_verified=True):
+    def _setup(self, monkeypatch, users=None, applications=None, fb_verified=True, fb_disabled=False):
         fake_db = _FakeDB()
         fake_db.collections["users"] = users or {}
         fake_db.collections["applications"] = applications or {}
@@ -357,17 +359,21 @@ class TestEmailSignInLink:
         monkeypatch.setattr(auth.mailer, "send_email", fake_send)
         verified_calls = []
 
+        state = {"verified": fb_verified, "disabled": fb_disabled}
+
         class _FbUser:
             def __init__(self, uid):
-                self.email_verified = fb_verified
+                self.email_verified = state["verified"]
+                self.disabled = state["disabled"]
                 self.email = (fake_db.collections["users"].get(uid) or {}).get("email")
         monkeypatch.setattr(auth.fb_auth, "get_user", lambda uid: _FbUser(uid))
+        self.fb_state = state
         monkeypatch.setattr(auth.fb_auth, "update_user", lambda uid, **kw: verified_calls.append((uid, kw)))
         return fake_db, sent, verified_calls
 
-    def _ask(self, email, next="/apply"):
-        res = asyncio.run(auth.request_email_link(email=email, next=next))
-        return json.loads(res.body)
+    def _ask(self, email, next="/apply", ip="81.2.69.160"):
+        res = asyncio.run(auth.request_email_link(_req(forwarded_for=ip), email=email, next=next))
+        return {**json.loads(res.body), "_code": res.status_code}
 
     def _token(self, mail):
         url = mail["cta_url"] or _re.search(r'href="([^"]+)"', mail["body"]).group(1)
@@ -458,12 +464,51 @@ class TestEmailSignInLink:
         with pytest.raises(auth.HTTPException):
             asyncio.run(auth.confirm_email_link(_req(origin="https://evil.example"), t=self._token(sent[0])))
 
-    def test_signing_in_from_the_inbox_verifies_an_unverified_sign_in_email(self, monkeypatch):
-        _, sent, verified = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@ox.ac.uk"}},
+    def test_an_unverified_account_gets_no_link_and_nothing_is_verified(self, monkeypatch):
+        """A throwaway sign-up has to verify the normal way; the link is no shortcut."""
+        _, sent, verified = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@temp-mail.io"}},
                                         fb_verified=False)
+        assert self._ask("t@temp-mail.io")["message"] == auth.LOGIN_LINK_SENT
+        assert sent == [] and verified == []
+
+    def test_an_unverified_account_gets_none_via_its_oxford_email_either(self, monkeypatch):
+        _, sent, _ = self._setup(
+            monkeypatch, users={"u1": {"username": "t", "email": "t@temp-mail.io"}},
+            applications={"u1": {"oxford_email": "t@ox.ac.uk", "oxford_email_verified": True}}, fb_verified=False)
         self._ask("t@ox.ac.uk")
-        asyncio.run(auth.confirm_email_link(_req(), t=self._token(sent[0])))
-        assert verified == [("u1", {"email_verified": True})]
+        assert sent == []
+
+    def test_a_disabled_account_gets_no_link(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}},
+                                 fb_disabled=True)
+        self._ask("t@gmail.com")
+        assert sent == []
+
+    def test_an_account_suspended_after_the_link_was_sent_cant_use_it(self, monkeypatch):
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        fake_db.collections["users"]["u1"]["is_blacklisted"] = True
+        assert asyncio.run(auth.confirm_email_link(_req(), t=self._token(sent[0]))).status_code == 400
+        fake_db.collections["users"]["u1"]["is_blacklisted"] = False
+        self.fb_state["disabled"] = True
+        assert asyncio.run(auth.confirm_email_link(_req(), t=self._token(sent[0]))).status_code == 400
+
+    def test_at_most_five_links_a_day_per_address(self, monkeypatch):
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        for i in range(8):
+            self._ask("t@gmail.com", ip=f"10.0.0.{i}")
+            # step past the one-a-minute gap
+            doc = fake_db.collections[auth.LOGIN_LINK_REQUESTS]["email_" + auth._hash("t@gmail.com")]
+            doc["times"] = [t - _dt.timedelta(minutes=2) for t in doc["times"]]
+        assert len(sent) == auth.LOGIN_LINKS_PER_DAY
+
+    def test_one_connection_cant_spray_requests(self, monkeypatch):
+        users = {f"u{i}": {"username": f"t{i}", "email": f"t{i}@gmail.com"} for i in range(25)}
+        _, sent, _ = self._setup(monkeypatch, users=users)
+        codes = [self._ask(f"t{i}@gmail.com", ip="81.2.69.160")["_code"] for i in range(25)]
+        assert len(sent) == auth.LOGIN_LINK_REQUESTS_PER_HOUR
+        assert codes[-1] == 429
+        assert self._ask("t24@gmail.com", ip="81.2.69.161")["_code"] == 200   # someone else isn't blocked
 
     @pytest.mark.parametrize("given, expected", [
         ("/apply", "/apply"), ("/apply?x=1", "/apply?x=1"), ("", "/"), (None, "/"),
