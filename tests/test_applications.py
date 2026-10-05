@@ -3819,3 +3819,122 @@ def test_the_review_page_can_list_bootcamp_or_analyst_first(monkeypatch):
     assert tracks == {"u1": "bootcamp", "u2": "analyst"}
     assert 'id="apaTrackOrder"' in html and ">Bootcamp first</button>" in html
     assert "analystFirst" in html          # remembered with the rest of the view
+
+
+class TestMoveToBootcamp:
+    """A reviewer moves an Analyst applicant to the matching Bootcamp: only
+    the programme changes, the applicant is emailed, and the card says so."""
+
+    def _setup(self, monkeypatch, status=ap.S_SUBMITTED, programme=mb.M_QUANT_ANALYST, membership=None, **extra):
+        users = {"u1": {"membership": membership}} if membership else {}
+        fake_db, sent, _ = _flow_db(monkeypatch, users=users, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+            "email": "jo@example.com", "oxford_email": "jo@merton.ox.ac.uk",
+            "programme": programme, "status": status,
+            "reviews": {"r9": {"reviewer_name": "al", "cv_rubric": rubric(12), "cv_score": 12}}, **extra}})
+        return fake_db, sent
+
+    def _move(self, who=None):
+        return asyncio.run(ap.move_to_bootcamp("u1", who or User(id="r1", username="priya")))
+
+    def test_an_analyst_reviewer_moves_them_and_everything_else_carries_over(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        assert self._move() == {"ok": True, "programme": mb.M_QUANT_BOOTCAMP}
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["programme"] == mb.M_QUANT_BOOTCAMP
+        assert stored["status"] == ap.S_SHORTLISTED
+        assert stored["reviews"]["r9"]["cv_score"] == 12
+        moved = stored["moved_to_bootcamp"]
+        assert (moved["from"], moved["to"], moved["by"]) == (mb.M_QUANT_ANALYST, mb.M_QUANT_BOOTCAMP, "priya")
+
+    def test_the_applicant_is_emailed_at_both_addresses(self, monkeypatch):
+        _, sent = self._setup(monkeypatch)
+        self._move()
+        assert len(sent) == 1
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"
+        assert sent[0]["subject"] == "Alpha Fund: your application has moved to Quant Bootcamp"
+        assert "Hi Jo Bloggs" in sent[0]["body_html"]
+        assert "review it as a Quant Bootcamp application" in sent[0]["body_html"]
+
+    def test_a_shortlisted_applicant_is_told_their_interview_stands(self, monkeypatch):
+        _, sent = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        self._move()
+        assert "still shortlisted for interview" in sent[0]["body_html"]
+
+    def test_the_email_has_no_dashes(self, monkeypatch):
+        for status in (ap.S_SUBMITTED, ap.S_SHORTLISTED):
+            email = ap._moved_to_bootcamp_email({"full_name": "Jo", "status": status},
+                                                mb.M_QUANT_ANALYST, mb.M_QUANT_BOOTCAMP)
+            assert "—" not in email["body_html"] and "–" not in email["body_html"]
+
+    @pytest.mark.parametrize("status", [ap.S_CV, ap.S_OA_ACTIVE, ap.S_ACCEPTED, ap.S_REJECTED])
+    def test_only_while_undecided(self, monkeypatch, status):
+        fake_db, sent = self._setup(monkeypatch, status=status)
+        with pytest.raises(HTTPException):
+            self._move()
+        assert fake_db.collections[ap.COLLECTION]["u1"]["programme"] == mb.M_QUANT_ANALYST
+        assert sent == []
+
+    def test_a_bootcamp_application_cannot_be_moved(self, monkeypatch):
+        self._setup(monkeypatch, programme=mb.M_QUANT_BOOTCAMP)
+        with pytest.raises(HTTPException):
+            self._move()
+
+    def test_not_for_someone_already_in_that_bootcamp(self, monkeypatch):
+        _, sent = self._setup(monkeypatch, membership=mb.M_QUANT_BOOTCAMP)
+        with pytest.raises(HTTPException, match="already"):
+            self._move()
+        assert sent == []
+
+    def test_accepting_after_the_move_grants_bootcamp(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        self._move()
+        asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_BOOTCAMP
+
+
+class TestCardComments:
+    """Each card has a Comments section built from reviewers' general
+    comments; the old decision note box is gone."""
+
+    def _render(self, monkeypatch, application):
+        return TestScoringView()._render(monkeypatch, {"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", **application}})
+
+    def test_comments_show_with_who_wrote_them(self, monkeypatch):
+        html = self._render(monkeypatch, {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST, "reviews": {
+            "r1": {"reviewer_name": "priya", "note": "Strong maths, thin on markets",
+                   "updated_at": dt.datetime(2026, 10, 4, 9, 30, tzinfo=dt.timezone.utc)},
+            "r2": {"reviewer_name": "al", "cv_rubric": {"major": 2}},
+        }})
+        assert ">Comments<" in html
+        assert "Strong maths, thin on markets" in html and "priya · 04 Oct, 09:30" in html
+        assert "openComment('u1')" in html
+
+    def test_no_comments_says_so(self, monkeypatch):
+        html = self._render(monkeypatch, {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST})
+        assert "No comments yet." in html
+
+    def test_the_decision_note_box_is_gone(self, monkeypatch):
+        for status in (ap.S_SUBMITTED, ap.S_SHORTLISTED):
+            html = self._render(monkeypatch, {"status": status, "programme": mb.M_QUANT_ANALYST})
+            assert "decision-note-" not in html and "Note for the record (optional)" not in html
+
+    def test_an_old_decision_note_is_kept_as_a_comment(self, monkeypatch):
+        html = self._render(monkeypatch, {"status": ap.S_REJECTED, "programme": mb.M_QUANT_ANALYST,
+                                          "decided_by": "root", "decision_note": "Weak estimation"})
+        assert "Note for the record · root" in html and "Weak estimation" in html
+
+    def test_the_move_button_shows_only_on_undecided_analyst_applications(self, monkeypatch):
+        html = self._render(monkeypatch, {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST})
+        assert "moveToBootcamp('u1'" in html and "Move to Quant Bootcamp" in html
+        for status, programme in ((ap.S_SUBMITTED, mb.M_QUANT_BOOTCAMP), (ap.S_ACCEPTED, mb.M_QUANT_ANALYST)):
+            html = self._render(monkeypatch, {"status": status, "programme": programme})
+            assert "moveToBootcamp('u1'" not in html
+
+    def test_a_moved_application_is_tagged_and_noted(self, monkeypatch):
+        html = self._render(monkeypatch, {"status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
+                                          "moved_to_bootcamp": {"from": mb.M_QUANT_ANALYST, "to": mb.M_QUANT_BOOTCAMP,
+                                                                "by": "priya", "at": dt.datetime(2026, 10, 5, 14, 0)}})
+        assert "moved from Quant Analyst" in html
+        assert "Moved from Quant Analyst to Quant Bootcamp." in html and "mention it at interview" in html

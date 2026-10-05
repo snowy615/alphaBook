@@ -129,10 +129,7 @@
       display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
       border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
     }
-    .apa-decide input[type="text"] {
-      flex: 1; min-width: 200px; padding: 9px 12px; border: 1px solid var(--border);
-      background: var(--bg); color: var(--text); font: inherit; font-size: 13px;
-    }
+    .apa-decide .apa-move { margin-left: auto; }
     .apa-decided-note {
       border-top: 1px solid var(--border); margin-top: 18px; padding-top: 16px;
       font-size: 13px; color: var(--muted);
@@ -154,6 +151,11 @@
     /* ── Scoring view ─────────────────────────────────────────────────────── */
     .apa-score-buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 6px; }
     .apa-review-note { white-space: pre-wrap; color: var(--muted); margin: 4px 0 2px; font-size: 13px; }
+    .apa-comments { list-style: none; margin: 6px 0 10px; padding: 0; }
+    .apa-comments li { border-left: 3px solid var(--border); padding: 4px 0 4px 12px; margin: 0 0 10px; font-size: 13px; }
+    .apa-comments li.is-record { border-left-color: var(--brand); }
+    .apa-comment-meta { color: var(--muted); font-size: 12px; }
+    .apa-comment-text { white-space: pre-wrap; margin-top: 2px; }
     .sc-overlay {
       position: fixed; inset: 0; z-index: 1000; background: var(--bg);
       display: grid; grid-template-rows: auto 1fr;
@@ -696,6 +698,7 @@
         <div>
           <div class="apa-tags">
             <span class="apa-tag">{{ r.programme }}</span>
+            {% if r.moved_to_bootcamp %}<span class="apa-tag is-warn">moved from {{ r.moved_to_bootcamp.from }}</span>{% endif %}
             <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
             {% if r.event_ticket == "fast_track" %}<span class="apa-tag is-info">Fast-Track CV Clinic</span>
             {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
@@ -826,11 +829,41 @@
               <strong>{{ e.reviewer_name }}</strong>:
               CV {% if e.get("cv_score") is not none and e.get("cv_rubric") %}{{ e.cv_score }}/{{ e.get("cv_max") or r.review.cv_max }}{% elif e.get("cv_rubric") %}<span class="msp-muted">in progress</span>{% else %}–{% endif %},
               interview {% if e.get("interview_score") is not none and e.get("interview_rubric") %}{{ e.interview_score }}/{{ r.review.interview_max }}{% elif e.get("interview_rubric") %}<span class="msp-muted">in progress</span>{% else %}–{% endif %}
-              {% if e.note %}<div class="apa-review-note">{{ e.note }}</div>{% endif %}
             </li>
             {% endfor %}
           </ul>
           {% endif %}
+
+          <!-- Comments: each reviewer's general comments from the scoring
+               view, plus record lines (a move to Bootcamp, and any note
+               left with a decision before the note box was removed). -->
+          <p class="apa-h" style="margin-top:18px;">Comments</p>
+          {% set commented = r.review.entries | selectattr("note") | list %}
+          {% if commented or r.moved_to_bootcamp or r.decision_note %}
+          <ul class="apa-comments">
+            {% if r.moved_to_bootcamp %}{% set mv = r.moved_to_bootcamp %}
+            <li class="is-record">
+              <div class="apa-comment-meta">{{ mv.by }}{% if mv.at %} · {{ mv.at.strftime("%d %b, %H:%M") }}{% endif %}</div>
+              <div class="apa-comment-text">Moved from {{ mv.from }} to {{ mv.to }}. They were emailed to tell them; mention it at interview too.</div>
+            </li>
+            {% endif %}
+            {% if r.decision_note %}
+            <li class="is-record">
+              <div class="apa-comment-meta">Note for the record{% if r.decided_by or r.shortlisted_by %} · {{ r.decided_by or r.shortlisted_by }}{% endif %}</div>
+              <div class="apa-comment-text">{{ r.decision_note }}</div>
+            </li>
+            {% endif %}
+            {% for e in commented %}
+            <li>
+              <div class="apa-comment-meta">{{ e.reviewer_name }}{% if e.updated_at %} · {{ e.updated_at.strftime("%d %b, %H:%M") }}{% endif %}</div>
+              <div class="apa-comment-text">{{ e.note }}</div>
+            </li>
+            {% endfor %}
+          </ul>
+          {% else %}
+          <p class="msp-muted" style="font-size:13px;margin:4px 0 10px;">No comments yet.</p>
+          {% endif %}
+          <button type="button" class="btn ghost" onclick="openComment('{{ r.user_id }}')">{% if m.get("note") %}Edit my comment{% else %}Add a comment{% endif %}</button>
 
           <script type="application/json" id="score-data-{{ r.user_id }}">{{ {
             "name": r.full_name or r.username,
@@ -928,12 +961,17 @@
              reject on their own. Accept gets its own heavier confirmation
              client-side since it's final and grants membership; every
              decision is attributed and shown below, visible to everyone. -->
+        {% macro move_button(r) %}{% if r.can_move_to_bootcamp %}
+          <button class="btn ghost apa-move" data-name="{{ r.full_name or r.username }}" data-from="{{ r.programme }}"
+                  data-to="{{ r.programme | replace('Analyst', 'Bootcamp') }}"
+                  onclick="moveToBootcamp('{{ r.user_id }}', this)">Move to {{ r.programme | replace('Analyst', 'Bootcamp') }}</button>
+        {% endif %}{% endmacro %}
         {% if r.status == "submitted" %}
         <div class="apa-decide">
-          <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)">
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
           <button class="btn" onclick="autoShortlist('{{ r.user_id }}')">Automatic shortlist</button>
           <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+          {{ move_button(r) }}
         </div>
         {% elif r.status == "shortlisted" %}
         {% if r.auto_shortlist %}
@@ -943,13 +981,13 @@
         <p class="apa-decided-note">Shortlisted by {{ r.shortlisted_by }}</p>
         {% endif %}
         <div class="apa-decide">
-          <input type="text" id="decision-note-{{ r.user_id }}" placeholder="Note for the record (optional)" value="{{ r.decision_note }}">
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
           <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+          {{ move_button(r) }}
         </div>
         {% elif r.status in ("accepted", "rejected") %}
         <p class="apa-decided-note">
-          {{ r.status | capitalize }}{% if r.decided_by %} by {{ r.decided_by }}{% endif %}{% if r.decision_note %} — {{ r.decision_note }}{% endif %}
+          {{ r.status | capitalize }}{% if r.decided_by %} by {{ r.decided_by }}{% endif %}
         </p>
         {% endif %}
 
@@ -1226,7 +1264,7 @@
     const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
     const INTERVIEW_TIMERS = {{ interview_timers | tojson }};
     const sc = { uid: null, d: null, section: null, changed: false, anyChanged: false,
-                 pending: {}, inFlight: false, noteTimer: null };
+                 pending: {}, inFlight: false, noteTimer: null, seen: {} };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1236,7 +1274,9 @@
 
     function openScoring(uid, section) {
       sc.uid = uid;
-      sc.d = JSON.parse($sc("score-data-" + uid).textContent);
+      // Previous / Next can come back to someone already edited in this
+      // visit; reuse that copy rather than the page's, which predates the edits.
+      sc.d = sc.seen[uid] || (sc.seen[uid] = JSON.parse($sc("score-data-" + uid).textContent));
       sc.changed = false;
       sc.pending = {};
       $sc("scTitle").textContent = sc.d.name;
@@ -1257,6 +1297,12 @@
       if ($sc("scNote").value !== (sc.d.mine.note || "")) queueSave({ note: $sc("scNote").value });
       const wait = () => (sc.inFlight || Object.keys(sc.pending).length) ? setTimeout(wait, 150) : then();
       wait();
+    }
+
+    function openComment(uid) {
+      openScoring(uid, "cv");
+      $sc("scNote").scrollIntoView({ block: "center" });
+      $sc("scNote").focus();
     }
 
     function closeScoring() {
@@ -1706,18 +1752,38 @@
         : decision === "accept" ? await askAcceptConfirm()
         : confirm(verbs[decision] + " this application?" + extra);
       if (!confirmed) return;
-      const note = document.getElementById("decision-note-" + userId);
       try {
         const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/decide`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision, note: note ? note.value : "" }),
+          body: JSON.stringify({ decision }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         location.reload();
       } catch (err) {
+        flash(err.message, true);
+      }
+    }
+
+    async function moveToBootcamp(userId, btn) {
+      const { name, from, to } = btn.dataset;
+      if (!confirm(`Move ${name} from ${from} to ${to}?\n\n`
+        + `They'll be emailed straight away to tell them their application has moved. `
+        + `Their CV, answers, scores and any interview carry over, and accepting them `
+        + `later makes them a ${to} member.\n\nOnly do this if the committee has agreed.`)) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/move-to-bootcamp`, {
+          method: "POST", credentials: "include",
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        window.apaFocus = userId;
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
         flash(err.message, true);
       }
     }

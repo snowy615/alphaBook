@@ -488,7 +488,7 @@ class FlagEvent(BaseModel):
 
 class Decision(BaseModel):
     decision: str      # "shortlist" | "auto_shortlist" | "accept" | "reject"
-    note: Optional[str] = None
+    note: Optional[str] = None     # auto_shortlist only: the details that back up the criterion
     reason: Optional[str] = None   # auto_shortlist only: a key of AUTO_SHORTLIST_REASONS
 
 
@@ -1709,6 +1709,9 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "shortlisted_at": _as_utc(application.get("shortlisted_at")),
         "shortlisted_by": application.get("shortlisted_by") or "",
         "auto_shortlist": application.get("auto_shortlist"),
+        "moved_to_bootcamp": application.get("moved_to_bootcamp"),
+        "can_move_to_bootcamp": (application.get("programme") in BOOTCAMP_FOR_ANALYST
+                                 and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "availability": _availability_of(application),
         "availability_updated_at": _as_utc(application.get("availability_updated_at")),
         "previous_application": (
@@ -2658,8 +2661,6 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["decided_at"] = _now()
         application["decided_by"] = reviewer.username
 
-    if payload.note is not None:
-        application["decision_note"] = (payload.note or "").strip()[:500]
     await _save(user_id, application)
     await _send_decision_email(application, application["status"])
     if application["status"] == S_REJECTED:
@@ -2673,6 +2674,81 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
                 "membership": programme, "track": legacy,
             })
     return {"ok": True, "status": application["status"]}
+
+
+# ── Moving an Analyst applicant to Bootcamp ─────────────────────────────────
+# A reviewer can decide someone who applied for Analyst is a better fit for the
+# matching Bootcamp. Only the programme changes: CV, answers, scores and any
+# interview carry over, and accepting them later grants the Bootcamp tier.
+# The applicant is emailed straight away, and the card keeps who moved them
+# and when, so whoever interviews them knows it happened.
+BOOTCAMP_FOR_ANALYST = {
+    mb.M_QUANT_ANALYST: mb.M_QUANT_BOOTCAMP,
+    mb.M_FUND_ANALYST: mb.M_FUND_BOOTCAMP,
+}
+
+_MOVED_NEXT_STEP = {
+    S_SUBMITTED: "The committee will review it as a {to} application and get back to you soon.",
+    S_SHORTLISTED: "You're still shortlisted for interview, and we're happy to talk the change "
+                   "through with you then.",
+}
+
+
+def _moved_to_bootcamp_email(application: dict, moved_from: str, moved_to: str) -> Dict[str, str]:
+    """The email an applicant gets when their application is moved. Kept
+    separate from sending so the wording can be checked on its own."""
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    old, new = html.escape(moved_from), html.escape(moved_to)
+    next_step = _MOVED_NEXT_STEP[application["status"]].format(to=new)
+    return {
+        "subject": f"Alpha Fund: your application has moved to {moved_to}",
+        "title": "Your application has moved",
+        "body_html": (
+            f"<p>Hi {name},</p>"
+            f"<p>Thank you for applying to <strong>{old}</strong>. Having reviewed your "
+            f"application, the committee has moved it to <strong>{new}</strong>, which we "
+            f"think is the right place for you to start with us.</p>"
+            f"<p>Everything you've submitted carries over, so there's nothing you need to do "
+            f"again. {next_step}</p>"
+            f"<p>If you have any questions, just reply to this email.</p>"
+        ),
+        "cta_label": "View your application",
+        "cta_url": f"{BASE_URL}/apply",
+    }
+
+
+@router.post("/admin/{user_id}/move-to-bootcamp")
+async def move_to_bootcamp(user_id: str, reviewer: User = Depends(require_reviewer)):
+    """
+    Move an Analyst application to the matching Bootcamp, and email them.
+
+    Open to any reviewer, like every other decision on this page; the
+    review page asks for confirmation first. Only while the application is
+    still undecided (submitted or shortlisted).
+    """
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    moved_from = application.get("programme")
+    moved_to = BOOTCAMP_FOR_ANALYST.get(moved_from)
+    if moved_to is None:
+        raise HTTPException(400, "Only an Analyst application can be moved to Bootcamp")
+    if application.get("status") not in (S_SUBMITTED, S_SHORTLISTED):
+        raise HTTPException(400, "Only an application that's submitted or shortlisted can be moved")
+    if mb.membership_of(await _user_data(user_id)) == moved_to:
+        raise HTTPException(400, f"They're already a {moved_to} member")
+    await _with_name(user_id, application)
+
+    application["programme"] = moved_to
+    application["moved_to_bootcamp"] = {
+        "from": moved_from, "to": moved_to, "by": reviewer.username, "at": _now(),
+    }
+    await _save(user_id, application)
+
+    to = await _applicant_to(application)
+    if to:
+        await mailer.send_email(to=to, **_moved_to_bootcamp_email(application, moved_from, moved_to))
+    return {"ok": True, "programme": moved_to}
 
 
 # Everything an OA sitting produces — cleared on redo so the applicant lands
