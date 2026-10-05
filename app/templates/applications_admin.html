@@ -529,8 +529,11 @@
                        "submitted": "screen", "shortlisted": "shortlist",
                        "accepted": "accepted", "rejected": "rejected"} %}
     {# A submitted Fast-Track application is waiting on its in-person CV round,
-       so it sits under its own tab rather than the online CV screen. #}
-    {% macro stage(r) %}{{ "fasttrack" if r.status == "submitted" and r.is_fast_tracked else stage_of.get(r.status, "started") }}{% endmacro %}
+       so it sits under its own tab rather than the online CV screen. A
+       shortlisted candidate with an interview booked moves on to Interview. #}
+    {% macro stage(r) %}{{ "fasttrack" if r.status == "submitted" and r.is_fast_tracked
+       else "interview" if r.status == "shortlisted" and r.interview_booked
+       else stage_of.get(r.status, "started") }}{% endmacro %}
 
     <div class="apa-filters">
       <input type="search" id="apaSearch" class="apa-search" autocomplete="off"
@@ -542,6 +545,7 @@
         <button type="button" class="apa-stage-tab" data-stage="screen">CV screen <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="fasttrack">Fast-Track <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="shortlist">Shortlisted <span class="n"></span></button>
+        <button type="button" class="apa-stage-tab" data-stage="interview">Interview <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="accepted">Accepted <span class="n"></span></button>
         <button type="button" class="apa-stage-tab" data-stage="rejected">Rejected <span class="n"></span></button>
       </div>
@@ -584,11 +588,13 @@
                 data-name="{{ (r.full_name or r.username) | lower }}"
                 data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
                 data-track="{{ 'analyst' if 'Analyst' in (r.programme or '') else 'bootcamp' }}"
+                data-avail="{{ '1' if r.has_availability else '0' }}"
                 data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
               <td class="apa-rank" data-rank>{{ r.rank if r.rank else "—" }}</td>
               <td>
                 <a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
                 <div class="msp-muted" style="font-size:12px;">{{ r.username }}{% if r.year_of_study %} · {{ r.year_of_study }}{% endif %}</div>
+                {% if r.status == "shortlisted" and r.has_availability and not r.interview_booked %}<span class="apa-tag is-good">availability in</span>{% endif %}
               </td>
               <td>{{ r.programme }}</td>
               <td>
@@ -678,6 +684,7 @@
                 data-name="{{ (r.full_name or r.username) | lower }}"
                 data-year1="{{ '' if not r.year_of_study else ('1' if r.year_of_study == '1st year' else '0') }}"
                 data-track="{{ 'analyst' if 'Analyst' in (r.programme or '') else 'bootcamp' }}"
+                data-avail="{{ '1' if r.has_availability else '0' }}"
          data-q="{{ [r.full_name, r.username, r.email, r.oxford_email, r.college, r.degree, r.programme] | select | join(' ') | lower }}">
       <div class="head">
         <div class="apa-who">
@@ -704,7 +711,9 @@
             {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
             {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
             {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
+            {% elif r.status == "shortlisted" and r.interview_booked %}<span class="apa-tag is-info">interview booked</span>
             {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
+            {% if r.status == "shortlisted" and r.has_availability and not r.interview_booked %}<span class="apa-tag is-good">availability in</span>{% endif %}
             {% if r.auto_shortlist %}<span class="apa-tag is-good">auto-shortlisted</span>{% endif %}
             {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
             {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
@@ -1857,7 +1866,7 @@
       // The shortlist is ranked by the average of the CV and interview
       // rounds; everything else by the CV round alone. Both scores are on
       // a 10-point scale already. Unscored sorts last, then by name.
-      function rankKey() { return stage === "shortlist" ? "combined" : "cv"; }
+      function rankKey() { return stage === "shortlist" || stage === "interview" ? "combined" : "cv"; }
       function order(els, key) {
         return els.slice().sort((a, b) => {
           const x = a.dataset[key], y = b.dataset[key];
@@ -1875,9 +1884,13 @@
       // stands overall.
       const trackGroup = (el) => (el.dataset.track === "analyst") === analystFirst ? 0 : 1;
       const yearGroup = (el) => !year1First ? 0 : el.dataset.year1 === "1" ? 0 : el.dataset.year1 === "0" ? 1 : 2;
+      // On the Shortlisted tab, whoever has sent their availability comes
+      // first (they're the ones ready to book), ahead of the other groupings.
+      const availGroup = (el) => stage === "shortlist" && !unreviewed && el.dataset.avail !== "1" ? 1 : 0;
       function grouped(els) {
         return els.map((el, i) => [el, i])
-          .sort((a, b) => trackGroup(a[0]) - trackGroup(b[0]) || yearGroup(a[0]) - yearGroup(b[0]) || a[1] - b[1])
+          .sort((a, b) => availGroup(a[0]) - availGroup(b[0]) || trackGroup(a[0]) - trackGroup(b[0])
+            || yearGroup(a[0]) - yearGroup(b[0]) || a[1] - b[1])
           .map(([el]) => el);
       }
       function rerank() {

@@ -3938,3 +3938,54 @@ class TestCardComments:
                                                                 "by": "priya", "at": dt.datetime(2026, 10, 5, 14, 0)}})
         assert "moved from Quant Analyst" in html
         assert "Moved from Quant Analyst to Quant Bootcamp." in html and "mention it at interview" in html
+
+
+class TestShortlistAndInterviewTabs:
+    """Shortlisted lists whoever has sent availability first and marks them;
+    booking an interview moves a candidate to the Interview tab, and onto
+    the interviewer's own My pending interviews."""
+
+    WHEN = dt.datetime(2026, 10, 9, 14, 0, tzinfo=dt.timezone.utc)
+
+    def _render(self, monkeypatch):
+        now = dt.datetime.now(dt.timezone.utc)
+        base = {"status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP, "shortlisted_at": now}
+        return TestScoringView()._render(monkeypatch, {
+            "waiting": {"user_id": "waiting", "username": "w", "full_name": "Wai Ting", **base},
+            "ready": {"user_id": "ready", "username": "r", "full_name": "Ready Freddie", **base,
+                      "availability": ["2026-10-09T14:00"]},
+            "booked": {"user_id": "booked", "username": "b", "full_name": "Boo Ked", **base,
+                       "availability": ["2026-10-09T14:00"],
+                       "interview": {"interviewer_id": "admin1", "interviewer_name": "root",
+                                     "status": ap.INTERVIEW_CONFIRMED, "when": self.WHEN}},
+            "elsewhere": {"user_id": "elsewhere", "username": "e", "full_name": "Els Where", **base,
+                          "interview": {"interviewer_id": "someone-else", "interviewer_name": "al",
+                                        "status": ap.INTERVIEW_CONFIRMED, "when": self.WHEN}},
+        })
+
+    def _stage(self, html, uid):
+        return re.search(r'class="apa-item" data-stage="(\w+)"\s+data-mine="(\d)"\s+data-uid="%s"' % uid, html).groups()
+
+    def test_there_is_an_interview_tab(self, monkeypatch):
+        assert 'data-stage="interview">Interview' in self._render(monkeypatch)
+
+    def test_booking_an_interview_moves_them_to_the_interview_tab(self, monkeypatch):
+        html = self._render(monkeypatch)
+        assert self._stage(html, "waiting")[0] == "shortlist"
+        assert self._stage(html, "ready")[0] == "shortlist"
+        assert self._stage(html, "booked")[0] == "interview"
+        assert self._stage(html, "elsewhere")[0] == "interview"
+
+    def test_it_shows_under_the_interviewers_pending_interviews_only(self, monkeypatch):
+        html = self._render(monkeypatch)       # rendered as admin1
+        assert self._stage(html, "booked")[1] == "1"
+        assert self._stage(html, "elsewhere")[1] == "0"
+
+    def test_availability_is_flagged_for_ordering_and_marked(self, monkeypatch):
+        html = self._render(monkeypatch)
+        avail = dict(re.findall(r'data-uid="(\w+)"[^>]*?data-avail="(\d)"', html, re.S))
+        assert avail["ready"] == "1" and avail["waiting"] == "0"
+        card = lambda uid: html[html.index(f'id="a-{uid}"'):][:6000]
+        assert "availability in" in card("ready")
+        assert "availability in" not in card("waiting")
+        assert "availability in" not in card("booked") and "interview booked" in card("booked")

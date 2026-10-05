@@ -1714,6 +1714,11 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
                                  and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "availability": _availability_of(application),
         "availability_updated_at": _as_utc(application.get("availability_updated_at")),
+        # A shortlisted candidate with an interview booked has moved on to the
+        # Interview tab of the review page; one who has sent availability but
+        # isn't booked yet is listed first under Shortlisted.
+        "has_availability": bool(application.get("availability")),
+        "interview_booked": bool(interview_view and interview_view.get("status") != INTERVIEW_DECLINED),
         "previous_application": (
             {**application["previous_application"],
              "decided_at": _as_utc(application["previous_application"].get("decided_at"))}
