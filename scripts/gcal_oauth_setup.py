@@ -81,7 +81,11 @@ def main() -> None:
     parser.add_argument("--client-secret", required=True)
     args = parser.parse_args()
 
-    server = http.server.HTTPServer(("127.0.0.1", REDIRECT_PORT), _CallbackHandler)
+    # Threaded: browsers often open a spare "preconnect" socket and leave it
+    # idle. A single-threaded server blocks on it, so shutdown() below never
+    # returns and the script hangs after "you may close this window".
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", REDIRECT_PORT), _CallbackHandler)
+    server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
     auth_url = AUTH_URL + "?" + urllib.parse.urlencode({
@@ -121,7 +125,7 @@ def main() -> None:
             raise SystemExit("That address has no code in it. Run the script again.")
         _result["code"] = code
 
-    resp = httpx.post(TOKEN_URL, data={
+    resp = httpx.post(TOKEN_URL, timeout=30, data={
         "code": _result["code"],
         "client_id": args.client_id,
         "client_secret": args.client_secret,
