@@ -13,11 +13,10 @@ concurrency:
 jobs:
   test:
     runs-on: ubuntu-latest
-    # The whole suite runs in a few seconds locally — this job has been
-    # silently hanging for hours (once even the full 6h default) on most
-    # pushes, almost certainly from a flaky network wait during dependency
-    # install, and burning Actions minutes the whole time. Capping it here
-    # means a future hang costs minutes, not hours, no matter the cause.
+    # The whole suite runs in a few seconds. The old hang on most pushes was
+    # an infinite loop in tests/test_algo_engine.py, triggered by float error
+    # on a freshly booted runner's small time.monotonic(); fixed in
+    # algo_engine.advance(). The cap stays so any future hang costs minutes.
     timeout-minutes: 10
 
     strategy:
@@ -47,4 +46,6 @@ jobs:
         run: ruff check app/
 
       - name: Run tests
-        run: python -m pytest tests/ -v
+        # A test stuck for 60s dumps every thread's stack to the log, so a
+        # hang names its line instead of dying silently at the job timeout.
+        run: python -m pytest tests/ -v -o faulthandler_timeout=60

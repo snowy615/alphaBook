@@ -37,7 +37,10 @@ def started(run: Run, *uids: str) -> Run:
 def heartbeat(run: Run, ticks: int) -> None:
     target = min(run.tick + ticks, engine.TOTAL_TICKS)
     while run.tick < target and run.status == "running":
-        run.advance(now=run._t0 + target * engine.TICK_SECONDS)
+        # A call that makes no progress would otherwise spin here forever and
+        # hang CI until the job timeout; fail with the reason instead.
+        assert run.advance(now=run._t0 + target * engine.TICK_SECONDS), \
+            f"advance() stalled at tick {run.tick} short of {target}"
 
 
 def submit(run: Run, uid: str, *orders, allowance=None):
@@ -258,6 +261,15 @@ class TestHeartbeat:
         run.start()
         executed = run.advance(now=run._t0 + engine.RUN_SECONDS)
         assert executed == engine.MAX_CATCHUP_TICKS
+
+    def test_a_whole_tick_is_never_lost_to_float_error(self, run: Run):
+        """A clock started at 0.1 puts tick 4 at 3.9999999999999996 seconds."""
+        run.join("u1", "Ada")
+        run.start()
+        run._t0 = 0.1
+        assert (0.1 + 4) - 0.1 < 4
+        run.advance(now=run._t0 + 4 * engine.TICK_SECONDS)
+        assert run.tick == 4
 
     def test_advance_does_nothing_before_start(self, run: Run):
         run.join("u1", "Ada")

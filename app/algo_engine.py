@@ -350,7 +350,10 @@ class Run:
             return 0
 
         now = time.monotonic() if now is None else now
-        due = int((now - self._t0) / TICK_SECONDS)
+        # The epsilon stops float error truncating a whole tick away: on a
+        # machine only minutes into its uptime, (t0 + 4) - t0 can come out as
+        # 3.9999999999999996, and int() of that would hold the tick back.
+        due = int((now - self._t0) / TICK_SECONDS + 1e-6)
         target = min(due, TOTAL_TICKS)
         executed = 0
         while self.tick < target and executed < MAX_CATCHUP_TICKS:
