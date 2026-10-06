@@ -516,3 +516,145 @@ class TestEmailSignInLink:
     ])
     def test_only_same_site_paths_are_followed(self, given, expected):
         assert auth.safe_next(given) == expected
+
+
+class TestNoSecondAccountForAnAppliedEmail:
+    """Signing up (password or Google) with an email that's already the
+    Oxford email on someone's application doesn't make a second account."""
+
+    def _setup(self, monkeypatch, created_minutes_ago=1):
+        fake_db = _FakeDB()
+        fake_db.collections["applications"] = {"gmail": {"oxford_email": "grace.xu@cs.ox.ac.uk", "status": "shortlisted"}}
+        fake_db.collections["users"] = {"gmail": {"username": "grace", "email": "grace.rd.xu@gmail.com"}}
+        monkeypatch.setattr(db_module, "db", fake_db)
+        deleted = []
+        created = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(minutes=created_minutes_ago)).timestamp() * 1000
+
+        class _FbUser:
+            def __init__(self, uid):
+                self.email = "grace.rd.xu@gmail.com" if uid == "gmail" else "grace.xu@cs.ox.ac.uk"
+                self.provider_data = [type("P", (), {"provider_id": "google.com" if uid == "gmail" else "password"})()]
+                self.user_metadata = type("M", (), {"creation_timestamp": created})()
+        monkeypatch.setattr(auth.fb_auth, "get_user", lambda uid: _FbUser(uid))
+        monkeypatch.setattr(auth.fb_auth, "delete_user", lambda uid: deleted.append(uid))
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token",
+                            lambda token: {"uid": "newpw", "email": "grace.xu@cs.ox.ac.uk", "email_verified": False})
+        return fake_db, deleted
+
+    def test_the_sign_up_is_refused_and_points_to_the_existing_account(self, monkeypatch):
+        fake_db, deleted = self._setup(monkeypatch)
+        res = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="t", username="grace2"))
+        body = json.loads(res.body)
+        assert res.status_code == 409 and body["status"] == "linked"
+        assert "Google sign-in, g*********u@gmail.com" in body["message"]
+        assert "grace.rd.xu@gmail.com" not in body["message"]
+        assert "newpw" not in fake_db.collections["users"]
+        assert deleted == ["newpw"]           # the moments-old login doesn't linger
+
+    def test_an_older_login_is_refused_but_not_deleted(self, monkeypatch):
+        _, deleted = self._setup(monkeypatch, created_minutes_ago=60 * 24)
+        res = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="t", username="grace2"))
+        assert res.status_code == 409 and deleted == []
+
+    @pytest.mark.parametrize("addr, masked", [
+        ("sherrytsai1218@gmail.com", "s************8@gmail.com"),
+        ("ab@ox.ac.uk", "a*b@ox.ac.uk"), ("a@ox.ac.uk", "a*@ox.ac.uk"), ("", "another address"),
+    ])
+    def test_masking(self, addr, masked):
+        assert auth.mask_email(addr) == masked
+
+
+class TestSignInLinkForOlderApplications:
+    def test_an_application_from_before_the_code_check_still_gets_a_link(self, monkeypatch):
+        t = TestEmailSignInLink()
+        _, sent, _ = t._setup(monkeypatch, users={"u1": {"username": "sherry", "email": "sherrytsai1218@gmail.com"}},
+                              applications={"u1": {"oxford_email": "sant7183@ox.ac.uk"}})   # no flag at all
+        t._ask("sant7183@ox.ac.uk")
+        assert len(sent) == 1 and sent[0]["to"] == "sant7183@ox.ac.uk"
+
+
+class TestRenewingAnOldEmailButton:
+    def _setup(self, monkeypatch):
+        t = TestEmailSignInLink()
+        fake_db, sent, _ = t._setup(monkeypatch, users={"u1": {"username": "sherry", "email": "s@gmail.com"}})
+        url = asyncio.run(auth.account_link("u1", "sant7183@ox.ac.uk", "/apply"))
+        return fake_db, sent, url.split("t=", 1)[1]
+
+    def test_a_used_button_offers_a_fresh_link_to_the_same_inbox(self, monkeypatch):
+        fake_db, sent, token = self._setup(monkeypatch)
+        asyncio.run(auth.confirm_email_link(_req(), t=token))             # used once
+        page = asyncio.run(auth.email_link_page(_req(), t=token)).body.decode()
+        assert "Email me a new link" in page
+        res = asyncio.run(auth.renew_email_link(_req(), t=token))
+        assert auth.mask_email("sant7183@ox.ac.uk") in res.body.decode()
+        assert len(sent) == 1 and sent[0]["to"] == "sant7183@ox.ac.uk"
+        fresh = sent[0]["cta_url"].split("t=", 1)[1]
+        assert fake_db.collections[auth.LOGIN_LINKS][auth._hash(fresh)]["uid"] == "u1"
+
+    def test_a_week_old_button_still_renews_but_not_a_very_old_one(self, monkeypatch):
+        fake_db, sent, token = self._setup(monkeypatch)
+        doc = fake_db.collections[auth.LOGIN_LINKS][auth._hash(token)]
+        doc["expires_at"] = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=1)
+        assert "Email me a new link" in asyncio.run(auth.email_link_page(_req(), t=token)).body.decode()
+        doc["created_at"] = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=90)
+        assert asyncio.run(auth.renew_email_link(_req(), t=token)).status_code == 400
+        assert sent == []
+
+    def test_an_unknown_token_renews_nothing(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch)
+        assert asyncio.run(auth.renew_email_link(_req(), t="made-up")).status_code == 400
+        assert sent == []
+
+
+class TestMergedAccounts:
+    """A merged extra account leads to the person's main account by every route."""
+
+    def _setup(self, monkeypatch):
+        fake_db = _FakeDB()
+        fake_db.collections["users"] = {
+            "main": {"username": "sherry", "email": "sherrytsai1218@gmail.com"},
+            "extra": {"username": "SherryCai", "email": "x.mfe26@said.oxford.edu", "merged_into": "main"}}
+        fake_db.collections["applications"] = {"main": {"oxford_email": "sant7183@ox.ac.uk", "status": "shortlisted"}}
+        monkeypatch.setattr(db_module, "db", fake_db)
+
+        class _FbUser:
+            email_verified, disabled = True, False
+        monkeypatch.setattr(auth.fb_auth, "get_user", lambda uid: _FbUser())
+        return fake_db
+
+    def test_an_old_session_for_the_extra_account_opens_the_main_one(self, monkeypatch):
+        self._setup(monkeypatch)
+        user = asyncio.run(auth.get_user_from_token(auth.create_token("extra")))
+        assert user.id == "main" and user.username == "sherry"
+
+    def test_signing_in_with_the_extra_login_gives_the_main_accounts_session(self, monkeypatch):
+        self._setup(monkeypatch)
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token",
+                            lambda t: {"uid": "extra", "email": "x.mfe26@said.oxford.edu", "email_verified": True})
+        res = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="t", username=None))
+        session = _re.search(r"__session=([^;]+)", res.headers["set-cookie"]).group(1)
+        assert auth.jwt.decode(session, auth.SECRET_KEY, algorithms=[auth.ALGORITHM])["sub"] == "main"
+
+    def test_a_sign_in_link_for_the_extra_address_leads_to_the_main_account(self, monkeypatch):
+        fake_db = self._setup(monkeypatch)
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            sent.append(cta_url)
+            return True
+        monkeypatch.setattr(auth.mailer, "send_email", fake_send)
+        asyncio.run(auth.request_email_link(_req(forwarded_for="1.2.3.4"), email="x.mfe26@said.oxford.edu", next="/apply"))
+        token = sent[0].split("t=", 1)[1]
+        assert fake_db.collections[auth.LOGIN_LINKS][auth._hash(token)]["uid"] == "main"
+
+    def test_the_oxford_email_offers_one_link_not_two(self, monkeypatch):
+        fake_db = self._setup(monkeypatch)
+        fake_db.collections["applications"]["extra"] = {"oxford_email": "sant7183@ox.ac.uk", "oxford_email_verified": True}
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None):
+            sent.append((cta_url, body_html))
+            return True
+        monkeypatch.setattr(auth.mailer, "send_email", fake_send)
+        asyncio.run(auth.request_email_link(_req(forwarded_for="1.2.3.5"), email="sant7183@ox.ac.uk", next="/apply"))
+        assert len(sent) == 1 and sent[0][0] is not None      # a single button, not a choice of accounts

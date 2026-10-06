@@ -80,7 +80,7 @@ from app.outreach import (
     FAST_TRACK_CAPACITY,
 )
 from app.admin import require_admin
-from app.auth import current_user
+from app.auth import account_hint, account_link, already_linked_message, application_using_email, current_user
 from app.models import User
 
 log = logging.getLogger("uvicorn.error")
@@ -763,6 +763,21 @@ async def _applicant_to(application: dict) -> str:
     return ", ".join(await _applicant_addresses(application))
 
 
+async def _apply_button_url(uid: Optional[str], application: dict) -> str:
+    """Where an email's "go to your application" button points: a link that
+    signs straight into the account this application is on (from either the
+    Oxford or the personal inbox, whatever the browser was signed into) and
+    opens the application page. Falls back to the plain page when that
+    account can't take one."""
+    uid = uid or application.get("user_id")
+    if uid:
+        to = (await _applicant_addresses(application) or [""])[0]
+        link = await account_link(uid, to, "/apply")
+        if link:
+            return link
+    return f"{BASE_URL}/apply"
+
+
 async def _send_submission_confirmation(application: dict) -> None:
     """The one email every candidate gets: proof their assessment went in."""
     to = await _applicant_to(application)
@@ -1061,6 +1076,11 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         )
 
     oxford_email = _resolve_oxford_email(data.get("email") or "", req.oxford_email)
+    # One application per Oxford email: someone who already applied from
+    # another account is sent back to it, not given a second application.
+    other = await application_using_email(oxford_email, exclude_uid=uid)
+    if other:
+        raise HTTPException(409, already_linked_message(await account_hint(other)))
 
     existing = await _load(uid)
     # Applicants can apply to Quant or Fundamental, not both: asked of every
@@ -2313,7 +2333,7 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
 
     sent = await mailer.send_email(
         to=to, subject=copy["subject"], title="A nudge on your application",
-        body_html=body, cta_label=copy["cta"], cta_url=f"{BASE_URL}/apply",
+        body_html=body, cta_label=copy["cta"], cta_url=await _apply_button_url(user_id, application),
     )
     if not sent:
         raise HTTPException(502, "Could not send the reminder — check the SMTP configuration")
@@ -2395,7 +2415,7 @@ async def email_applicants(req: BulkEmail, admin: User = Depends(require_admin))
                 to=to,
                 subject=subject, title=subject, body_html=body,
                 cta_label="Go to your application" if req.button else None,
-                cta_url=f"{BASE_URL}/apply" if req.button else None,
+                cta_url=await _apply_button_url(uid, application) if req.button else None,
             )
         if ok:
             await db_module.db.collection(COLLECTION).document(uid).update({
@@ -2455,7 +2475,7 @@ _REJECTED_BODY_ANALYST = (
 )
 
 
-async def _send_decision_email(application: dict, status: str) -> None:
+async def _send_decision_email(application: dict, status: str, uid: Optional[str] = None) -> None:
     to = await _applicant_to(application)
     copy = _DECISION_COPY.get(status)
     if not to or not copy:
@@ -2469,7 +2489,9 @@ async def _send_decision_email(application: dict, status: str) -> None:
     cta_url = copy.get("cta_url")
     await mailer.send_email(
         to=to, subject=copy["subject"], title=copy["title"], body_html=body,
-        cta_label=copy.get("cta_label"), cta_url=f"{BASE_URL}{cta_url}" if cta_url else None,
+        cta_label=copy.get("cta_label"),
+        cta_url=(await _apply_button_url(uid, application) if cta_url == "/apply" else f"{BASE_URL}{cta_url}")
+        if cta_url else None,
     )
 
 
@@ -2667,7 +2689,7 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["decided_by"] = reviewer.username
 
     await _save(user_id, application)
-    await _send_decision_email(application, application["status"])
+    await _send_decision_email(application, application["status"], user_id)
     if application["status"] == S_REJECTED:
         await _cancel_interview_event(application)
 
@@ -2752,7 +2774,9 @@ async def move_to_bootcamp(user_id: str, reviewer: User = Depends(require_review
 
     to = await _applicant_to(application)
     if to:
-        await mailer.send_email(to=to, **_moved_to_bootcamp_email(application, moved_from, moved_to))
+        email = _moved_to_bootcamp_email(application, moved_from, moved_to)
+        email["cta_url"] = await _apply_button_url(user_id, application)
+        await mailer.send_email(to=to, **email)
     return {"ok": True, "programme": moved_to}
 
 

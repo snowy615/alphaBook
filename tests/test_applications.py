@@ -21,7 +21,20 @@ from fastapi import HTTPException
 
 from app import applications as ap
 from app import membership as mb
+from app import auth as ap_auth
 from app.models import User
+
+
+@pytest.fixture(autouse=True)
+def _no_duplicate_check_without_a_db(monkeypatch):
+    """Many tests here drive start_application with _load/_save patched and
+    no database at all. With nothing to look in, there's no other
+    application; tests that do set up a fake database get the real check."""
+    real = ap.application_using_email
+
+    async def check(email, exclude_uid=None):
+        return None if ap.db_module.db is None else await real(email, exclude_uid)
+    monkeypatch.setattr(ap, "application_using_email", check)
 
 
 # ── A minimal Firestore stand-in for the tests below that exercise the
@@ -74,6 +87,18 @@ class _FakeCollection:
 
     async def get(self):
         return [_FakeDoc(data, id=doc_id) for doc_id, data in self._store.items()]
+
+    def where(self, field, _op, value):
+        """Equality only, which is all the app asks of it."""
+        store = self._store
+
+        class _Query:
+            def limit(self, _n):
+                return self
+
+            async def get(self):
+                return [_FakeDoc(d, id=k) for k, d in store.items() if d.get(field) == value]
+        return _Query()
 
 
 class _FakeDB:
@@ -3989,3 +4014,122 @@ class TestShortlistAndInterviewTabs:
         assert "availability in" in card("ready")
         assert "availability in" not in card("waiting")
         assert "availability in" not in card("booked") and "interview booked" in card("booked")
+
+
+class TestOneApplicationPerOxfordEmail:
+    """An Oxford email already on an application belongs to that account:
+    another account can't start (or switch to) an application with it."""
+
+    def _setup(self, monkeypatch, mine=None):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={
+            "gmail": {"user_id": "gmail", "oxford_email": "sant7183@ox.ac.uk", "status": ap.S_SHORTLISTED,
+                      "programme": mb.M_QUANT_ANALYST},
+            **({"said": mine} if mine else {}),
+        }, users={"said": {"email": "x.mfe26@said.oxford.edu", "membership": mb.M_MEMBER}})
+
+        class _FbUser:
+            email = "sherrytsai1218@gmail.com"
+            provider_data = [type("P", (), {"provider_id": "google.com"})()]
+        monkeypatch.setattr(ap_auth.fb_auth, "get_user", lambda uid: _FbUser())
+        return fake_db
+
+    def _start(self, oxford):
+        return asyncio.run(ap.start_application(ap.StartApplication(
+            programme=mb.M_QUANT_ANALYST, oxford_email=oxford, confirms_one_track=True),
+            User(id="said", username="SherryCai")))
+
+    def test_a_second_account_cant_apply_with_the_same_oxford_email(self, monkeypatch):
+        fake_db = self._setup(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            self._start("Sant7183@ox.ac.uk")
+        assert exc.value.status_code == 409
+        assert "Google sign-in, s************8@gmail.com" in exc.value.detail
+        assert "Email me a sign-in link" in exc.value.detail
+        assert "said" not in fake_db.collections[ap.COLLECTION]
+
+    def test_the_other_accounts_email_is_only_shown_masked(self, monkeypatch):
+        self._setup(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            self._start("sant7183@ox.ac.uk")
+        assert "sherrytsai1218@gmail.com" not in exc.value.detail
+
+    def test_switching_an_application_to_a_taken_oxford_email_is_refused(self, monkeypatch):
+        fake_db = self._setup(monkeypatch, mine={"user_id": "said", "oxford_email": "x.cai@sant.ox.ac.uk",
+                                                 "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP})
+        with pytest.raises(HTTPException):
+            self._start("sant7183@ox.ac.uk")
+        assert fake_db.collections[ap.COLLECTION]["said"]["oxford_email"] == "x.cai@sant.ox.ac.uk"
+
+    def test_a_different_oxford_email_is_fine(self, monkeypatch):
+        fake_db = self._setup(monkeypatch)
+        self._start("someone.else@sant.ox.ac.uk")
+        assert fake_db.collections[ap.COLLECTION]["said"]["oxford_email"] == "someone.else@sant.ox.ac.uk"
+
+
+class TestEmailButtonsSignIntoTheApplicationsAccount:
+    """The button in an application email signs straight into the account
+    the application is on and opens it, whichever inbox it's clicked from
+    and whichever account the browser was on. It never creates an account."""
+
+    def _setup(self, monkeypatch, verified=True, status=ap.S_SUBMITTED):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"gmail": {
+            "user_id": "gmail", "username": "sherry", "full_name": "Sherry Cai", "email": "sherrytsai1218@gmail.com",
+            "oxford_email": "sant7183@ox.ac.uk", "programme": mb.M_QUANT_ANALYST, "status": status}},
+            users={"gmail": {"username": "sherry", "email": "sherrytsai1218@gmail.com"},
+                   "said": {"username": "SherryCai", "email": "x.mfe26@said.oxford.edu"}})
+
+        class _FbUser:
+            email_verified, disabled = verified, False
+        monkeypatch.setattr(ap_auth.fb_auth, "get_user", lambda uid: _FbUser())
+        return fake_db, sent
+
+    def _shortlist(self, monkeypatch, **kw):
+        fake_db, sent = self._setup(monkeypatch, **kw)
+        captured = []
+        real_send = ap.mailer.send_email
+
+        async def capture(**k):
+            captured.append(k)
+            return await real_send(**{x: k[x] for x in ("to", "subject", "title", "body_html")})
+        monkeypatch.setattr(ap.mailer, "send_email", capture)
+        asyncio.run(ap.decide("gmail", ap.Decision(decision="shortlist"), User(id="r1", username="priya")))
+        return fake_db, captured
+
+    def test_the_shortlist_button_signs_into_that_account_and_opens_the_application(self, monkeypatch):
+        fake_db, mails = self._shortlist(monkeypatch)
+        url = mails[0]["cta_url"]
+        assert "/auth/email-link?t=" in url
+        token = url.split("t=", 1)[1]
+        link = fake_db.collections[ap_auth.LOGIN_LINKS][ap_auth._hash(token)]
+        assert link["uid"] == "gmail" and link["next"] == "/apply"
+        # Clicked in a browser signed into her other (Saïd) account:
+        from starlette.requests import Request
+        req = Request({"type": "http", "method": "POST", "path": "/", "query_string": b"", "root_path": "",
+                       "server": ("alphabook.uk", 443), "scheme": "https",
+                       "headers": [(b"host", b"alphabook.uk"),
+                                   (b"cookie", f"__session={ap_auth.create_token('said')}".encode())]})
+        users_before = dict(fake_db.collections["users"])
+        res = asyncio.run(ap_auth.confirm_email_link(req, t=token))
+        assert res.status_code == 303 and res.headers["location"] == "/apply"
+        session = re.search(r"__session=([^;]+)", res.headers["set-cookie"]).group(1)
+        assert ap_auth.jwt.decode(session, ap_auth.SECRET_KEY, algorithms=[ap_auth.ALGORITHM])["sub"] == "gmail"
+        assert fake_db.collections["users"] == users_before     # no account created
+
+    def test_an_account_that_cant_take_a_link_gets_the_plain_page(self, monkeypatch):
+        _, mails = self._shortlist(monkeypatch, verified=False)
+        assert mails[0]["cta_url"] == f"{ap.BASE_URL}/apply"
+
+    def test_reminders_bulk_emails_and_the_bootcamp_move_carry_it_too(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_CV)
+        urls = []
+
+        async def capture(**k):
+            urls.append(k.get("cta_url"))
+            return True
+        monkeypatch.setattr(ap.mailer, "send_email", capture)
+        admin = User(id="a1", username="root", is_admin=True)
+        asyncio.run(ap.remind("gmail", ap.RemindRequest(), admin))
+        asyncio.run(ap.email_applicants(ap.BulkEmail(user_ids=["gmail"], subject="Hi", message="Hello", button=True), admin))
+        fake_db.collections[ap.COLLECTION]["gmail"]["status"] = ap.S_SUBMITTED
+        asyncio.run(ap.move_to_bootcamp("gmail", User(id="r1", username="priya")))
+        assert len(urls) == 3 and all("/auth/email-link?t=" in u for u in urls)

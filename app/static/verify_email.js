@@ -8,7 +8,11 @@ export function showVerificationNeeded({ user, email }) {
     <div class="info" style="display:block;">
       <strong>Verification needed.</strong> We sent a link to ${email}.
       Check your inbox — and your spam/junk folder, it sometimes lands
-      there. This page moves on by itself once you've verified.
+      there. It can take a few minutes to arrive, especially at an Oxford
+      address. This page moves on by itself once you've verified.
+      <br><br><strong>Please don't sign up again</strong> with another email or with
+      Google unless it really doesn't work: a second account can't see your
+      application.
     </div>
     <button type="button" class="btn ghost" id="resendVerifyBtn" style="margin-top:14px;">
       Resend verification email

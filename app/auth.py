@@ -83,6 +83,30 @@ def create_token(user_id: str, max_age: int = COOKIE_MAX_AGE) -> str:
     exp = dt.datetime.utcnow() + dt.timedelta(seconds=max_age)
     return jwt.encode({"sub": user_id, "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
 
+# One person, one account: when someone ended up with two (a Gmail and an
+# Oxford sign-up, say), an admin merges them. The extra account's user doc
+# gets ``merged_into`` = the main account's id, and every way in (a session,
+# a password or Google sign-in, an emailed link) lands in the main account.
+# Both logins keep working; nothing is deleted.
+MAX_MERGE_HOPS = 3
+
+
+async def resolve_account(uid: str):
+    """The main account behind ``uid`` (itself unless it was merged into
+    another) and its user data, or (uid, None) if there's no such user."""
+    data = None
+    for _ in range(MAX_MERGE_HOPS + 1):
+        doc = await db_module.db.collection("users").document(uid).get()
+        if not doc.exists:
+            return uid, None
+        data = doc.to_dict() or {}
+        target = data.get("merged_into")
+        if not target or target == uid:
+            return uid, data
+        uid = target
+    return uid, data
+
+
 async def get_user_from_token(token: str) -> Optional[User]:
     try:
         data = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
@@ -92,13 +116,9 @@ async def get_user_from_token(token: str) -> Optional[User]:
         log.warning("JWT decode failed: %s", e)
         return None
     
-    # Firestore get
-    doc_ref = db_module.db.collection("users").document(uid)
-    doc = await doc_ref.get()
-
-    if doc.exists:
-        u_data = doc.to_dict()
-        return User(id=doc.id, **u_data)
+    uid, u_data = await resolve_account(uid)
+    if u_data is not None:
+        return User(id=uid, **u_data)
     return None
 
 def _is_https(request: Request) -> bool:
@@ -144,10 +164,73 @@ async def current_user(
 
     return user
 
+# ----- one person, one account, one application -----
+# The same student can reach us at a Gmail, a college address and a central
+# abcd1234@ox.ac.uk one, and has more than once made a second account and
+# started a second application. An Oxford email already on an application
+# belongs to that application's account: it can't be used to sign up again or
+# to apply again from another account. The refusal names the existing account
+# only masked, since at that point nobody has proven they own the Oxford email,
+# and points to the emailed sign-in link, which goes to that inbox.
+
+def mask_email(addr: str) -> str:
+    """"s***********8@gmail.com": enough to recognise your own address,
+    not enough to learn someone else's."""
+    local, _, domain = (addr or "").partition("@")
+    if not domain:
+        return "another address"
+    shown = local[0] + "*" * max(len(local) - 2, 1) + (local[-1] if len(local) > 1 else "")
+    return f"{shown}@{domain}"
+
+
+async def account_hint(uid: str) -> str:
+    """How that account signs in, e.g. "Google sign-in, s***8@gmail.com"."""
+    try:
+        fb_user = await asyncio.to_thread(fb_auth.get_user, uid)
+        email = fb_user.email or ""
+        google = any(p.provider_id == "google.com" for p in (fb_user.provider_data or []))
+    except Exception:
+        doc = await db_module.db.collection("users").document(uid).get()
+        email, google = ((doc.to_dict() or {}).get("email") or "") if doc.exists else "", False
+    return f"{'Google sign-in' if google else 'email and password'}, {mask_email(email)}"
+
+
+async def application_using_email(email: str, exclude_uid: Optional[str] = None) -> Optional[str]:
+    """The user id of another account whose application has ``email`` as
+    its Oxford email, if there is one."""
+    email = (email or "").strip()
+    if not email:
+        return None
+    for v in {email, email.lower()}:
+        for d in await db_module.db.collection("applications").where("oxford_email", "==", v).get():
+            if d.id != exclude_uid:
+                return d.id
+    return None
+
+
+def already_linked_message(hint: str) -> str:
+    return (f"This email is already linked to an AlphaBook account that has an application "
+            f"({hint}). Sign in with that account instead. If you're not sure how, use "
+            f"\"Email me a sign-in link\" on the sign-in page with this email.")
+
+
 # ----- HTML forms -----
 @router.get("/signup", include_in_schema=False)
 def signup_form(request: Request):
     return templates.TemplateResponse("signup.html", {"request": request, "error": None})
+
+async def _discard_fresh_firebase_user(uid: str) -> None:
+    """Remove a Firebase login made moments ago that we're refusing, so the
+    email isn't left half-registered. Older logins are left alone: an
+    account that has existed a while isn't ours to delete here."""
+    try:
+        fb_user = await asyncio.to_thread(fb_auth.get_user, uid)
+        created = dt.datetime.fromtimestamp(fb_user.user_metadata.creation_timestamp / 1000, dt.timezone.utc)
+        if dt.datetime.now(dt.timezone.utc) - created < dt.timedelta(minutes=15):
+            await asyncio.to_thread(fb_auth.delete_user, uid)
+    except Exception:
+        log.warning("auth: couldn't discard refused sign-up %s", uid)
+
 
 @router.post("/auth/firebase", include_in_schema=False)
 async def auth_firebase(request: Request, id_token: str = Form(...), username: str = Form(None)):
@@ -173,7 +256,10 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         
         user = None
 
-        if doc.exists:
+        if doc.exists and (doc.to_dict() or {}).get("merged_into"):
+            main_uid, main_data = await resolve_account(firebase_uid)
+            user = User(id=main_uid, **(main_data or {}))
+        elif doc.exists:
             data = doc.to_dict()
             user = User(id=doc.id, **data)
             # Accounts created before the recruiter directory have no email
@@ -182,7 +268,15 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
                 await doc_ref.update({"email": email})
                 user.email = email
         else:
-            # First time logic (Signup)
+            # First time logic (Signup). An email that's already the Oxford
+            # email on someone's application is that person's: send them to
+            # the account they applied with rather than starting a second.
+            taken_by = await application_using_email(email) if email else None
+            if taken_by and taken_by != firebase_uid:
+                await _discard_fresh_firebase_user(firebase_uid)
+                return JSONResponse({"status": "linked", "message": already_linked_message(
+                    await account_hint(taken_by))}, status_code=409)
+
             if not username:
                 # Fallback: use email part or random
                 username = email.split('@')[0] if email else f"user_{firebase_uid[:6]}"
@@ -347,7 +441,8 @@ def login_form(request: Request):
 # itself is a Gmail. Typing either address emails a one-time link to it, and
 # being able to open that inbox is the proof. Only addresses we already trust
 # get one: an account's own sign-in email, or an Oxford email on an
-# application that was confirmed with an emailed code.
+# application that wasn't left unconfirmed (confirmed with an emailed code,
+# or from before that check existed).
 #
 # It is a way back in, never a way past the checks: only accounts that have
 # already passed verification (Google, or a verified password sign-up) get a
@@ -410,13 +505,23 @@ async def _accounts_for_email(email: str) -> Dict[str, Dict]:
     for v in variants:
         for d in await db_module.db.collection("applications").where("oxford_email", "==", v).get():
             a = d.to_dict() or {}
-            if a.get("oxford_email_verified") is not True or d.id in found:
+            # Applications from before the code check have no flag either way and
+            # were reviewed as they are; only one explicitly unconfirmed is out.
+            if a.get("oxford_email_verified") is False or d.id in found:
                 continue
             udoc = await db_module.db.collection("users").document(d.id).get()
             if udoc.exists:
                 found[d.id] = {**(udoc.to_dict() or {}), "_via": "oxford"}
-    return {uid: u for uid, u in found.items()
-            if not u.get("is_blacklisted") and await _verified_firebase_user(uid)}
+    out: Dict[str, Dict] = {}
+    for uid, u in found.items():
+        main_uid, main = await resolve_account(uid)
+        if main_uid in out or main is None or main.get("is_blacklisted"):
+            continue
+        # The session it leads to is the main account's, so that's the one
+        # that has to have passed verification.
+        if await _verified_firebase_user(main_uid):
+            out[main_uid] = {**main, "_via": u["_via"]}
+    return out
 
 
 def _client_ip(request: Request) -> str:
@@ -467,13 +572,9 @@ async def request_email_link(request: Request, email: str = Form(...), next: str
     nxt = safe_next(next)
     links: List[tuple] = []
     for uid, u in accounts.items():
-        token = secrets.token_urlsafe(32)
-        await db_module.db.collection(LOGIN_LINKS).document(_hash(token)).set({
-            "uid": uid, "email": email.lower(), "via": u["_via"], "next": nxt,
-            "created_at": _now(), "expires_at": _now() + LOGIN_LINK_TTL, "used_at": None,
-        })
+        url = await _store_link(uid, email, nxt, LOGIN_LINK_TTL, u["_via"])
         label = u.get("username") or u.get("email") or "your account"
-        links.append((f"{BASE_URL}/auth/email-link?t={token}", label, u.get("email") or ""))
+        links.append((url, label, u.get("email") or ""))
 
     if len(links) == 1:
         body = ("<p>Use the button below to sign in to AlphaBook. The link works once and expires in "
@@ -490,6 +591,35 @@ async def request_email_link(request: Request, email: str = Form(...), next: str
     await mailer.send_email(to=email, subject="Your AlphaBook sign-in link", title="Sign in to AlphaBook",
                             body_html=body, cta_label=cta_label, cta_url=cta_url)
     return JSONResponse({"status": "ok", "message": LOGIN_LINK_SENT})
+
+
+# Buttons in our emails ("Enter your availability") carry their own sign-in:
+# they sign straight into the account the application belongs to, whichever
+# inbox (Oxford or personal) they're clicked from and whichever account the
+# browser was signed into before. They only ever sign into that existing
+# account; nothing here creates one. A week to use, once; clicking an old one
+# offers a fresh link by email instead.
+ACCOUNT_LINK_TTL = dt.timedelta(days=7)
+RENEWABLE_FOR = dt.timedelta(days=60)
+
+
+async def _store_link(uid: str, address: str, nxt: str, ttl: dt.timedelta, via: str) -> str:
+    token = secrets.token_urlsafe(32)
+    await db_module.db.collection(LOGIN_LINKS).document(_hash(token)).set({
+        "uid": uid, "email": (address or "").lower(), "via": via, "next": safe_next(nxt),
+        "created_at": _now(), "expires_at": _now() + ttl, "used_at": None,
+    })
+    return f"{BASE_URL}/auth/email-link?t={token}"
+
+
+async def account_link(uid: str, address: str, next: str = "/apply") -> Optional[str]:
+    """A button URL that signs into ``uid``'s own account and opens ``next``,
+    or None if that account can't use one (unverified, disabled, suspended),
+    in which case the caller falls back to the plain page."""
+    udoc = await db_module.db.collection("users").document(uid).get()
+    if not udoc.exists or (udoc.to_dict() or {}).get("is_blacklisted") or not await _verified_firebase_user(uid):
+        return None
+    return await _store_link(uid, address, next, ACCOUNT_LINK_TTL, "email-button")
 
 
 async def _live_link(token: str):
@@ -521,7 +651,47 @@ async def email_link_page(request: Request, t: str = ""):
     return templates.TemplateResponse("login_link.html", {
         "request": request, "token": t if account else "",
         "who": (account or {}).get("username") or (account or {}).get("email") or "",
+        "renew_token": t if not account and await _renewable(t) else "",
     })
+
+
+async def _renewable(token: str) -> Optional[dict]:
+    """A spent or expired link that can be swapped for a fresh one: recent
+    enough, and for an account that may still use links."""
+    if not token:
+        return None
+    doc = await db_module.db.collection(LOGIN_LINKS).document(_hash(token)).get()
+    if not doc.exists:
+        return None
+    link = doc.to_dict() or {}
+    created = _as_utc(link.get("created_at"))
+    if not created or _now() - created > RENEWABLE_FOR or not link.get("email"):
+        return None
+    udoc = await db_module.db.collection("users").document(link["uid"]).get()
+    if not udoc.exists or (udoc.to_dict() or {}).get("is_blacklisted") or not await _verified_firebase_user(link["uid"]):
+        return None
+    return link
+
+
+@router.post("/auth/email-link/renew", include_in_schema=False)
+async def renew_email_link(request: Request, t: str = Form("")):
+    """Email a fresh 30-minute link to the same address the old one went to,
+    for the same account. Never to an address the visitor chooses."""
+    link = await _renewable(t)
+    # Within the daily limit a fresh link goes out; past it, one went out
+    # recently anyway, so either way the inbox is where to look.
+    sent_to = mask_email(link["email"]) if link else ""
+    if link and await _within_limit("email_" + _hash(link["email"]), dt.timedelta(days=1),
+                                    LOGIN_LINKS_PER_DAY, min_gap=LOGIN_LINK_COOLDOWN):
+        url = await _store_link(link["uid"], link["email"], link.get("next") or "/", LOGIN_LINK_TTL, "renewed")
+        await mailer.send_email(
+            to=link["email"], subject="Your AlphaBook sign-in link", title="Sign in to AlphaBook",
+            body_html=("<p>Here's a fresh link to sign in to AlphaBook. It works once and expires in "
+                       "30 minutes.</p><p>If you didn't ask for this, you can ignore this email.</p>"),
+            cta_label="Sign in to AlphaBook", cta_url=url)
+    return templates.TemplateResponse("login_link.html", {
+        "request": request, "token": "", "who": "", "renew_token": "", "renewed_to": sent_to,
+    }, status_code=200 if sent_to else 400)
 
 
 @router.post("/auth/email-link/confirm", include_in_schema=False)
@@ -541,7 +711,9 @@ async def confirm_email_link(request: Request, t: str = Form("")):
         return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
                                           status_code=400)
     await ref.update({"used_at": _now()})
-    return _make_redirect_with_cookie(request, create_token(link["uid"]), safe_next(link.get("next")))
+    main_uid, _ = await resolve_account(link["uid"])
+    return _make_redirect_with_cookie(request, create_token(main_uid), safe_next(link.get("next")))
+
 
 
 @router.post("/logout", include_in_schema=False)

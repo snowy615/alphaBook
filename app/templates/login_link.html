@@ -28,9 +28,20 @@
       <input type="hidden" name="t" value="{{ token }}">
       <button type="submit" class="btn primary auth-submit">Sign me in</button>
     </form>
+    {% elif renewed_to %}
+    <p style="margin:0 0 8px;">We've emailed a fresh sign-in link to <strong>{{ renewed_to }}</strong>.</p>
+    <p class="msp-muted" style="margin:0;font-size:13px;">Open it within 30 minutes (check your junk folder too).</p>
+    {% elif renew_token %}
+    <!-- An old button from one of our emails: offer a fresh link to the same
+         inbox it was sent to, rather than making them start over. -->
+    <p style="margin:0 0 14px;">This link has already been used or has expired. We can email you a fresh one.</p>
+    <form method="post" action="/auth/email-link/renew">
+      <input type="hidden" name="t" value="{{ renew_token }}">
+      <button type="submit" class="btn primary auth-submit">Email me a new link</button>
+    </form>
     {% else %}
     <div class="err">This sign-in link has expired or has already been used.</div>
-    <p style="margin:12px 0 0;">Sign-in links work once, for 30 minutes.
+    <p style="margin:12px 0 0;">Sign-in links work once, for a limited time.
       <a href="/login">Request a new one</a> from the sign-in page.</p>
     {% endif %}
   </div>
