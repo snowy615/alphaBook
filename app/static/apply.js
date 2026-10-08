@@ -867,6 +867,37 @@
     }, 500);
   }
 
+  // A few seconds of confetti for an offer. Plain canvas, removed when done,
+  // and skipped for anyone who has asked their system for reduced motion.
+  function confetti() {
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const canvas = document.createElement("canvas");
+    canvas.style.cssText = "position:fixed;inset:0;width:100%;height:100%;pointer-events:none;z-index:9999";
+    document.body.appendChild(canvas);
+    const ctx = canvas.getContext("2d");
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width = innerWidth * dpr, H = canvas.height = innerHeight * dpr;
+    const colours = ["#1B75BC", "#35C98B", "#F5B83D", "#E85D75", "#8E6CF0", "#FFFFFF"];
+    const bits = Array.from({ length: 160 }, () => ({
+      x: W * (0.2 + Math.random() * 0.6), y: H * 0.35,
+      vx: (Math.random() - 0.5) * 18 * dpr, vy: (-8 - Math.random() * 14) * dpr,
+      w: (6 + Math.random() * 6) * dpr, h: (8 + Math.random() * 8) * dpr,
+      r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4,
+      c: colours[Math.floor(Math.random() * colours.length)],
+    }));
+    const start = performance.now();
+    (function frame(now) {
+      ctx.clearRect(0, 0, W, H);
+      const fade = Math.max(0, 1 - (now - start - 2500) / 1000);
+      for (const b of bits) {
+        b.vy += 0.45 * dpr; b.vx *= 0.99; b.x += b.vx; b.y += b.vy; b.r += b.vr;
+        ctx.save(); ctx.globalAlpha = fade; ctx.translate(b.x, b.y); ctx.rotate(b.r);
+        ctx.fillStyle = b.c; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.restore();
+      }
+      if (fade > 0) requestAnimationFrame(frame); else canvas.remove();
+    })(start);
+  }
+
   function renderDone(state) {
     stopTicking();
     const decided = state.status === "accepted" || state.status === "rejected";
@@ -875,10 +906,28 @@
     const showAvailability = shortlisted && !availabilityLocked;
 
     let body;
-    if (state.status === "accepted") {
-      body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> was
-             <strong style="color:var(--green);">accepted</strong>. Your membership has been
-             updated — have a look at your <a href="/profile">profile</a>.</p>`;
+    const offerOpen = state.status === "accepted" && !state.offer_response;
+    const isBootcamp = /Bootcamp/.test(state.programme || "");
+    if (state.status === "accepted" && state.offer_response === "declined") {
+      body = `<p>You declined your offer for <strong>${esc(state.programme || "")}</strong>. Thank you
+             for letting us know, and we hope to see you again. If that was a mistake, please contact us.</p>`;
+    } else if (state.status === "accepted" && state.offer_response === "accepted") {
+      body = `<p class="apl-offer-head">You're in! &#127881;</p>
+             <p>You've accepted your place on <strong>${esc(state.programme || "")}</strong>, and your membership
+             is now active (see your <a href="/profile">profile</a>).
+             ${isBootcamp ? "We look forward to seeing you at the first session in Week 2. " : ""}More information
+             will follow soon.</p>`;
+    } else if (state.status === "accepted") {
+      body = `<p class="apl-offer-head">Congratulations! &#127881;</p>
+             <p>We'd love to have you on <strong>${esc(state.programme || "")}</strong>, and we've emailed you
+             the details of your offer. Accept your place below to join.</p>
+             ${isBootcamp ? `<p class="apl-hint">The offer is contingent on attending all six Sunday sessions (from
+             Week 2) and completing a mini group project and presentation at term's end. If you have a conflicting
+             offer, please let us know.</p>` : `<p class="apl-hint">If you have a conflicting offer, please let us know.</p>`}
+             <div style="margin-top:16px;">
+               <button class="btn primary" id="offerAccept">Accept my place</button>
+               <button class="btn ghost" id="offerDecline" style="margin-left:8px;">Decline</button>
+             </div>`;
     } else if (state.status === "rejected") {
       body = `<p>Your application to <strong>${esc(state.programme || "")}</strong> was not
              taken forward this time. You are welcome to keep playing and apply again
@@ -932,6 +981,21 @@
 
     if (showAvailability) {
       wireAvailabilityGrid($("#availGrid"), availabilitySelected);
+    }
+    if (offerOpen) {
+      confetti();
+      const respond = async (response) => {
+        if (response === "decline" && !confirm("Decline your place? This can't be undone from here.")) return;
+        try {
+          await api("/apply/offer", { response });
+          if (response === "accept") confetti();
+          await refresh();
+        } catch (err) {
+          flash(err.message, true);
+        }
+      };
+      $("#offerAccept").addEventListener("click", () => respond("accept"));
+      $("#offerDecline").addEventListener("click", () => respond("decline"));
     }
     if (canApplyAgain) {
       $("#applyAgainBtn").addEventListener("click", () => {

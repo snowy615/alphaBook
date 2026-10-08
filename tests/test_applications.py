@@ -636,13 +636,15 @@ class TestDecideFlow:
             asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
         assert sent == []   # no email fired for a decision that was refused
 
-    def test_shortlisted_can_be_accepted_and_membership_is_granted(self, monkeypatch):
+    def test_shortlisted_can_be_accepted_and_membership_comes_when_they_confirm(self, monkeypatch):
         store, sent, fake_db = self._patch(monkeypatch, self._base(ap.S_SHORTLISTED))
         admin = User(id="a1", username="root", is_admin=True)
         result = asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
         assert result["status"] == ap.S_ACCEPTED
-        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
+        assert "membership" not in fake_db.collections.get("users", {}).get("u1", {})   # an offer, not yet in
         assert sent[-1] == ("jo@merton.ox.ac.uk, jo@example.com", ap._DECISION_COPY[ap.S_ACCEPTED]["subject"])
+        asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
 
     @pytest.mark.parametrize("status", [ap.S_SUBMITTED, ap.S_SHORTLISTED])
     def test_reject_is_allowed_from_submitted_or_shortlisted(self, monkeypatch, status):
@@ -1350,7 +1352,8 @@ class TestStateEndpoint:
             monkeypatch,
             users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP, "email": "jo@merton.ox.ac.uk"}},
             applications={"u1": {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
-                                 "oxford_email": "jo@merton.ox.ac.uk"}},
+                                 "oxford_email": "jo@merton.ox.ac.uk",
+                                 "offer_response": {"response": "accepted"}}},
         )
         user = User(id="u1", username="jo")
 
@@ -1410,7 +1413,8 @@ class TestReapplyAfterDecision:
             users={"u1": {"username": "jo", "membership": mb.M_QUANT_BOOTCAMP,
                           "email": "jo@merton.ox.ac.uk", "cv_blob_path": "cvs/old.pdf"}},
             applications={"u1": {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
-                                 "decided_at": dt.datetime.now(dt.timezone.utc)}},
+                                 "decided_at": dt.datetime.now(dt.timezone.utc),
+                                 "offer_response": {"response": "accepted"}}},
         )
         user = User(id="u1", username="jo")
 
@@ -3911,10 +3915,11 @@ class TestMoveToBootcamp:
             self._move()
         assert sent == []
 
-    def test_accepting_after_the_move_grants_bootcamp(self, monkeypatch):
+    def test_accepting_after_the_move_grants_bootcamp_once_confirmed(self, monkeypatch):
         fake_db, _ = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
         self._move()
         asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
+        asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
         assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_BOOTCAMP
 
 
@@ -4171,3 +4176,99 @@ class TestShortlistedFastTrackFreesAPlace:
         })
         assert "Fast-Track CV Clinic 1/50 (+1 already shortlisted, not counted)" in html
         assert "shortlisted, place freed" in html
+
+
+class TestBootcampOffer:
+    def _setup(self, monkeypatch, programme=mb.M_QUANT_BOOTCAMP, status=ap.S_SHORTLISTED, **extra):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "email": "jo@gmail.com",
+            "oxford_email": "jo@merton.ox.ac.uk", "programme": programme, "status": status,
+            "applicant_category": mb.M_PUBLIC, **extra}}, users={"u1": {"username": "jo", "membership": mb.M_PUBLIC}})
+
+        class _FbUser:
+            email_verified, disabled = True, False
+        monkeypatch.setattr(ap_auth.fb_auth, "get_user", lambda uid: _FbUser())
+        return fake_db, sent
+
+    def _accept(self):
+        captured = []
+
+        async def capture(**k):
+            captured.append(k)
+            return True
+        return captured, capture
+
+    def test_a_bootcamp_acceptance_gets_the_offer_letter_with_a_sign_in_button(self, monkeypatch):
+        self._setup(monkeypatch)
+        captured, capture = self._accept()
+        monkeypatch.setattr(ap.mailer, "send_email", capture)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
+        mail = captured[0]
+        assert mail["subject"] == "Alpha Fund: your offer for the 2026 Quant Bootcamp Programme \U0001F389"
+        assert "Hi Jo Bloggs" in mail["body_html"] and "2026 Quant Bootcamp Programme" in mail["body_html"]
+        assert mail["body_html"].count("<li") == 6 and "all six sessions" in mail["body_html"]
+        assert mail["cta_label"] == "Confirm your place" and "/auth/email-link?t=" in mail["cta_url"]
+        assert not any(d in mail["body_html"] for d in ("—", "–"))   # house style: no dashes
+
+    def test_an_analyst_acceptance_keeps_the_short_note(self, monkeypatch):
+        self._setup(monkeypatch, programme=mb.M_QUANT_ANALYST)
+        captured, capture = self._accept()
+        monkeypatch.setattr(ap.mailer, "send_email", capture)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
+        assert captured[0]["subject"] == ap._DECISION_COPY[ap.S_ACCEPTED]["subject"]
+
+    def test_accepting_the_place_once(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_ACCEPTED)
+        jo = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(jo))["offer_response"] is None
+        assert asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), jo))["offer_response"] == "accepted"
+        assert asyncio.run(ap.state(jo))["offer_response"] == "accepted"
+        with pytest.raises(HTTPException, match="already responded"):
+            asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="decline"), jo))
+
+    def test_confirming_the_place_is_what_lets_them_in(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_ACCEPTED)
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_PUBLIC      # accepted, not yet in
+        asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_BOOTCAMP
+
+    def test_declining_leaves_their_membership_as_it_was(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_ACCEPTED)
+        asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="decline"), User(id="u1", username="jo")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["offer_response"]["response"] == "declined"
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_PUBLIC
+
+    def test_an_analyst_offer_works_the_same_way(self, monkeypatch):
+        fake_db, _ = self._setup(monkeypatch, programme=mb.M_QUANT_ANALYST, status=ap.S_ACCEPTED)
+        asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
+        assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
+
+    def test_an_open_offer_must_be_answered_before_applying_again(self, monkeypatch):
+        self._setup(monkeypatch, status=ap.S_ACCEPTED)
+        jo = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(jo))["can_apply_again"] is False
+        with pytest.raises(HTTPException, match="offer waiting"):
+            asyncio.run(ap.start_application(ap.StartApplication(
+                programme=mb.M_QUANT_ANALYST, oxford_email="jo@merton.ox.ac.uk", confirms_one_track=True,
+                confirms_oxford_student=True), jo))
+
+    def test_the_analyst_note_carries_the_confirm_button(self, monkeypatch):
+        self._setup(monkeypatch, programme=mb.M_QUANT_ANALYST)
+        captured, capture = self._accept()
+        monkeypatch.setattr(ap.mailer, "send_email", capture)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
+        assert captured[0]["cta_label"] == "Confirm your place" and "/auth/email-link?t=" in captured[0]["cta_url"]
+
+    def test_no_offer_to_respond_to_before_acceptance(self, monkeypatch):
+        self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
+
+    def test_the_review_page_shows_the_reply(self, monkeypatch):
+        now = dt.datetime.now(dt.timezone.utc)
+        base = {"status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP, "decided_at": now}
+        html = TestScoringView()._render(monkeypatch, {
+            "a": {"user_id": "a", "username": "a", **base, "offer_response": {"response": "accepted", "at": now}},
+            "b": {"user_id": "b", "username": "b", **base, "offer_response": {"response": "declined", "at": now}},
+            "c": {"user_id": "c", "username": "c", **base}})
+        assert "offer accepted" in html and "offer declined" in html and "awaiting reply" in html

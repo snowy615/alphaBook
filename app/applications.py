@@ -421,6 +421,10 @@ class EventTicketChoice(BaseModel):
     ticket: str   # "none" | "general" | "fast_track"
 
 
+class OfferResponse(BaseModel):
+    response: str   # "accept" | "decline"
+
+
 class ConfirmCv(BaseModel):
     # Both required (checked in confirm_cv): the account's own full_name is
     # optional and often blank or just a username, and reviewers need a real
@@ -999,6 +1003,10 @@ async def state(user: User = Depends(current_user)):
             # offers a button to start a fresh one rather than that ever
             # happening silently.
             out["can_apply_again"] = out["eligible"]
+        if application["status"] == S_ACCEPTED:
+            out["offer_response"] = (application.get("offer_response") or {}).get("response")
+            if not out["offer_response"]:
+                out["can_apply_again"] = False      # the offer comes first
     return out
 
 
@@ -1083,6 +1091,8 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         raise HTTPException(409, already_linked_message(await account_hint(other)))
 
     existing = await _load(uid)
+    if existing is not None and existing.get("status") == S_ACCEPTED and not existing.get("offer_response"):
+        raise HTTPException(400, "You have an offer waiting: accept or decline it first.")
     # Applicants can apply to Quant or Fundamental, not both: asked of every
     # new application (switching programme or fixing the Oxford email on one
     # that's already under way doesn't ask again).
@@ -1584,6 +1594,28 @@ async def flag(req: FlagEvent, user: User = Depends(current_user)):
     return {"ok": True}
 
 
+@router.post("/offer")
+async def respond_to_offer(req: OfferResponse, user: User = Depends(current_user)):
+    """Accept or decline the place offered, Bootcamp or Analyst alike. Once,
+    from the platform; after that a change goes through the committee.
+    Accepting is what lets them in: it grants the programme's membership.
+    Declining leaves their membership as it was."""
+    if req.response not in ("accept", "decline"):
+        raise HTTPException(400, "Respond with accept or decline")
+    uid = str(user.id)
+    application = await _load(uid)
+    if application is None or application.get("status") != S_ACCEPTED:
+        raise HTTPException(400, "There's no offer to respond to")
+    if application.get("offer_response"):
+        raise HTTPException(400, "You've already responded to this offer. To change it, please contact us.")
+    response = "accepted" if req.response == "accept" else "declined"
+    application["offer_response"] = {"response": response, "at": _now()}
+    await _save(uid, application)
+    if response == "accepted":
+        await _grant_membership(uid, application.get("programme"))
+    return {"ok": True, "offer_response": response}
+
+
 @router.post("/availability")
 async def submit_availability(req: AvailabilitySubmit, user: User = Depends(current_user)):
     """
@@ -1730,6 +1762,7 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "shortlisted_by": application.get("shortlisted_by") or "",
         "auto_shortlist": application.get("auto_shortlist"),
         "moved_to_bootcamp": application.get("moved_to_bootcamp"),
+        "offer_response": (application.get("offer_response") or {}).get("response"),
         "can_move_to_bootcamp": (application.get("programme") in BOOTCAMP_FOR_ANALYST
                                  and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "availability": _availability_of(application),
@@ -2454,7 +2487,10 @@ _DECISION_COPY: Dict[str, Dict[str, str]] = {
         "subject": "Alpha Fund: you're in",
         "title": "Application accepted",
         "body": ("<p>Congratulations! You've been accepted onto <strong>{programme}</strong>. "
-                 "Welcome to Alpha Fund.</p>"),
+                 "Welcome to Alpha Fund.</p>"
+                 "<p>Please confirm your place on the platform to accept the offer.</p>"),
+        "cta_label": "Confirm your place",
+        "cta_url": "/apply",
     },
     S_REJECTED: {
         "subject": "Alpha Fund: an update on your application",
@@ -2464,6 +2500,48 @@ _DECISION_COPY: Dict[str, Dict[str, str]] = {
                  "playing and apply again in a future round.</p>"),
     },
 }
+
+# The Bootcamp offer letter. Bootcamp-specific (the curriculum, the six
+# Sunday sessions), so an Analyst acceptance keeps the short note above. Its
+# button signs straight into the applicant's account, where they confirm
+# (or decline) the place.
+_OFFER_ITEMS = (
+    "Access to our quantitative curriculum, shaped by input from quant researchers and hedge fund managers",
+    "Mentorship by committee members to guide you through your applications and technical preparation",
+    "Socials with your bootcamp cohort",
+    "Opportunity to work in a team on a quantitative research project or trading strategy and present "
+    "directly to senior OAF executives",
+    "Priority attendance opportunities for our sponsor and speaker events",
+    "Automatic consideration for the HT\u201927 Quant Analyst role to work on live quantitative strategies "
+    "for our portfolio",
+)
+_BOOTCAMP_OFFER = {
+    "subject": "Alpha Fund: your offer for the 2026 {programme} Programme \U0001F389",
+    "title": "Congratulations! \U0001F389",
+    "body": (
+        "<p>Thank you for taking the time to interview with us. It was great meeting you, and we really "
+        "enjoyed our conversation. We believe you are a strong fit for us, and we would love to have you "
+        "on board.</p>"
+        '<div style="background:#eef6fc;border-left:4px solid #1B75BC;padding:14px 16px;margin:20px 0;'
+        'font-size:16px;line-height:1.5;">Our committee was impressed by your performance and would like to '
+        "extend an offer for our <strong>2026 {programme} Programme</strong>!</div>"
+        '<p style="margin-bottom:8px;"><strong>This term, you can look forward to:</strong></p>'
+        '<ul style="margin:0 0 20px;padding-left:20px;">'
+        + "".join(f'<li style="margin:0 0 8px;">{item}</li>' for item in _OFFER_ITEMS)
+        + "</ul>"
+        "<p>Acceptance of this offer is contingent on your <strong>attendance at all six sessions</strong>, "
+        "as well as completing a <strong>mini group project and presentation</strong> at term\u2019s end. "
+        "The programme will start in <strong>Week 2</strong> and will consist of <strong>2-hour lectures on "
+        "Sunday afternoons</strong>.</p>"
+        "<p>Should you have any conflicting offers, please reach out to let us know, provided you can still "
+        "commit around 3 hours a week total to our sessions and tasks.</p>"
+        "<p>Please confirm your acceptance of the offer on the platform, and we look forward to seeing you "
+        "at the Bootcamp! More information on the sessions will follow soon.</p>"
+    ),
+    "cta_label": "Confirm your place",
+    "cta_url": "/apply",
+}
+
 
 # Analyst rejections read "next cycle" rather than "a future round" — Analyst
 # recruiting genuinely runs in cycles, unlike Bootcamp, which is the more
@@ -2482,6 +2560,8 @@ async def _send_decision_email(application: dict, status: str, uid: Optional[str
         return
     name = html.escape(application.get("full_name") or application.get("username") or "there")
     programme = application.get("programme") or "the programme"
+    if status == S_ACCEPTED and programme in mb.BOOTCAMP_MEMBERSHIPS:
+        copy = {**_BOOTCAMP_OFFER, "subject": _BOOTCAMP_OFFER["subject"].format(programme=programme)}
     body_template = copy["body"]
     if status == S_REJECTED and programme in mb.ANALYST_MEMBERSHIPS:
         body_template = _REJECTED_BODY_ANALYST
@@ -2693,14 +2773,15 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
     if application["status"] == S_REJECTED:
         await _cancel_interview_event(application)
 
-    if application["status"] == S_ACCEPTED:
-        programme = application.get("programme")
-        if programme in mb.MEMBERSHIPS:
-            legacy = {v: k for k, v in mb.LEGACY_TRACK_TO_MEMBERSHIP.items()}.get(programme, "")
-            await db_module.db.collection("users").document(user_id).update({
-                "membership": programme, "track": legacy,
-            })
+    # Accepting makes the offer; the membership itself comes when they
+    # confirm their place with the button on the platform (respond_to_offer).
     return {"ok": True, "status": application["status"]}
+
+
+async def _grant_membership(uid: str, programme: Optional[str]) -> None:
+    if programme in mb.MEMBERSHIPS:
+        legacy = {v: k for k, v in mb.LEGACY_TRACK_TO_MEMBERSHIP.items()}.get(programme, "")
+        await db_module.db.collection("users").document(uid).update({"membership": programme, "track": legacy})
 
 
 # ── Moving an Analyst applicant to Bootcamp ─────────────────────────────────

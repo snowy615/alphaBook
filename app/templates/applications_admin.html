@@ -606,7 +606,7 @@
                 {% else %}<span class="msp-muted">—</span>{% endif %}
               </td>
               <td>
-                {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
+                {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>{% if r.offer_response == "accepted" %} <span class="apa-tag is-good">offer accepted</span>{% elif r.offer_response == "declined" %} <span class="apa-tag is-bad">offer declined</span>{% else %} <span class="apa-tag is-warn">awaiting reply</span>{% endif %}
                 {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
                 {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>
                 {% elif r.status == "submitted" %}<span class="apa-tag">submitted</span>
@@ -712,7 +712,7 @@
             <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
             {% if r.event_ticket == "fast_track" %}<span class="apa-tag is-info">Fast-Track CV Clinic</span>
             {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
-            {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>
+            {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>{% if r.offer_response == "accepted" %} <span class="apa-tag is-good">offer accepted</span>{% elif r.offer_response == "declined" %} <span class="apa-tag is-bad">offer declined</span>{% else %} <span class="apa-tag is-warn">awaiting reply</span>{% endif %}
             {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
             {% elif r.status == "shortlisted" and r.interview_booked %}<span class="apa-tag is-info">interview booked</span>
             {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
