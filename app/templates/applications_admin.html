@@ -627,7 +627,10 @@
     <div class="card msp-panel apa-summary">
       <div class="head">
         <h3>Outreach event</h3>
-        <span class="msp-muted">Fast-Track CV Clinic {{ fast_track_rows | length }}/{{ fast_track_capacity }} &middot; General Attendance {{ general_rows | length }}</span>
+        {# Shortlisted (or accepted) Fast-Track people are past the CV round:
+           listed, but not counted against the CV clinic places. #}
+        {% set ft_past = fast_track_rows | selectattr("status", "in", ["shortlisted", "accepted"]) | list %}
+        <span class="msp-muted">Fast-Track CV Clinic {{ (fast_track_rows | length) - (ft_past | length) }}/{{ fast_track_capacity }}{% if ft_past %} (+{{ ft_past | length }} already shortlisted, not counted){% endif %} &middot; General Attendance {{ general_rows | length }}</span>
       </div>
       <div class="msp-panel-body msp-flush" style="overflow-x:auto;">
         {% if not fast_track_rows and not general_rows %}
@@ -640,7 +643,7 @@
           <tbody>
             {% for r in fast_track_rows %}
             <tr>
-              <td><span class="apa-tag is-info">Fast-Track CV Clinic</span></td>
+              <td><span class="apa-tag is-info">Fast-Track CV Clinic</span>{% if r.status in ("shortlisted", "accepted") %} <span class="msp-muted" style="font-size:12px;">{{ r.status }}, place freed</span>{% endif %}</td>
               <td>{% if r.has_application %}<a href="#a-{{ r.user_id }}"><strong>{{ r.full_name or r.username }}</strong></a>
                 {% else %}<strong>{{ r.full_name or r.username }}</strong> <span class="msp-muted" style="font-size:12px;">no application yet</span>{% endif %}</td>
               <td>{{ r.college or "—" }}</td>

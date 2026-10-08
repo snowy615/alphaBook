@@ -4133,3 +4133,41 @@ class TestEmailButtonsSignIntoTheApplicationsAccount:
         fake_db.collections[ap.COLLECTION]["gmail"]["status"] = ap.S_SUBMITTED
         asyncio.run(ap.move_to_bootcamp("gmail", User(id="r1", username="priya")))
         assert len(urls) == 3 and all("/auth/email-link?t=" in u for u in urls)
+
+
+class TestShortlistedFastTrackFreesAPlace:
+    """A Fast-Track place is a CV clinic seat; once shortlisted (or accepted)
+    the CV round is behind them, so the place stops counting toward the cap."""
+
+    def _db(self, monkeypatch, n_waiting, n_shortlisted):
+        apps = {f"w{i}": {"user_id": f"w{i}", "event_ticket": "fast_track", "status": ap.S_SUBMITTED}
+                for i in range(n_waiting)}
+        apps.update({f"s{i}": {"user_id": f"s{i}", "event_ticket": "fast_track", "status": ap.S_SHORTLISTED}
+                     for i in range(n_shortlisted)})
+        signups = {f"quant-outreach_s{i}": {"user_id": f"s{i}", "ticket": "fast_track", "status": "confirmed"}
+                   for i in range(n_shortlisted)}
+        return _flow_db(monkeypatch, applications=apps, signups=signups)[0]
+
+    def test_shortlisted_holders_dont_count(self, monkeypatch):
+        from app import outreach
+        self._db(monkeypatch, n_waiting=46, n_shortlisted=4)
+        holders = asyncio.run(outreach.fast_track_holders())
+        assert len(holders) == 46 and not any(u.startswith("s") for u in holders)
+
+    def test_the_freed_place_can_be_claimed_at_the_cap(self, monkeypatch):
+        from app import outreach
+        fake_db = self._db(monkeypatch, n_waiting=outreach.FAST_TRACK_CAPACITY - 1, n_shortlisted=4)
+        asyncio.run(outreach.set_ticket("newbie", "newbie", outreach.EVENT_TICKET_FAST_TRACK))
+        assert fake_db.collections["event_signups"]["quant-outreach_newbie"]["ticket"] == "fast_track"
+        with pytest.raises(HTTPException, match="full"):
+            asyncio.run(outreach.set_ticket("late", "late", outreach.EVENT_TICKET_FAST_TRACK))
+
+    def test_the_review_page_counts_places_without_the_shortlisted(self, monkeypatch):
+        now = dt.datetime.now(dt.timezone.utc)
+        html = TestScoringView()._render(monkeypatch, {
+            "a": {"user_id": "a", "username": "a", "status": ap.S_SUBMITTED, "event_ticket": "fast_track", "created_at": now},
+            "b": {"user_id": "b", "username": "b", "status": ap.S_SHORTLISTED, "event_ticket": "fast_track",
+                  "created_at": now, "shortlisted_at": now},
+        })
+        assert "Fast-Track CV Clinic 1/50 (+1 already shortlisted, not counted)" in html
+        assert "shortlisted, place freed" in html

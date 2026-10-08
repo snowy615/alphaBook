@@ -232,17 +232,22 @@ async def ticket_of(uid: str) -> Optional[str]:
     return data.get("ticket") if data.get("status") == "confirmed" else None
 
 
+# A Fast-Track place is a seat at the CV clinic. Someone already shortlisted
+# (or accepted) is past the CV round, so they no longer take one: they keep
+# their ticket and can still come, but the place is free for someone else.
+PAST_CV_ROUND = {"shortlisted", "accepted"}
+
+
 async def fast_track_holders() -> Set[str]:
     """Everyone currently holding a Fast-Track place: an outreach sign-up
     with that ticket, or an application whose ticket says so. Either alone
     counts, so a place is never lost or double-counted while the two sides
-    are catching up with each other."""
+    are catching up with each other. Anyone past the CV round doesn't count."""
+    applications = {d.id: d.to_dict() or {} for d in await db_module.db.collection(APPLICATIONS).get()}
     holders = {s.get("user_id") for s in await confirmed_signups() if s.get("ticket") == EVENT_TICKET_FAST_TRACK}
-    for d in await db_module.db.collection(APPLICATIONS).get():
-        if (d.to_dict() or {}).get("event_ticket") == EVENT_TICKET_FAST_TRACK:
-            holders.add(d.id)
+    holders |= {uid for uid, a in applications.items() if a.get("event_ticket") == EVENT_TICKET_FAST_TRACK}
     holders.discard(None)
-    return holders
+    return {uid for uid in holders if (applications.get(uid) or {}).get("status") not in PAST_CV_ROUND}
 
 
 async def set_ticket(uid: str, username: str, ticket: str) -> None:
