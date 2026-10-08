@@ -198,6 +198,7 @@ async def event_summary() -> Optional[Dict[str, Any]]:
         "time_label": time_label(starts, ends) if starts and ends else "",
         "location": data.get("location", ""),
         "is_past": _has_ended(data),
+        "signups_closed": bool(data.get("signups_closed")),
     }
 
 
@@ -250,6 +251,18 @@ async def fast_track_holders() -> Set[str]:
     return {uid for uid in holders if (applications.get(uid) or {}).get("status") not in PAST_CV_ROUND}
 
 
+# Sign-ups can be closed outright (the event doc's ``signups_closed``), e.g.
+# once the room is full. Nobody can take a new ticket of either kind after
+# that; anyone already signed up keeps theirs, and can still cancel or move
+# from Fast-Track to General.
+FULL_MESSAGE = "The Quant Outreach event is now full: it has filled to capacity."
+
+
+async def signups_closed() -> bool:
+    doc = await db_module.db.collection(EVENTS).document(OUTREACH_EVENT_ID).get()
+    return bool(doc.exists and (doc.to_dict() or {}).get("signups_closed"))
+
+
 async def set_ticket(uid: str, username: str, ticket: str) -> None:
     """Make the sign-up match ``ticket``: create or change it, or remove it
     for "none". Claiming a *new* Fast-Track place is the only thing that
@@ -262,6 +275,12 @@ async def set_ticket(uid: str, username: str, ticket: str) -> None:
     if ticket == EVENT_TICKET_NONE:
         await ref.delete()
         return
+
+    if await signups_closed():
+        current = await ref.get()
+        held = (current.to_dict() or {}).get("ticket") if current.exists else None
+        if not (held == ticket or (held == EVENT_TICKET_FAST_TRACK and ticket == EVENT_TICKET_GENERAL)):
+            raise HTTPException(400, FULL_MESSAGE)
 
     if ticket == EVENT_TICKET_FAST_TRACK:
         holders = await fast_track_holders()

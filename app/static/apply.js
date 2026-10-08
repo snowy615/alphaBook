@@ -369,11 +369,15 @@
     pickedTicket = existing;
     const eventName = ev.title || "Quant Outreach";
     const capacity = state.fast_track_capacity || 50;
-    const fastFull = !!state.fast_track_full && existing !== "fast_track";
+    // Sign-ups closed (filled to capacity): only a ticket already held can be
+    // kept; "Not attending" always works, so the application can carry on.
+    const closed = !!ev.signups_closed;
+    const fastFull = (!!state.fast_track_full || closed) && existing !== "fast_track";
     const fastDisabled = fastFull || fastUsed;
+    const generalDisabled = closed && !existing;
     const fastNote = fastUsed
       ? "You've already used Fast-Track on an earlier application — it can only be used once."
-      : "Limit reached — no longer available.";
+      : closed ? "The event has filled to capacity." : "Limit reached — no longer available.";
     const placesLine = existing === "fast_track"
       ? "Your place is held."
       : `${state.fast_track_remaining} of ${capacity} places left.`;
@@ -397,14 +401,16 @@
         ${ev.when_label ? `The outreach event is on <strong>${esc(ev.when_label)}</strong>${ev.location ? `, at <strong>${esc(ev.location)}</strong>` : ""}. ` : ""}
         Before your CV, let us know whether you'll be there.
       </p>
+      ${closed ? `<p class="apl-hint" style="margin:0 0 12px;"><strong>The Quant Outreach event is now full: it has
+        filled to capacity.</strong> ${existing ? "Your place is kept." : "Choose Not attending to carry on with your application."}</p>` : ""}
       ${existing ? `<p class="apl-hint" style="margin:0 0 12px;">
         You're already signed up for ${esc(eventName)} — <strong>${esc(TICKET_NAME[existing] || existing)}</strong>.
         Continue with that, or change it below (it changes your event sign-up too).</p>` : ""}
       ${card("fast_track", "Sign up for the CV clinic + Fast-Track", fastBlurb, fastDisabled,
-        fastUsed ? "Already used" : "Limit reached — no longer available.")}
+        fastUsed ? "Already used" : closed ? "Full" : "Limit reached — no longer available.")}
       ${card("general", "Attend — general (no Fast-Track)",
         "Come to the presentation and meet the team, then apply online in the usual way, " +
-        "including the written assessment.", false)}
+        "including the written assessment.", generalDisabled, "Full")}
       ${card("none", "Not attending",
         "Skip the event and continue to the online application, including the written assessment.", false)}
       <button class="btn primary" id="eventNext" style="margin-top:16px;" ${pickedTicket ? "" : "disabled"}>Continue</button>`);

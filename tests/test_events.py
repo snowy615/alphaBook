@@ -639,3 +639,48 @@ def test_the_invite_attachment_method_matches_the_file():
         msg = mailer._build_message("a@b.c", "j@b.c", "s", "<p>h</p>", "t", ics)
         part = msg.get_payload()[-1]
         assert part.get_param("method") == method and part.get_filename() == "invite.ics"
+
+
+class TestSignupsClosed:
+    """Closing sign-ups (filled to capacity) stops every new ticket, from the
+    events page and the application alike; existing sign-ups keep theirs."""
+
+    def _close(self, store):
+        _seed_outreach(store)
+        store["events"][OUT]["signups_closed"] = True
+
+    def test_no_new_ticket_of_either_kind(self, store):
+        self._close(store)
+        for ticket in ("general", "fast_track"):
+            with pytest.raises(HTTPException) as exc:
+                run(events.choose_ticket(OUT, events.TicketChoice(ticket=ticket), JO))
+            assert exc.value.detail == outreach.FULL_MESSAGE
+        assert f"{OUT}_u1" not in store.get("event_signups", {})
+
+    def test_someone_already_signed_up_keeps_their_place(self, store):
+        _seed_outreach(store)
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))
+        store["events"][OUT]["signups_closed"] = True
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))      # re-confirm
+        run(events.choose_ticket(OUT, events.TicketChoice(ticket="general"), JO))         # step down
+        with pytest.raises(HTTPException):
+            run(events.choose_ticket(OUT, events.TicketChoice(ticket="fast_track"), JO))  # but not back up
+        run(events.cancel_signup(OUT, JO))                                               # and can leave
+        assert f"{OUT}_u1" not in store["event_signups"]
+
+    def test_the_events_page_says_it_is_full(self, store):
+        self._close(store)
+        ev = run(events.list_events(JO))["events"][0]
+        assert ev["signups_closed"] and ev["full_message"] == outreach.FULL_MESSAGE
+        assert all(t["full"] for t in ev["tickets"])
+
+    def test_the_application_can_still_carry_on_without_a_ticket(self, store):
+        from app import applications as ap
+        self._close(store)
+        store["applications"] = {"u1": {"user_id": "u1", "status": "cv", "oxford_email_verified": True}}
+        with pytest.raises(HTTPException) as exc:
+            run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="general"), JO))
+        assert exc.value.detail == outreach.FULL_MESSAGE
+        run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), JO))
+        assert store["applications"]["u1"]["event_ticket"] == "none"
+        assert run(outreach.event_summary())["signups_closed"] is True

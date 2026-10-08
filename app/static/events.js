@@ -59,13 +59,15 @@
     const option = (t) => {
       const mine = ev.my_ticket === t.key;
       const full = t.full && !mine;
-      const note = t.capacity
+      const note = ev.signups_closed && full ? `<span class="evt-opt-note">Full</span>`
+        : t.capacity
         ? `<span class="evt-opt-note">${full ? "Limit reached" : `${t.remaining} of ${t.capacity} places left`}</span>` : "";
       return `<button class="evt-opt${mine ? " is-mine" : ""}" ${full ? "disabled" : ""}
                 data-act="ticket" data-id="${id}" data-ticket="${esc(t.key)}">
                 <strong>${esc(t.label)}</strong>${note}${mine ? `<span class="evt-opt-note">Your ticket</span>` : ""}</button>`;
     };
-    return `<div class="evt-opts">${ev.tickets.map(option).join("")}</div>
+    return `${ev.signups_closed ? `<p class="evt-hint" style="margin:0 0 8px;"><strong>${esc(ev.full_message)}</strong></p>` : ""}
+      <div class="evt-opts">${ev.tickets.map(option).join("")}</div>
       <div class="evt-actions">
         ${ev.my_ticket ? `<button class="btn ghost" data-act="ticket" data-id="${id}" data-ticket="none">Not attending — cancel my sign-up</button>` : ""}
         <span class="evt-hint">Applying to the Quant Bootcamp? This is the same sign-up as the first step of

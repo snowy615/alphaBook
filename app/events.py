@@ -226,14 +226,17 @@ def _event_view(event: Dict[str, Any], signups: List[Dict[str, Any]],
         # are left is shown to everyone regardless of the attendance setting —
         # it's the thing people are deciding on.
         cap = outreach.FAST_TRACK_CAPACITY
+        closed = bool(event.get("signups_closed"))   # filled to capacity: no new tickets of either kind
         view["tickets"] = [
             {"key": outreach.EVENT_TICKET_FAST_TRACK,
              "label": outreach.TICKET_LABELS[outreach.EVENT_TICKET_FAST_TRACK],
-             "capacity": cap, "remaining": max(0, cap - fast_track_taken),
-             "full": fast_track_taken >= cap},
+             "capacity": cap, "remaining": 0 if closed else max(0, cap - fast_track_taken),
+             "full": closed or fast_track_taken >= cap},
             {"key": outreach.EVENT_TICKET_GENERAL,
-             "label": outreach.TICKET_LABELS[outreach.EVENT_TICKET_GENERAL]},
+             "label": outreach.TICKET_LABELS[outreach.EVENT_TICKET_GENERAL], "full": closed},
         ]
+        view["signups_closed"] = closed
+        view["full_message"] = outreach.FULL_MESSAGE if closed else ""
         view["my_ticket"] = mine.get("ticket") if mine and mine.get("status") == ST_CONFIRMED else None
         view["full"] = False
     return view
