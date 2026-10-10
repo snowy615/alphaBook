@@ -708,7 +708,7 @@
         <div>
           <div class="apa-tags">
             <span class="apa-tag">{{ r.programme }}</span>
-            {% if r.moved_to_bootcamp %}<span class="apa-tag is-warn">moved from {{ r.moved_to_bootcamp.from }}</span>{% endif %}
+            {% if r.programme_move %}<span class="apa-tag is-warn">moved from {{ r.programme_move.from }}</span>{% endif %}
             <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
             {% if r.event_ticket == "fast_track" %}<span class="apa-tag is-info">Fast-Track CV Clinic</span>
             {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
@@ -851,9 +851,9 @@
                left with a decision before the note box was removed). -->
           <p class="apa-h" style="margin-top:18px;">Comments</p>
           {% set commented = r.review.entries | selectattr("note") | list %}
-          {% if commented or r.moved_to_bootcamp or r.decision_note %}
+          {% if commented or r.programme_move or r.decision_note %}
           <ul class="apa-comments">
-            {% if r.moved_to_bootcamp %}{% set mv = r.moved_to_bootcamp %}
+            {% if r.programme_move %}{% set mv = r.programme_move %}
             <li class="is-record">
               <div class="apa-comment-meta">{{ mv.by }}{% if mv.at %} · {{ mv.at.strftime("%d %b, %H:%M") }}{% endif %}</div>
               <div class="apa-comment-text">Moved from {{ mv.from }} to {{ mv.to }}. They were emailed to tell them; mention it at interview too.</div>
@@ -939,6 +939,20 @@
           {% else %}
           <p class="msp-muted" style="margin:0 0 14px;">They haven't submitted their availability yet.</p>
           {% endif %}
+          {% if not r.interview_booked %}
+          <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 6px;">
+            <button type="button" class="btn ghost" onclick="requestAvailability('{{ r.user_id }}', this)"
+                    data-name="{{ r.full_name or r.username }}">Request more availability</button>
+            {% set rq = r.last_availability_request %}
+            {% if rq %}
+            <span class="msp-muted" style="font-size:12.5px;">
+              Asked by {{ rq.by }}{% if rq.at %} on {{ rq.at.strftime("%d %b, %H:%M") }}{% endif %}:
+              {% if r.availability_updated_at and rq.at and r.availability_updated_at > rq.at %}<strong style="color:var(--green);">they've updated it since</strong>
+              {% else %}not updated yet{% endif %}
+            </span>
+            {% endif %}
+          </div>
+          {% endif %}
 
           {% if reviewers %}
           <form class="apa-score-form" style="margin-top:12px;" onsubmit="return scheduleInterview(event, '{{ r.user_id }}')">
@@ -975,8 +989,12 @@
              decision is attributed and shown below, visible to everyone. -->
         {% macro move_button(r) %}{% if r.can_move_to_bootcamp %}
           <button class="btn ghost apa-move" data-name="{{ r.full_name or r.username }}" data-from="{{ r.programme }}"
-                  data-to="{{ r.programme | replace('Analyst', 'Bootcamp') }}"
-                  onclick="moveToBootcamp('{{ r.user_id }}', this)">Move to {{ r.programme | replace('Analyst', 'Bootcamp') }}</button>
+                  data-to="{{ r.programme | replace('Analyst', 'Bootcamp') }}" data-endpoint="move-to-bootcamp"
+                  onclick="moveProgramme('{{ r.user_id }}', this)">Move to {{ r.programme | replace('Analyst', 'Bootcamp') }}</button>
+        {% elif r.can_move_to_analyst %}
+          <button class="btn ghost apa-move" data-name="{{ r.full_name or r.username }}" data-from="{{ r.programme }}"
+                  data-to="{{ r.programme | replace('Bootcamp', 'Analyst') }}" data-endpoint="move-to-analyst"
+                  onclick="moveProgramme('{{ r.user_id }}', this)">Move to {{ r.programme | replace('Bootcamp', 'Analyst') }}</button>
         {% endif %}{% endmacro %}
         {% if r.status == "submitted" %}
         <div class="apa-decide">
@@ -1779,16 +1797,37 @@
       }
     }
 
-    async function moveToBootcamp(userId, btn) {
-      const { name, from, to } = btn.dataset;
+    async function moveProgramme(userId, btn) {
+      const { name, from, to, endpoint } = btn.dataset;
       if (!confirm(`Move ${name} from ${from} to ${to}?\n\n`
         + `They'll be emailed straight away to tell them their application has moved. `
         + `Their CV, answers, scores and any interview carry over, and accepting them `
         + `later makes them a ${to} member.\n\nOnly do this if the committee has agreed.`)) return;
       btn.disabled = true;
       try {
-        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/move-to-bootcamp`, {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/${endpoint}`, {
           method: "POST", credentials: "include",
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        window.apaFocus = userId;
+        location.reload();
+      } catch (err) {
+        btn.disabled = false;
+        flash(err.message, true);
+      }
+    }
+
+    async function requestAvailability(userId, btn) {
+      const note = prompt(`Email ${btn.dataset.name} asking for more interview availability?\n\n`
+        + `Add a short note for them if you like (optional), then press OK to send.`, "");
+      if (note === null) return;                      // cancelled
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/request-availability`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ note }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);

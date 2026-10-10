@@ -1762,6 +1762,13 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "shortlisted_by": application.get("shortlisted_by") or "",
         "auto_shortlist": application.get("auto_shortlist"),
         "moved_to_bootcamp": application.get("moved_to_bootcamp"),
+        # The latest programme move either way, for the card's tag and Comments.
+        "programme_move": max((m for m in (application.get("moved_to_bootcamp"), application.get("moved_to_analyst")) if m),
+                              key=lambda m: _as_utc(m.get("at")) or dt.datetime.min.replace(tzinfo=dt.timezone.utc),
+                              default=None),
+        "can_move_to_analyst": (application.get("programme") in ANALYST_FOR_BOOTCAMP
+                                and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
+        "last_availability_request": (application.get("availability_requests") or [None])[-1],
         "offer_response": (application.get("offer_response") or {}).get("response"),
         "can_move_to_bootcamp": (application.get("programme") in BOOTCAMP_FOR_ANALYST
                                  and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
@@ -2794,6 +2801,8 @@ BOOTCAMP_FOR_ANALYST = {
     mb.M_QUANT_ANALYST: mb.M_QUANT_BOOTCAMP,
     mb.M_FUND_ANALYST: mb.M_FUND_BOOTCAMP,
 }
+# ...and the other way: a Bootcamp applicant strong enough for Analyst.
+ANALYST_FOR_BOOTCAMP = {bootcamp: analyst for analyst, bootcamp in BOOTCAMP_FOR_ANALYST.items()}
 
 _MOVED_NEXT_STEP = {
     S_SUBMITTED: "The committee will review it as a {to} application and get back to you soon.",
@@ -2802,7 +2811,14 @@ _MOVED_NEXT_STEP = {
 }
 
 
-def _moved_to_bootcamp_email(application: dict, moved_from: str, moved_to: str) -> Dict[str, str]:
+def _moved_to_analyst_email(application: dict, moved_from: str, moved_to: str) -> Dict[str, str]:
+    """The Bootcamp-to-Analyst counterpart of _moved_to_bootcamp_email."""
+    return _moved_to_bootcamp_email(application, moved_from, moved_to,
+                                    why="a better fit for your experience")
+
+
+def _moved_to_bootcamp_email(application: dict, moved_from: str, moved_to: str,
+                             why: str = "the right place for you to start with us") -> Dict[str, str]:
     """The email an applicant gets when their application is moved. Kept
     separate from sending so the wording can be checked on its own."""
     name = html.escape(application.get("full_name") or application.get("username") or "there")
@@ -2815,7 +2831,7 @@ def _moved_to_bootcamp_email(application: dict, moved_from: str, moved_to: str) 
             f"<p>Hi {name},</p>"
             f"<p>Thank you for applying to <strong>{old}</strong>. Having reviewed your "
             f"application, the committee has moved it to <strong>{new}</strong>, which we "
-            f"think is the right place for you to start with us.</p>"
+            f"think is {why}.</p>"
             f"<p>Everything you've submitted carries over, so there's nothing you need to do "
             f"again. {next_step}</p>"
             f"<p>If you have any questions, just reply to this email.</p>"
@@ -2834,13 +2850,29 @@ async def move_to_bootcamp(user_id: str, reviewer: User = Depends(require_review
     review page asks for confirmation first. Only while the application is
     still undecided (submitted or shortlisted).
     """
+    return await _move_programme(user_id, reviewer, BOOTCAMP_FOR_ANALYST, "moved_to_bootcamp",
+                                 _moved_to_bootcamp_email, "Only an Analyst application can be moved to Bootcamp")
+
+
+@router.post("/admin/{user_id}/move-to-analyst")
+async def move_to_analyst(user_id: str, reviewer: User = Depends(require_reviewer)):
+    """Move a Bootcamp application to the matching Analyst track, and email
+    them. The mirror of move_to_bootcamp, on the same terms."""
+    return await _move_programme(user_id, reviewer, ANALYST_FOR_BOOTCAMP, "moved_to_analyst",
+                                 _moved_to_analyst_email, "Only a Bootcamp application can be moved to Analyst")
+
+
+async def _move_programme(user_id: str, reviewer: User, mapping: Dict[str, str], record_key: str,
+                          make_email, wrong_programme: str) -> Dict[str, Any]:
+    """Switch an undecided application's programme (CV, answers, scores and
+    any interview carry over), record who did it, and email the applicant."""
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
     moved_from = application.get("programme")
-    moved_to = BOOTCAMP_FOR_ANALYST.get(moved_from)
+    moved_to = mapping.get(moved_from)
     if moved_to is None:
-        raise HTTPException(400, "Only an Analyst application can be moved to Bootcamp")
+        raise HTTPException(400, wrong_programme)
     if application.get("status") not in (S_SUBMITTED, S_SHORTLISTED):
         raise HTTPException(400, "Only an application that's submitted or shortlisted can be moved")
     if mb.membership_of(await _user_data(user_id)) == moved_to:
@@ -2848,17 +2880,75 @@ async def move_to_bootcamp(user_id: str, reviewer: User = Depends(require_review
     await _with_name(user_id, application)
 
     application["programme"] = moved_to
-    application["moved_to_bootcamp"] = {
-        "from": moved_from, "to": moved_to, "by": reviewer.username, "at": _now(),
-    }
+    application[record_key] = {"from": moved_from, "to": moved_to, "by": reviewer.username, "at": _now()}
     await _save(user_id, application)
 
     to = await _applicant_to(application)
     if to:
-        email = _moved_to_bootcamp_email(application, moved_from, moved_to)
+        email = make_email(application, moved_from, moved_to)
         email["cta_url"] = await _apply_button_url(user_id, application)
         await mailer.send_email(to=to, **email)
     return {"ok": True, "programme": moved_to}
+
+
+# ── Asking for more interview availability ──────────────────────────────────
+# When a shortlisted candidate's slots don't line up with any interviewer, a
+# reviewer can ask for more. One email, with a button straight to their
+# availability grid; the card records each request, so everyone can see it
+# was asked and whether they've updated since.
+class AvailabilityRequest(BaseModel):
+    note: Optional[str] = None
+
+
+def _more_availability_email(application: dict, note: Optional[str]) -> Dict[str, str]:
+    name = html.escape(application.get("full_name") or application.get("username") or "there")
+    programme = html.escape(application.get("programme") or "the programme")
+    if application.get("availability"):
+        ask = (f"<p>Thank you for sending your availability for your <strong>{programme}</strong> interview. "
+               f"We're having trouble finding a time that works with our interviewers, so could you add any "
+               f"more slots you could make?</p>")
+    else:
+        ask = (f"<p>We haven't received your availability for your <strong>{programme}</strong> interview "
+               f"yet. Could you add the times you could make, so we can schedule it?</p>")
+    body = (f"<p>Hi {name},</p>{ask}"
+            f"<p>Just tick any times you're free on the availability grid; it saves automatically. "
+            f"Times are shown in London time.</p>")
+    if note and note.strip():
+        body += f'<p style="color:#555;">A note from the committee: {html.escape(note.strip()[:400])}</p>'
+    return {
+        "subject": "Alpha Fund: could you add more interview availability?",
+        "title": "More interview availability",
+        "body_html": body,
+        "cta_label": "Add more availability",
+        "cta_url": f"{BASE_URL}/apply",
+    }
+
+
+@router.post("/admin/{user_id}/request-availability")
+async def request_more_availability(user_id: str, payload: AvailabilityRequest,
+                                    reviewer: User = Depends(require_reviewer)):
+    """Email a shortlisted candidate asking for more interview availability.
+    Open to any reviewer; only before an interview has been booked."""
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") != S_SHORTLISTED:
+        raise HTTPException(400, "Only a shortlisted candidate can be asked for availability")
+    interview = application.get("interview") or {}
+    if interview and interview.get("status") != INTERVIEW_DECLINED:
+        raise HTTPException(400, "Their interview is already booked")
+    await _with_name(user_id, application)
+    to = await _applicant_to(application)
+    if not to:
+        raise HTTPException(400, "This applicant has no email address on file")
+    email = _more_availability_email(application, payload.note)
+    email["cta_url"] = await _apply_button_url(user_id, application)
+    if not await mailer.send_email(to=to, **email):
+        raise HTTPException(502, "Couldn't send the email. Check the email configuration.")
+    requests = list(application.get("availability_requests") or [])
+    requests.append({"by": reviewer.username, "at": _now(), "note": (payload.note or "").strip()[:400]})
+    await db_module.db.collection(COLLECTION).document(user_id).update({"availability_requests": requests})
+    return {"ok": True}
 
 
 # Everything an OA sitting produces — cleared on redo so the applicant lands

@@ -3955,12 +3955,14 @@ class TestCardComments:
                                           "decided_by": "root", "decision_note": "Weak estimation"})
         assert "Note for the record · root" in html and "Weak estimation" in html
 
-    def test_the_move_button_shows_only_on_undecided_analyst_applications(self, monkeypatch):
+    def test_the_move_button_points_the_right_way_and_only_while_undecided(self, monkeypatch):
         html = self._render(monkeypatch, {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST})
-        assert "moveToBootcamp('u1'" in html and "Move to Quant Bootcamp" in html
-        for status, programme in ((ap.S_SUBMITTED, mb.M_QUANT_BOOTCAMP), (ap.S_ACCEPTED, mb.M_QUANT_ANALYST)):
-            html = self._render(monkeypatch, {"status": status, "programme": programme})
-            assert "moveToBootcamp('u1'" not in html
+        assert "Move to Quant Bootcamp" in html and "Move to Quant Analyst" not in html
+        html = self._render(monkeypatch, {"status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP})
+        assert "Move to Quant Analyst" in html and "Move to Quant Bootcamp" not in html
+        for programme in (mb.M_QUANT_ANALYST, mb.M_QUANT_BOOTCAMP):
+            html = self._render(monkeypatch, {"status": ap.S_ACCEPTED, "programme": programme})
+            assert "moveProgramme('u1'" not in html
 
     def test_a_moved_application_is_tagged_and_noted(self, monkeypatch):
         html = self._render(monkeypatch, {"status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
@@ -4272,3 +4274,94 @@ class TestBootcampOffer:
             "b": {"user_id": "b", "username": "b", **base, "offer_response": {"response": "declined", "at": now}},
             "c": {"user_id": "c", "username": "c", **base}})
         assert "offer accepted" in html and "offer declined" in html and "awaiting reply" in html
+
+
+class TestMoveToAnalyst:
+    def _setup(self, monkeypatch, status=ap.S_SUBMITTED, programme=mb.M_QUANT_BOOTCAMP, membership=None):
+        users = {"u1": {"membership": membership}} if membership else {}
+        fake_db, sent, _ = _flow_db(monkeypatch, users=users, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "email": "jo@example.com",
+            "oxford_email": "jo@merton.ox.ac.uk", "programme": programme, "status": status}})
+        return fake_db, sent
+
+    def test_a_bootcamp_application_moves_to_analyst_and_is_told(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        assert asyncio.run(ap.move_to_analyst("u1", User(id="r1", username="priya"))) == \
+            {"ok": True, "programme": mb.M_QUANT_ANALYST}
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["programme"] == mb.M_QUANT_ANALYST and stored["status"] == ap.S_SHORTLISTED
+        assert stored["moved_to_analyst"]["by"] == "priya"
+        assert sent[0]["subject"] == "Alpha Fund: your application has moved to Quant Analyst"
+        assert "a better fit for your experience" in sent[0]["body_html"]
+        assert "still shortlisted for interview" in sent[0]["body_html"]
+
+    @pytest.mark.parametrize("status, programme", [
+        (ap.S_CV, mb.M_QUANT_BOOTCAMP), (ap.S_ACCEPTED, mb.M_QUANT_BOOTCAMP), (ap.S_SUBMITTED, mb.M_QUANT_ANALYST)])
+    def test_only_undecided_bootcamp_applications(self, monkeypatch, status, programme):
+        _, sent = self._setup(monkeypatch, status=status, programme=programme)
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.move_to_analyst("u1", User(id="r1", username="priya")))
+        assert sent == []
+
+    def test_the_card_offers_it_and_records_it(self, monkeypatch):
+        html = TestScoringView()._render(monkeypatch, {"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP}})
+        assert "Move to Quant Analyst" in html and 'data-endpoint="move-to-analyst"' in html
+        html = TestScoringView()._render(monkeypatch, {"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_ANALYST,
+            "moved_to_analyst": {"from": mb.M_QUANT_BOOTCAMP, "to": mb.M_QUANT_ANALYST, "by": "priya",
+                                 "at": dt.datetime(2026, 10, 10, 12, 0, tzinfo=dt.timezone.utc)}}})
+        assert "moved from Quant Bootcamp" in html and "Moved from Quant Bootcamp to Quant Analyst." in html
+
+
+class TestRequestMoreAvailability:
+    def _setup(self, monkeypatch, **extra):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "email": "jo@example.com",
+            "oxford_email": "jo@merton.ox.ac.uk", "programme": mb.M_QUANT_BOOTCAMP, "status": ap.S_SHORTLISTED,
+            **extra}})
+        return fake_db, sent
+
+    def _ask(self, note=None):
+        return asyncio.run(ap.request_more_availability("u1", ap.AvailabilityRequest(note=note),
+                                                        User(id="r1", username="priya")))
+
+    def test_it_emails_them_and_records_who_asked(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, availability=["2026-10-12T10:00"])
+        self._ask("Any weekday evening works for us")
+        assert sent[0]["to"] == "jo@merton.ox.ac.uk, jo@example.com"
+        assert sent[0]["subject"] == "Alpha Fund: could you add more interview availability?"
+        assert "having trouble finding a time" in sent[0]["body_html"]
+        assert "Any weekday evening works for us" in sent[0]["body_html"]
+        req = fake_db.collections[ap.COLLECTION]["u1"]["availability_requests"]
+        assert len(req) == 1 and req[0]["by"] == "priya"
+
+    def test_someone_with_no_availability_is_asked_for_it(self, monkeypatch):
+        _, sent = self._setup(monkeypatch)
+        self._ask()
+        assert "haven't received your availability" in sent[0]["body_html"]
+
+    def test_not_once_the_interview_is_booked(self, monkeypatch):
+        _, sent = self._setup(monkeypatch, interview={"status": ap.INTERVIEW_CONFIRMED})
+        with pytest.raises(HTTPException, match="already booked"):
+            self._ask()
+        assert sent == []
+
+    def test_only_for_shortlisted_candidates(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch)
+        fake_db.collections[ap.COLLECTION]["u1"]["status"] = ap.S_SUBMITTED
+        with pytest.raises(HTTPException):
+            self._ask()
+        assert sent == []
+
+    def test_the_card_shows_the_request_and_whether_they_updated(self, monkeypatch):
+        asked = dt.datetime(2026, 10, 10, 9, 0, tzinfo=dt.timezone.utc)
+        base = {"username": "jo", "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
+                "shortlisted_at": asked, "availability_requests": [{"by": "priya", "at": asked, "note": ""}]}
+        html = TestScoringView()._render(monkeypatch, {
+            "a": {"user_id": "a", **base},
+            "b": {"user_id": "b", **base, "availability": ["2026-10-12T10:00"],
+                  "availability_updated_at": asked + dt.timedelta(hours=2)}})
+        assert "Request more availability" in html
+        assert "Asked by priya on 10 Oct, 09:00" in html
+        assert "not updated yet" in html and "they've updated it since" in html
