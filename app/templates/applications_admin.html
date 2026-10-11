@@ -939,10 +939,10 @@
           {% else %}
           <p class="msp-muted" style="margin:0 0 14px;">They haven't submitted their availability yet.</p>
           {% endif %}
-          {% if not r.interview_booked %}
           <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:0 0 6px;">
             <button type="button" class="btn ghost" onclick="requestAvailability('{{ r.user_id }}', this)"
-                    data-name="{{ r.full_name or r.username }}">Request more availability</button>
+                    data-name="{{ r.full_name or r.username }}" data-booked="{{ '1' if r.interview_booked else '' }}"
+                    >{{ "Request new availability" if r.interview_booked else "Request more availability" }}</button>
             {% set rq = r.last_availability_request %}
             {% if rq %}
             <span class="msp-muted" style="font-size:12.5px;">
@@ -952,7 +952,6 @@
             </span>
             {% endif %}
           </div>
-          {% endif %}
 
           {% if reviewers %}
           <form class="apa-score-form" style="margin-top:12px;" onsubmit="return scheduleInterview(event, '{{ r.user_id }}')">
@@ -1819,8 +1818,11 @@
     }
 
     async function requestAvailability(userId, btn) {
-      const note = prompt(`Email ${btn.dataset.name} asking for more interview availability?\n\n`
-        + `Add a short note for them if you like (optional), then press OK to send.`, "");
+      const note = prompt(btn.dataset.booked
+        ? `Email ${btn.dataset.name} asking for new interview availability?\n\nThis reopens their availability `
+          + `grid; their current booking stays until you pick a new time.\n\nAdd a short note if you like (optional), then press OK to send.`
+        : `Email ${btn.dataset.name} asking for more interview availability?\n\n`
+          + `Add a short note for them if you like (optional), then press OK to send.`, "");
       if (note === null) return;                      // cancelled
       btn.disabled = true;
       try {

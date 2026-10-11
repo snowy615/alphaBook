@@ -995,7 +995,7 @@ async def state(user: User = Depends(current_user)):
             out["interview"] = _interview_view(interview)
         if application["status"] == S_SHORTLISTED:
             out["availability"] = _availability_of(application)
-            out["availability_locked"] = bool(interview and interview.get("status") == INTERVIEW_CONFIRMED)
+            out["availability_locked"] = _availability_locked(application)
         if application["status"] in DECIDED:
             # A decided application doesn't disappear — the candidate keeps
             # seeing the outcome — but if they're still eligible (accepted
@@ -1008,6 +1008,14 @@ async def state(user: User = Depends(current_user)):
             if not out["offer_response"]:
                 out["can_apply_again"] = False      # the offer comes first
     return out
+
+
+def _availability_locked(application: Dict[str, Any]) -> bool:
+    """Availability is fixed once an interview is booked, unless a reviewer
+    has since asked for new availability (a no-show, a clash): that reopens
+    the grid until the next booking."""
+    interview = application.get("interview") or {}
+    return interview.get("status") == INTERVIEW_CONFIRMED and not application.get("availability_reopened")
 
 
 def _interview_view(interview: Dict[str, Any]) -> Dict[str, Any]:
@@ -1633,8 +1641,7 @@ async def submit_availability(req: AvailabilitySubmit, user: User = Depends(curr
         raise HTTPException(404, "No application on file")
     if application.get("status") != S_SHORTLISTED:
         raise HTTPException(400, "Availability can only be set once you've been shortlisted for interview")
-    interview = application.get("interview")
-    if interview and interview.get("status") == INTERVIEW_CONFIRMED:
+    if _availability_locked(application):
         raise HTTPException(400, "Your interview is already scheduled, so there's nothing left to set")
 
     application["availability"] = _valid_availability_slots(req.slots)
@@ -2300,6 +2307,7 @@ async def schedule_interview(user_id: str, payload: ScheduleInterview,
         **ics_identity,
     }
     application["interview"] = interview
+    application.pop("availability_reopened", None)   # booked: their availability is fixed again
     await _save(user_id, application)
     previous_when = _as_utc(previous.get("when"))
     rescheduled_from = previous_when if previous_when and previous_when != _as_utc(when) else None
@@ -2900,10 +2908,13 @@ class AvailabilityRequest(BaseModel):
     note: Optional[str] = None
 
 
-def _more_availability_email(application: dict, note: Optional[str]) -> Dict[str, str]:
+def _more_availability_email(application: dict, note: Optional[str], rebooking: bool = False) -> Dict[str, str]:
     name = html.escape(application.get("full_name") or application.get("username") or "there")
     programme = html.escape(application.get("programme") or "the programme")
-    if application.get("availability"):
+    if rebooking:
+        ask = (f"<p>We'd like to find a new time for your <strong>{programme}</strong> interview. Could you "
+               f"update your availability with the times you could make?</p>")
+    elif application.get("availability"):
         ask = (f"<p>Thank you for sending your availability for your <strong>{programme}</strong> interview. "
                f"We're having trouble finding a time that works with our interviewers, so could you add any "
                f"more slots you could make?</p>")
@@ -2928,27 +2939,30 @@ def _more_availability_email(application: dict, note: Optional[str]) -> Dict[str
 async def request_more_availability(user_id: str, payload: AvailabilityRequest,
                                     reviewer: User = Depends(require_reviewer)):
     """Email a shortlisted candidate asking for more interview availability.
-    Open to any reviewer; only before an interview has been booked."""
+    Open to any reviewer. For someone whose interview is already booked (a
+    no-show, a clash), it also reopens their availability grid until an
+    interview is booked again; the current booking stays until then."""
     application = await _load(user_id)
     if application is None:
         raise HTTPException(404, "No such application")
     if application.get("status") != S_SHORTLISTED:
         raise HTTPException(400, "Only a shortlisted candidate can be asked for availability")
-    interview = application.get("interview") or {}
-    if interview and interview.get("status") != INTERVIEW_DECLINED:
-        raise HTTPException(400, "Their interview is already booked")
+    booked = (application.get("interview") or {}).get("status") == INTERVIEW_CONFIRMED
     await _with_name(user_id, application)
     to = await _applicant_to(application)
     if not to:
         raise HTTPException(400, "This applicant has no email address on file")
-    email = _more_availability_email(application, payload.note)
+    email = _more_availability_email(application, payload.note, rebooking=booked)
     email["cta_url"] = await _apply_button_url(user_id, application)
     if not await mailer.send_email(to=to, **email):
         raise HTTPException(502, "Couldn't send the email. Check the email configuration.")
     requests = list(application.get("availability_requests") or [])
     requests.append({"by": reviewer.username, "at": _now(), "note": (payload.note or "").strip()[:400]})
-    await db_module.db.collection(COLLECTION).document(user_id).update({"availability_requests": requests})
-    return {"ok": True}
+    patch: Dict[str, Any] = {"availability_requests": requests}
+    if booked:
+        patch["availability_reopened"] = True
+    await db_module.db.collection(COLLECTION).document(user_id).update(patch)
+    return {"ok": True, "reopened": booked}
 
 
 # Everything an OA sitting produces — cleared on redo so the applicant lands

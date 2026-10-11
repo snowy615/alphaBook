@@ -1125,6 +1125,17 @@ class TestInterviewScheduling:
             asyncio.run(ap.schedule_interview(
                 "u1", ap.ScheduleInterview(interviewer_id="ghost", when=when), reviewer))
 
+    def test_booking_a_new_time_locks_reopened_availability_again(self, monkeypatch):
+        application = {**self._shortlisted_application(), "availability_reopened": True,
+                       "interview": {"status": ap.INTERVIEW_CONFIRMED, "interviewer_id": "qa1",
+                                     "when": dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)}}
+        fake_db, _ = self._patch(monkeypatch, application, self._reviewer_users())
+        when = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=1)
+        asyncio.run(ap.schedule_interview("u1", ap.ScheduleInterview(interviewer_id="qa1", when=when),
+                                          User(id="qa1", username="priya")))
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert "availability_reopened" not in stored and ap._availability_locked(stored) is True
+
     def test_schedule_interview_stores_and_emails_the_candidate(self, monkeypatch):
         fake_db, sent = self._patch(monkeypatch, self._shortlisted_application(), self._reviewer_users())
         reviewer = User(id="qa1", username="priya")
@@ -4341,11 +4352,36 @@ class TestRequestMoreAvailability:
         self._ask()
         assert "haven't received your availability" in sent[0]["body_html"]
 
-    def test_not_once_the_interview_is_booked(self, monkeypatch):
-        _, sent = self._setup(monkeypatch, interview={"status": ap.INTERVIEW_CONFIRMED})
-        with pytest.raises(HTTPException, match="already booked"):
-            self._ask()
-        assert sent == []
+    def test_a_booked_candidate_is_asked_for_a_new_time_and_their_grid_reopens(self, monkeypatch):
+        """The no-show case: the booking stays, but they can change their availability."""
+        when = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=3)
+        fake_db, sent = self._setup(monkeypatch, availability=["2026-10-12T10:00"],
+                                    interview={"status": ap.INTERVIEW_CONFIRMED, "when": when, "interviewer_id": "qa1"})
+        jo = User(id="u1", username="jo")
+        assert asyncio.run(ap.state(jo))["availability_locked"] is True
+        with pytest.raises(HTTPException, match="already scheduled"):
+            asyncio.run(ap.submit_availability(ap.AvailabilitySubmit(slots=[]), jo))
+
+        assert self._ask("Sorry we missed you this morning")["reopened"] is True
+        assert "find a new time for your <strong>Quant Bootcamp</strong> interview" in sent[0]["body_html"]
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["availability_reopened"] is True and stored["interview"]["status"] == ap.INTERVIEW_CONFIRMED
+        assert asyncio.run(ap.state(jo))["availability_locked"] is False
+        assert ap._availability_locked(stored) is False
+
+    def test_booking_a_new_time_locks_it_again(self, monkeypatch):
+        application = {"interview": {"status": ap.INTERVIEW_CONFIRMED}, "availability_reopened": True}
+        assert ap._availability_locked(application) is False
+        application.pop("availability_reopened")      # what schedule_interview does on booking
+        assert ap._availability_locked(application) is True
+
+    def test_the_card_offers_a_new_availability_request_for_a_booked_candidate(self, monkeypatch):
+        now = dt.datetime.now(dt.timezone.utc)
+        html = TestScoringView()._render(monkeypatch, {"u1": {
+            "user_id": "u1", "username": "jo", "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
+            "shortlisted_at": now, "interview": {"status": ap.INTERVIEW_CONFIRMED, "when": now,
+                                                 "interviewer_id": "admin1", "interviewer_name": "root"}}})
+        assert "Request new availability" in html and 'data-booked="1"' in html
 
     def test_only_for_shortlisted_candidates(self, monkeypatch):
         fake_db, sent = self._setup(monkeypatch)
