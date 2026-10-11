@@ -923,7 +923,9 @@
              the details of your offer. Accept your place below to join.</p>
              ${isBootcamp ? `<p class="apl-hint">The offer is contingent on attending all six Sunday sessions (from
              Week 2) and completing a mini group project and presentation at term's end. If you have a conflicting
-             offer, please let us know.</p>` : `<p class="apl-hint">If you have a conflicting offer, please let us know.</p>`}
+             offer, please let us know.</p>` : `<p class="apl-hint">Your role starts this term (Michaelmas), when you can join OAF
+             socials and events hosted by our sponsors; the team strategy pitches begin in Hilary Term. If you have a
+             conflicting offer, please let us know.</p>`}
              <div style="margin-top:16px;">
                <button class="btn primary" id="offerAccept">Accept my place</button>
                <button class="btn ghost" id="offerDecline" style="margin-left:8px;">Decline</button>

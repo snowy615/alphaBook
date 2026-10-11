@@ -2558,6 +2558,52 @@ _BOOTCAMP_OFFER = {
 }
 
 
+# The Analyst offer letter. Their role starts this term (Michaelmas); the
+# team strategy pitches, which are the core of the year, run in Hilary.
+_ANALYST_DOES = (
+    "Work in a team to develop and pitch a quantitative trading strategy in one of several categories: "
+    "equities/futures, options, macro, stat arb or ML-based strategies (categories may be updated closer "
+    "to the time)",
+    "Research, build and test your strategy on a centralised backtesting platform used by all teams",
+    "Gain hands-on experience taking a quant strategy from idea to polished pitch",
+    "Have the option to join our existing quant dev team building the backtesting platform, if you're "
+    "interested in quant development",
+)
+_ANALYST_TIMELINE = (
+    ("Kick-off, start of HT (mid-January):", "teams form and begin researching and building their strategies"),
+    ("Internal pitch, mid-HT (mid-February):", "teams present their progress to the society for feedback "
+                                               "before refining their work"),
+    ("External pitch, end of HT (March):", "teams deliver a final in-person pitch to an external audience"),
+)
+_ANALYST_OFFER = {
+    "subject": "Alpha Fund: your offer to join as a {programme} \U0001F389",
+    "title": "Congratulations! \U0001F389",
+    "body": (
+        "<p>Thank you for taking the time to interview with us. It was great meeting you, and we really "
+        "enjoyed our conversation. We believe you are a strong fit for us, and we would love to have you "
+        "on board.</p>"
+        '<div style="background:#eef6fc;border-left:4px solid #1B75BC;padding:14px 16px;margin:20px 0;'
+        'font-size:16px;line-height:1.5;">Our committee was impressed by your performance and would like to '
+        "extend an offer to join us as a <strong>{programme}, starting this term (Michaelmas 2026)</strong>!</div>"
+        "<p>You'll be a {programme} from this term. In <strong>Michaelmas</strong>, you can join OAF socials "
+        "and events hosted by our sponsors. Our team-based strategy pitches then run through "
+        '<strong>Hilary Term</strong>, where you will:</p>'
+        '<ul style="margin:0 0 20px;padding-left:20px;">'
+        + "".join(f'<li style="margin:0 0 8px;">{item}</li>' for item in _ANALYST_DOES)
+        + "</ul>"
+        '<p style="margin-bottom:8px;"><strong>The pitch timeline, Hilary Term:</strong></p>'
+        '<ul style="margin:0 0 20px;padding-left:20px;">'
+        + "".join(f'<li style="margin:0 0 8px;"><strong>{when}</strong> {what}</li>' for when, what in _ANALYST_TIMELINE)
+        + "</ul>"
+        "<p>Should you have any conflicting offers, please reach out to let us know.</p>"
+        "<p>Please confirm your acceptance of the offer on the platform, and we look forward to working with "
+        "you! More information on this term will follow soon.</p>"
+    ),
+    "cta_label": "Confirm your place",
+    "cta_url": "/apply",
+}
+
+
 # Analyst rejections read "next cycle" rather than "a future round" — Analyst
 # recruiting genuinely runs in cycles, unlike Bootcamp, which is the more
 # casual/rolling track.
@@ -2577,6 +2623,8 @@ async def _send_decision_email(application: dict, status: str, uid: Optional[str
     programme = application.get("programme") or "the programme"
     if status == S_ACCEPTED and programme in mb.BOOTCAMP_MEMBERSHIPS:
         copy = {**_BOOTCAMP_OFFER, "subject": _BOOTCAMP_OFFER["subject"].format(programme=programme)}
+    elif status == S_ACCEPTED and programme in mb.ANALYST_MEMBERSHIPS:
+        copy = {**_ANALYST_OFFER, "subject": _ANALYST_OFFER["subject"].format(programme=programme)}
     body_template = copy["body"]
     if status == S_REJECTED and programme in mb.ANALYST_MEMBERSHIPS:
         body_template = _REJECTED_BODY_ANALYST

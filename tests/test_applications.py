@@ -642,7 +642,8 @@ class TestDecideFlow:
         result = asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), admin))
         assert result["status"] == ap.S_ACCEPTED
         assert "membership" not in fake_db.collections.get("users", {}).get("u1", {})   # an offer, not yet in
-        assert sent[-1] == ("jo@merton.ox.ac.uk, jo@example.com", ap._DECISION_COPY[ap.S_ACCEPTED]["subject"])
+        assert sent[-1] == ("jo@merton.ox.ac.uk, jo@example.com",
+                            ap._ANALYST_OFFER["subject"].format(programme=mb.M_QUANT_ANALYST))
         asyncio.run(ap.respond_to_offer(ap.OfferResponse(response="accept"), User(id="u1", username="jo")))
         assert fake_db.collections["users"]["u1"]["membership"] == mb.M_QUANT_ANALYST
 
@@ -4223,12 +4224,18 @@ class TestBootcampOffer:
         assert mail["cta_label"] == "Confirm your place" and "/auth/email-link?t=" in mail["cta_url"]
         assert not any(d in mail["body_html"] for d in ("—", "–"))   # house style: no dashes
 
-    def test_an_analyst_acceptance_keeps_the_short_note(self, monkeypatch):
+    def test_an_analyst_acceptance_gets_the_analyst_letter(self, monkeypatch):
         self._setup(monkeypatch, programme=mb.M_QUANT_ANALYST)
         captured, capture = self._accept()
         monkeypatch.setattr(ap.mailer, "send_email", capture)
         asyncio.run(ap.decide("u1", ap.Decision(decision="accept"), User(id="r1", username="priya")))
-        assert captured[0]["subject"] == ap._DECISION_COPY[ap.S_ACCEPTED]["subject"]
+        mail = captured[0]
+        assert mail["subject"] == "Alpha Fund: your offer to join as a Quant Analyst \U0001F389"
+        assert "Quant Analyst, starting this term (Michaelmas 2026)" in mail["body_html"]
+        assert "you can join OAF socials and events hosted by our sponsors" in mail["body_html"]
+        assert "<strong>Hilary Term</strong>" in mail["body_html"] and "External pitch, end of HT (March):" in mail["body_html"]
+        assert mail["cta_label"] == "Confirm your place"
+        assert not any(d in mail["body_html"] for d in ("\u2014", "\u2013"))
 
     def test_accepting_the_place_once(self, monkeypatch):
         fake_db, _ = self._setup(monkeypatch, status=ap.S_ACCEPTED)
