@@ -78,6 +78,16 @@ class _DB:
         return _Coll(self._store, name)
 
 
+@pytest.fixture(autouse=True)
+def before_the_outreach_event(monkeypatch):
+    """Quant Outreach is a real, dated event (11 Oct 2026). These tests are
+    about signing up for it, so they run on a clock a few days before it,
+    not on today's date, which is past it now."""
+    frozen = dt.datetime(2026, 10, 1, 12, 0, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(events, "_now", lambda: frozen)
+    monkeypatch.setattr(outreach, "_now", lambda: frozen)
+
+
 @pytest.fixture
 def store(monkeypatch):
     s = {"users": {

@@ -5,6 +5,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Applications — {{ app_name }}</title>
+  <script>
+    // After an action reloads this (large) page, keep it hidden until it has
+    // scrolled back to where the reviewer was, rather than showing the top and
+    // then jumping. Only on a reload with a saved view; never longer than 4s.
+    try {
+      const nav = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+      if (nav && nav.type === "reload" && sessionStorage.getItem("apaView")) {
+        document.documentElement.classList.add("apa-restoring");
+        setTimeout(() => document.documentElement.classList.remove("apa-restoring"), 4000);
+      }
+    } catch (e) { /* storage off: nothing to restore */ }
+  </script>
+  <style>html.apa-restoring body { visibility: hidden; }</style>
   <link rel="stylesheet" href="/static/style.css">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.css">
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
@@ -2071,19 +2084,28 @@
         setUnreviewed(!!v.unreviewed);
         tabs.forEach((t) => t.classList.toggle("is-active", !v.unreviewed && t.dataset.stage === stage));
         apply();
-        if (!reloaded) return true;
+        const reveal = () => document.documentElement.classList.remove("apa-restoring");
+        if (!reloaded) { reveal(); return true; }
         const card = v.focus && document.getElementById("a-" + v.focus);
-        // After load, once images and fonts have settled the page's height.
         const land = () => {
           if (card && !card.classList.contains("hidden")) card.scrollIntoView({ block: "start" });
           else window.scrollTo(0, v.y || 0);
         };
-        if (document.readyState === "complete") setTimeout(land, 0);
-        else window.addEventListener("load", () => setTimeout(land, 0), { once: true });
+        // Straight away, now the cards are in place, then once more when fonts
+        // and images have settled the page's height, unless the reviewer has
+        // started scrolling in the meantime (a late jump would yank them back).
+        land();
+        reveal();
+        let moved = false;
+        const mine = () => { moved = true; };
+        ["wheel", "touchstart", "keydown", "mousedown"].forEach((e) => window.addEventListener(e, mine, { once: true, passive: true }));
+        const settle = () => setTimeout(() => { if (!moved) land(); }, 0);
+        if (document.readyState === "complete") settle();
+        else window.addEventListener("load", settle, { once: true });
         return true;
       }
 
-      if (!restoreView()) apply();
+      if (!restoreView()) { apply(); document.documentElement.classList.remove("apa-restoring"); }
     })();
   </script>
 </body>
