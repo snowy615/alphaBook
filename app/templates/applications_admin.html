@@ -569,7 +569,7 @@
     <div class="card msp-panel apa-summary">
       <div class="head">
         <h3>Applicants</h3>
-        <span class="msp-muted"><span id="apaRankNote">Ranked by CV round score</span> · {{ scored }} of {{ total }} scored</span>
+        <span class="msp-muted"><span id="apaRankNote">Ranked by CV round score</span> · <span id="apaScoredCount">{{ scored }} of {{ total }} scored</span></span>
         <button type="button" class="btn" id="apaUnreviewed" aria-pressed="false">All unreviewed <span class="n"></span></button>
         <a class="btn ghost" href="/guide">Analyst guide</a>
         <a class="btn ghost" href="/apply/admin/interview-guide">Scoring guide</a>
@@ -637,7 +637,7 @@
     <!-- Outreach event rosters — who's actually coming, separate from the
          scored ranking above. Fast-Track shows the capacity count live;
          General Attendance is uncapped. -->
-    <div class="card msp-panel apa-summary">
+    <div class="card msp-panel apa-summary" id="apaOutreach">
       <div class="head">
         <h3>Outreach event</h3>
         {# Shortlisted (or accepted) Fast-Track people are past the CV round:
@@ -1082,7 +1082,8 @@
     // Applicants may have typed LaTeX in their written responses (see the
     // apply page's Preview) — render it here too, on every essay block at
     // once, so a reviewer sees it the same way rather than raw $...$ text.
-    document.querySelectorAll(".apa-math").forEach((el) => {
+    function renderMath(root) {
+      root.querySelectorAll(".apa-math").forEach((el) => {
       if (window.renderMathInElement) {
         try {
           renderMathInElement(el, {
@@ -1094,18 +1095,55 @@
           });
         } catch { /* a malformed formula just shows as typed */ }
       }
-    });
+      });
+    }
+    renderMath(document);
 
     // Renders each shortlisted applicant's availability grid and wires a
     // click on any highlighted hour to fill in the schedule form's date/time
     // field below it — the analyst still picks the interviewer and hits
     // Propose, this just saves retyping the time by hand.
-    document.querySelectorAll('[id^="avail-data-"]').forEach((el) => {
-      const userId = el.id.slice("avail-data-".length);
-      let slots = [];
-      try { slots = JSON.parse(el.textContent || "[]"); } catch { /* leave empty */ }
-      renderAdminAvailability(userId, slots);
-    });
+    function renderAvailabilityIn(root) {
+      root.querySelectorAll('[id^="avail-data-"]').forEach((el) => {
+        const userId = el.id.slice("avail-data-".length);
+        let slots = [];
+        try { slots = JSON.parse(el.textContent || "[]"); } catch { /* leave empty */ }
+        renderAdminAvailability(userId, slots);
+      });
+    }
+    renderAvailabilityIn(document);
+
+    // After an action, bring in the fresh version of just the cards it changed
+    // (and the counts above them) instead of reloading the whole page, so the
+    // reviewer stays exactly where they are. Each card keeps its place in the
+    // page, so the filters, ordering and tab counts simply run again. Anything
+    // unexpected falls back to a normal reload.
+    async function refreshCards(uids) {
+      try {
+        const r = await fetch(location.pathname + location.search, { credentials: "include", cache: "no-store" });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const fresh = new DOMParser().parseFromString(await r.text(), "text/html");
+        const swap = (now, next) => {
+          if (!now) return;
+          if (!next) { now.remove(); return; }            // e.g. a deleted application
+          for (const a of [...now.attributes]) if (!next.hasAttribute(a.name)) now.removeAttribute(a.name);
+          for (const a of next.attributes) now.setAttribute(a.name, a.value);
+          now.innerHTML = next.innerHTML;
+        };
+        for (const uid of uids) {
+          const q = (doc, sel) => doc.querySelector(sel);
+          swap(q(document, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`), q(fresh, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`));
+          const card = document.getElementById("a-" + uid);
+          swap(card, fresh.getElementById("a-" + uid));
+          if (card && card.isConnected) { renderMath(card); renderAvailabilityIn(card); }
+          delete sc.seen[uid];                              // the scoring view re-reads it next time
+        }
+        for (const id of ["apaScoredCount", "apaOutreach"]) swap(document.getElementById(id), fresh.getElementById(id));
+        if (window.apaApply) window.apaApply();             // tabs, ordering, ranks and counts
+      } catch (err) {
+        location.reload();
+      }
+    }
 
     function renderAdminAvailability(userId, slots) {
       const container = document.getElementById("availAdminGrid-" + userId);
@@ -1306,7 +1344,7 @@
     const INTERVIEW_RUBRIC = {{ interview_rubric | tojson }};
     const INTERVIEW_TIMERS = {{ interview_timers | tojson }};
     const sc = { uid: null, d: null, section: null, changed: false, anyChanged: false,
-                 pending: {}, inFlight: false, noteTimer: null, seen: {} };
+                 pending: {}, inFlight: false, noteTimer: null, seen: {}, dirty: new Set() };
     const $sc = (id) => document.getElementById(id);
     const escHtml = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -1351,8 +1389,8 @@
       flushThen(() => {
         $sc("scOverlay").classList.add("hidden");
         document.body.style.overflow = "";
-        window.apaFocus = sc.uid;             // where to land after the reload
-        if (sc.changed || sc.anyChanged) location.reload();   // refresh the averages behind it
+        // Refresh the averages behind it, for everyone scored in this visit.
+        if (sc.dirty.size) { const uids = [...sc.dirty]; sc.dirty.clear(); refreshCards(uids); }
       });
     }
 
@@ -1655,6 +1693,7 @@
         const res = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(res.detail || `HTTP ${r.status}`);
         sc.changed = true;
+        sc.dirty.add(sc.uid);
         if (res.review) {
           for (const k of Object.keys(sc.d.review)) if (k in res.review) sc.d.review[k] = res.review[k];
           const avg = document.querySelector("#scScore .sc-avg");
@@ -1724,7 +1763,7 @@
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         flash("Interview scheduled. The candidate and interviewer have both been emailed.", false);
-        location.reload();
+        await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
         btn.disabled = false;
@@ -1780,7 +1819,9 @@
           });
           const d = await r.json().catch(() => ({}));
           if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-          location.reload();
+          overlay.style.display = "none";
+          flash("Shortlisted. They've been emailed.", false);
+          await refreshCards([userId]);
         } catch (e) {
           err.textContent = e.message;
         }
@@ -1803,7 +1844,9 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        location.reload();
+        flash({ shortlist: "Shortlisted. They've been emailed.", accept: "Accepted. Their offer has been emailed.",
+                reject: "Rejected. They've been emailed." }[decision] || "Done.", false);
+        await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
       }
@@ -1822,8 +1865,8 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        window.apaFocus = userId;
-        location.reload();
+        flash(`Moved to ${to}. They've been emailed.`, false);
+        await refreshCards([userId]);
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
@@ -1846,8 +1889,8 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        window.apaFocus = userId;
-        location.reload();
+        flash("Email sent asking for their availability.", false);
+        await refreshCards([userId]);
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
@@ -1867,7 +1910,8 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        location.reload();
+        flash(`${name} can now retake the assessment.`, false);
+        await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
       }
@@ -1885,7 +1929,8 @@
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        location.reload();
+        flash(`${name}'s application was deleted.`, false);
+        await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
       }
@@ -1898,7 +1943,7 @@
     (function () {
       const searchEl = document.getElementById("apaSearch");
       if (!searchEl) return;   // nobody has applied yet, so there's nothing to filter
-      const items = Array.from(document.querySelectorAll(".apa-item"));
+      let items = Array.from(document.querySelectorAll(".apa-item"));
       const tabs = Array.from(document.querySelectorAll(".apa-stage-tab"));
       const noneEl = document.getElementById("apaNone");
       const unreviewedBtn = document.getElementById("apaUnreviewed");
@@ -2106,6 +2151,8 @@
       }
 
       if (!restoreView()) { apply(); document.documentElement.classList.remove("apa-restoring"); }
+      // For refreshCards: pick up added or removed cards and run the filters again.
+      window.apaApply = () => { items = Array.from(document.querySelectorAll(".apa-item")); apply(); };
     })();
   </script>
 </body>
