@@ -1776,6 +1776,7 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "can_move_to_analyst": (application.get("programme") in ANALYST_FOR_BOOTCAMP
                                 and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "last_availability_request": (application.get("availability_requests") or [None])[-1],
+        "waitlist": application.get("waitlist") if application.get("status") == S_SHORTLISTED else None,
         "offer_response": (application.get("offer_response") or {}).get("response"),
         "can_move_to_bootcamp": (application.get("programme") in BOOTCAMP_FOR_ANALYST
                                  and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
@@ -2945,6 +2946,27 @@ async def _move_programme(user_id: str, reviewer: User, mapping: Dict[str, str],
         email["cta_url"] = await _apply_button_url(user_id, application)
         await mailer.send_email(to=to, **email)
     return {"ok": True, "programme": moved_to}
+
+
+# ── Interviewed + waitlist ──────────────────────────────────────────────────
+# A reviewer's marker for someone who has been interviewed and is being held
+# on the waitlist rather than accepted or rejected yet. Internal only: the
+# candidate isn't emailed and the status stays "shortlisted". It shows as an
+# orange tag on the summary row and card so every reviewer can see it.
+class WaitlistMark(BaseModel):
+    on: bool = True
+
+
+@router.post("/admin/{user_id}/waitlist")
+async def mark_waitlist(user_id: str, payload: WaitlistMark, reviewer: User = Depends(require_reviewer)):
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") != S_SHORTLISTED:
+        raise HTTPException(400, "Only a shortlisted candidate can be put on the waitlist")
+    value = {"by": reviewer.username, "at": _now()} if payload.on else None
+    await db_module.db.collection(COLLECTION).document(user_id).update({"waitlist": value})
+    return {"ok": True, "waitlisted": payload.on}
 
 
 # ── Asking for more interview availability ──────────────────────────────────

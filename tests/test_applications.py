@@ -4408,3 +4408,48 @@ class TestRequestMoreAvailability:
         assert "Request more availability" in html
         assert "Asked by priya on 10 Oct, 09:00" in html
         assert "not updated yet" in html and "they've updated it since" in html
+
+
+class TestInterviewedWaitlist:
+    def _setup(self, monkeypatch, status=ap.S_SHORTLISTED):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "email": "jo@example.com",
+            "programme": mb.M_QUANT_BOOTCAMP, "status": status}})
+        return fake_db, sent
+
+    def _mark(self, on=True):
+        return asyncio.run(ap.mark_waitlist("u1", ap.WaitlistMark(on=on), User(id="r1", username="priya")))
+
+    def test_marking_and_unmarking_records_who_and_emails_nobody(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch)
+        assert self._mark()["waitlisted"] is True
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["waitlist"]["by"] == "priya" and stored["status"] == ap.S_SHORTLISTED
+        self._mark(on=False)
+        assert fake_db.collections[ap.COLLECTION]["u1"]["waitlist"] is None
+        assert sent == []
+
+    @pytest.mark.parametrize("status", [ap.S_SUBMITTED, ap.S_ACCEPTED, ap.S_REJECTED])
+    def test_only_for_shortlisted_candidates(self, monkeypatch, status):
+        self._setup(monkeypatch, status=status)
+        with pytest.raises(HTTPException):
+            self._mark()
+
+    def test_the_orange_marker_shows_on_the_summary_and_card(self, monkeypatch):
+        now = dt.datetime(2026, 10, 13, 18, 0, tzinfo=dt.timezone.utc)
+        html = TestScoringView()._render(monkeypatch, {
+            "w": {"user_id": "w", "username": "w", "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
+                  "shortlisted_at": now, "waitlist": {"by": "priya", "at": now}},
+            "n": {"user_id": "n", "username": "n", "status": ap.S_SHORTLISTED, "programme": mb.M_QUANT_BOOTCAMP,
+                  "shortlisted_at": now}})
+        assert html.count('class="apa-tag is-orange">interviewed + waitlist') == 1          # summary row
+        assert html.count('class="apa-tag is-orange" title="Waitlisted by priya">') == 1    # card
+        assert "Remove from waitlist" in html and "Interviewed + waitlist</button>" in html
+        assert "Waitlisted by priya, 13 Oct 18:00" in html
+
+    def test_the_marker_goes_once_they_are_decided(self, monkeypatch):
+        now = dt.datetime(2026, 10, 13, 18, 0, tzinfo=dt.timezone.utc)
+        html = TestScoringView()._render(monkeypatch, {"a": {
+            "user_id": "a", "username": "a", "status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
+            "decided_at": now, "waitlist": {"by": "priya", "at": now}}})
+        assert 'class="apa-tag is-orange"' not in html and "Remove from waitlist" not in html
