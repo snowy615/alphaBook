@@ -4453,3 +4453,49 @@ class TestInterviewedWaitlist:
             "user_id": "a", "username": "a", "status": ap.S_ACCEPTED, "programme": mb.M_QUANT_BOOTCAMP,
             "decided_at": now, "waitlist": {"by": "priya", "at": now}}})
         assert 'class="apa-tag is-orange"' not in html and "Remove from waitlist" not in html
+
+
+class TestRejectLater:
+    def _setup(self, monkeypatch, status=ap.S_SUBMITTED, **extra):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": {
+            "user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "email": "jo@example.com",
+            "programme": mb.M_QUANT_BOOTCAMP, "status": status, **extra}})
+        return fake_db, sent
+
+    def _mark(self, on=True):
+        return asyncio.run(ap.mark_reject_later("u1", ap.WaitlistMark(on=on), User(id="r1", username="priya")))
+
+    @pytest.mark.parametrize("status", [ap.S_SUBMITTED, ap.S_SHORTLISTED])
+    def test_a_reminder_only_nothing_is_rejected_or_sent(self, monkeypatch, status):
+        fake_db, sent = self._setup(monkeypatch, status=status)
+        assert self._mark()["reject_later"] is True
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["reject_later"]["by"] == "priya" and stored["status"] == status
+        assert sent == []
+        self._mark(on=False)
+        assert fake_db.collections[ap.COLLECTION]["u1"]["reject_later"] is None
+
+    @pytest.mark.parametrize("status", [ap.S_CV, ap.S_ACCEPTED, ap.S_REJECTED])
+    def test_only_for_undecided_applications(self, monkeypatch, status):
+        self._setup(monkeypatch, status=status)
+        with pytest.raises(HTTPException):
+            self._mark()
+
+    def test_it_and_the_waitlist_replace_each_other(self, monkeypatch):
+        now = dt.datetime.now(dt.timezone.utc)
+        fake_db, _ = self._setup(monkeypatch, status=ap.S_SHORTLISTED, waitlist={"by": "al", "at": now})
+        self._mark()
+        assert fake_db.collections[ap.COLLECTION]["u1"]["waitlist"] is None
+        asyncio.run(ap.mark_waitlist("u1", ap.WaitlistMark(on=True), User(id="r1", username="priya")))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["reject_later"] is None
+
+    def test_the_marker_shows_on_the_summary_and_card_until_decided(self, monkeypatch):
+        now = dt.datetime(2026, 10, 14, 10, 0, tzinfo=dt.timezone.utc)
+        mark = {"by": "priya", "at": now}
+        html = TestScoringView()._render(monkeypatch, {
+            "s": {"user_id": "s", "username": "s", "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP, "reject_later": mark},
+            "r": {"user_id": "r", "username": "r", "status": ap.S_REJECTED, "programme": mb.M_QUANT_BOOTCAMP,
+                  "decided_at": now, "reject_later": mark}})
+        assert html.count('class="apa-tag is-reject-later">reject later') == 1            # summary row, "s" only
+        assert html.count('class="apa-tag is-reject-later" title="Marked by priya">') == 1
+        assert "Remove reject later" in html and "Marked by priya, 14 Oct 10:00" in html

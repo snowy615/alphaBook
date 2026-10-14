@@ -64,6 +64,10 @@
     .apa-tag.is-orange { border-color: #ef7d22; color: #ef7d22; background: rgba(239,125,34,0.12); }
     .btn.apa-waitlist { border-color: #ef7d22; color: #ef7d22; }
     .btn.apa-waitlist.is-on { background: #ef7d22; color: #fff; }
+    /* Dashed, so a reminder can't be mistaken for an actual "rejected". */
+    .apa-tag.is-reject-later { border-color: var(--red); border-style: dashed; color: var(--red); background: rgba(255,107,107,0.10); }
+    .btn.apa-reject-later { border-color: var(--red); border-style: dashed; color: var(--red); }
+    .btn.apa-reject-later.is-on { background: var(--red); border-style: solid; color: #fff; }
 
     .apa-toolbar {
       display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;
@@ -614,6 +618,7 @@
                 <div class="msp-muted" style="font-size:12px;">{{ r.username }}{% if r.year_of_study %} · {{ r.year_of_study }}{% endif %}</div>
                 {% if r.status == "shortlisted" and r.has_availability and not r.interview_booked %}<span class="apa-tag is-good">availability in</span>{% endif %}
                 {% if r.waitlist %}<span class="apa-tag is-orange">interviewed + waitlist</span>{% endif %}
+                {% if r.reject_later %}<span class="apa-tag is-reject-later">reject later</span>{% endif %}
               </td>
               <td>{{ r.programme }}</td>
               <td>
@@ -737,6 +742,7 @@
             {% elif r.status == "shortlisted" %}<span class="apa-tag is-info">shortlisted</span>{% endif %}
             {% if r.status == "shortlisted" and r.has_availability and not r.interview_booked %}<span class="apa-tag is-good">availability in</span>{% endif %}
             {% if r.waitlist %}<span class="apa-tag is-orange" title="Waitlisted by {{ r.waitlist.by }}">interviewed + waitlist</span>{% endif %}
+            {% if r.reject_later %}<span class="apa-tag is-reject-later" title="Marked by {{ r.reject_later.by }}">reject later</span>{% endif %}
             {% if r.auto_shortlist %}<span class="apa-tag is-good">auto-shortlisted</span>{% endif %}
             {% if r.flags.paste %}<span class="apa-tag is-warn">{{ r.flags.paste }} paste attempt{{ "s" if r.flags.paste != 1 }}</span>{% endif %}
             {% if r.flags.left_page %}<span class="apa-tag is-warn">left the page {{ r.flags.left_page }}x</span>{% endif %}
@@ -1006,6 +1012,11 @@
              reject on their own. Accept gets its own heavier confirmation
              client-side since it's final and grants membership; every
              decision is attributed and shown below, visible to everyone. -->
+        {% macro reject_later_button(r) %}
+          <button class="btn apa-reject-later{% if r.reject_later %} is-on{% endif %}" data-on="{{ '1' if r.reject_later else '' }}"
+                  onclick="toggleRejectLater('{{ r.user_id }}', this)">{{ "Remove reject later" if r.reject_later else "Reject later" }}</button>
+          {% if r.reject_later %}<span class="msp-muted" style="font-size:12.5px;">Marked by {{ r.reject_later.by }}{% if r.reject_later.at %}, {{ r.reject_later.at.strftime("%d %b %H:%M") }}{% endif %}</span>{% endif %}
+        {% endmacro %}
         {% macro move_button(r) %}{% if r.can_move_to_bootcamp %}
           <button class="btn ghost apa-move" data-name="{{ r.full_name or r.username }}" data-from="{{ r.programme }}"
                   data-to="{{ r.programme | replace('Analyst', 'Bootcamp') }}" data-endpoint="move-to-bootcamp"
@@ -1020,6 +1031,7 @@
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
           <button class="btn" onclick="autoShortlist('{{ r.user_id }}')">Automatic shortlist</button>
           <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
+          {{ reject_later_button(r) }}
           {{ move_button(r) }}
         </div>
         {% elif r.status == "shortlisted" %}
@@ -1035,6 +1047,7 @@
           <button class="btn apa-waitlist{% if r.waitlist %} is-on{% endif %}" data-on="{{ '1' if r.waitlist else '' }}"
                   onclick="toggleWaitlist('{{ r.user_id }}', this)">{{ "Remove from waitlist" if r.waitlist else "Interviewed + waitlist" }}</button>
           {% if r.waitlist %}<span class="msp-muted" style="font-size:12.5px;">Waitlisted by {{ r.waitlist.by }}{% if r.waitlist.at %}, {{ r.waitlist.at.strftime("%d %b %H:%M") }}{% endif %}</span>{% endif %}
+          {{ reject_later_button(r) }}
           {{ move_button(r) }}
         </div>
         {% elif r.status in ("accepted", "rejected") %}
@@ -1876,6 +1889,25 @@
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
         flash(`Moved to ${to}. They've been emailed.`, false);
+        await refreshCards([userId]);
+      } catch (err) {
+        btn.disabled = false;
+        flash(err.message, true);
+      }
+    }
+
+    async function toggleRejectLater(userId, btn) {
+      const on = !btn.dataset.on;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/reject-later`, {
+          method: "POST", credentials: "include",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ on }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash(on ? "Marked to reject later. Nothing has been sent." : "Reject-later reminder removed.", false);
         await refreshCards([userId]);
       } catch (err) {
         btn.disabled = false;

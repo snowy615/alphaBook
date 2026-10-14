@@ -1777,6 +1777,8 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
                                 and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "last_availability_request": (application.get("availability_requests") or [None])[-1],
         "waitlist": application.get("waitlist") if application.get("status") == S_SHORTLISTED else None,
+        "reject_later": (application.get("reject_later")
+                         if application.get("status") in (S_SUBMITTED, S_SHORTLISTED) else None),
         "offer_response": (application.get("offer_response") or {}).get("response"),
         "can_move_to_bootcamp": (application.get("programme") in BOOTCAMP_FOR_ANALYST
                                  and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
@@ -2965,8 +2967,29 @@ async def mark_waitlist(user_id: str, payload: WaitlistMark, reviewer: User = De
     if application.get("status") != S_SHORTLISTED:
         raise HTTPException(400, "Only a shortlisted candidate can be put on the waitlist")
     value = {"by": reviewer.username, "at": _now()} if payload.on else None
-    await db_module.db.collection(COLLECTION).document(user_id).update({"waitlist": value})
+    patch: Dict[str, Any] = {"waitlist": value}
+    if payload.on:
+        patch["reject_later"] = None          # one or the other, never both
+    await db_module.db.collection(COLLECTION).document(user_id).update(patch)
     return {"ok": True, "waitlisted": payload.on}
+
+
+@router.post("/admin/{user_id}/reject-later")
+async def mark_reject_later(user_id: str, payload: WaitlistMark, reviewer: User = Depends(require_reviewer)):
+    """A reminder to reject this candidate later, without rejecting them now.
+    Internal only, like the waitlist marker: nobody is emailed and the status
+    doesn't change. For any undecided application (submitted or shortlisted)."""
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if application.get("status") not in (S_SUBMITTED, S_SHORTLISTED):
+        raise HTTPException(400, "Only an undecided application can be marked to reject later")
+    value = {"by": reviewer.username, "at": _now()} if payload.on else None
+    patch: Dict[str, Any] = {"reject_later": value}
+    if payload.on:
+        patch["waitlist"] = None
+    await db_module.db.collection(COLLECTION).document(user_id).update(patch)
+    return {"ok": True, "reject_later": payload.on}
 
 
 # ── Asking for more interview availability ──────────────────────────────────
