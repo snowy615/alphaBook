@@ -4581,3 +4581,67 @@ class TestClosingDates:
         st = asyncio.run(ap.state(User(id="u1", username="jo")))
         assert st["new_applications_open"] is False and st["started_applications_open"] is True
         assert st["started_close_label"] == "midnight on Thursday 15 October"
+
+
+class TestCloseUnfinished:
+    CLOSE = dt.datetime(2026, 10, 15, 23, 0, tzinfo=dt.timezone.utc)
+
+    def _setup(self, monkeypatch, when):
+        monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", self.CLOSE)
+        monkeypatch.setattr(ap, "CLOSE_JOB_TOKEN", "s3cret")
+        monkeypatch.setattr(ap, "_now", lambda: when)
+        base = {"programme": mb.M_QUANT_BOOTCAMP, "email": "x@gmail.com"}
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={
+            "cv": {"user_id": "cv", "full_name": "Cee Vee", "status": ap.S_CV, "oxford_email": "cv@ox.ac.uk",
+                   "oxford_email_verified": True, **base},
+            "ready": {"user_id": "ready", "full_name": "Red Dee", "status": ap.S_OA_READY, "oxford_email": "rd@ox.ac.uk", **base},
+            "unconf": {"user_id": "unconf", "full_name": "Un Conf", "status": ap.S_CV, "oxford_email": "uc@ox.ac.uk",
+                       "oxford_email_verified": False, **base},
+            "done": {"user_id": "done", "full_name": "Sub Mitted", "status": ap.S_SUBMITTED, **base},
+            "short": {"user_id": "short", "full_name": "Short Listed", "status": ap.S_SHORTLISTED, **base},
+            "expired": {"user_id": "expired", "full_name": "Ex Pired", "status": ap.S_OA_ACTIVE, **base,
+                        "oa": {"started_at": self.CLOSE - dt.timedelta(minutes=30), "section": "estimation",
+                               "estimation_started_at": self.CLOSE - dt.timedelta(minutes=25),
+                               "motivation": {"text": "m"}, "estimation": {"text": "e"}}},
+        })
+        return fake_db, sent
+
+    def _req(self, token="s3cret"):
+        from starlette.requests import Request
+        return Request({"type": "http", "method": "POST", "path": "/", "query_string": b"", "root_path": "",
+                        "server": ("t", 443), "scheme": "https", "headers": [(b"x-job-token", token.encode())]})
+
+    def test_it_needs_the_job_token(self, monkeypatch):
+        self._setup(monkeypatch, self.CLOSE + dt.timedelta(minutes=5))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.close_unfinished(self._req("wrong")))
+        assert exc.value.status_code == 403
+
+    def test_it_wont_run_before_the_deadline_but_a_dry_run_can(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, self.CLOSE - dt.timedelta(hours=1))
+        with pytest.raises(HTTPException, match="haven't closed"):
+            asyncio.run(ap.close_unfinished(self._req()))
+        out = asyncio.run(ap.close_unfinished(self._req(), dry_run=True))
+        assert sorted(out["names"]) == ["Cee Vee", "Red Dee", "Un Conf"]
+        assert fake_db.collections[ap.COLLECTION]["cv"]["status"] == ap.S_CV and sent == []
+
+    def test_after_the_deadline_unfinished_are_rejected_and_told_finished_are_kept(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, self.CLOSE + dt.timedelta(minutes=5))
+        out = asyncio.run(ap.close_unfinished(self._req()))
+        apps = fake_db.collections[ap.COLLECTION]
+        assert out["rejected"] == 3
+        for uid in ("cv", "ready", "unconf"):
+            assert apps[uid]["status"] == ap.S_REJECTED and apps[uid]["closed_unsubmitted"] is True
+        assert apps["done"]["status"] == ap.S_SUBMITTED and apps["short"]["status"] == ap.S_SHORTLISTED
+        assert apps["expired"]["status"] == ap.S_SUBMITTED          # their sitting ran out: it counts as submitted
+        closing = [m for m in sent if m["subject"] == "Alpha Fund: your application"]
+        assert len(closing) == 3
+        assert next(m for m in closing if "Un Conf" in m["body_html"])["to"] == "x@gmail.com"   # sign-in only
+        assert "wasn't submitted by then" in closing[0]["body_html"]
+
+    def test_running_it_again_changes_nothing(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, self.CLOSE + dt.timedelta(minutes=5))
+        asyncio.run(ap.close_unfinished(self._req()))
+        before = len(sent)
+        assert asyncio.run(ap.close_unfinished(self._req()))["rejected"] == 0
+        assert len(sent) == before

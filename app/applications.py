@@ -430,6 +430,20 @@ def _require_started_open(application: dict) -> None:
                                  "application can no longer be completed.")
 
 
+# Closing out: once applications have closed, every one still not submitted is
+# rejected and told why. Run once by Cloud Scheduler just after the deadline
+# (it's idempotent, so a second run catches anyone who was mid-assessment at
+# midnight). Submitted applications are never touched.
+CLOSE_JOB_TOKEN = os.getenv("CLOSE_JOB_TOKEN", "")
+_CLOSED_UNSUBMITTED = {
+    "subject": "Alpha Fund: your application",
+    "title": "Applications have closed",
+    "body": ("<p>Applications for <strong>{programme}</strong> closed at midnight on Thursday 15 October. As your "
+             "application wasn't submitted by then, we're unable to consider it this round.</p>"
+             "<p>Thank you for your interest in Alpha Fund, and we'd encourage you to apply again in a future round.</p>"),
+}
+
+
 class StartApplication(BaseModel):
     programme: str
     # Only required when the account's own email isn't already an Oxford
@@ -2995,6 +3009,49 @@ async def _move_programme(user_id: str, reviewer: User, mapping: Dict[str, str],
         email["cta_url"] = await _apply_button_url(user_id, application)
         await mailer.send_email(to=to, **email)
     return {"ok": True, "programme": moved_to}
+
+
+@router.post("/internal/close-unfinished", include_in_schema=False)
+async def close_unfinished(request: Request, dry_run: bool = False):
+    """Reject every application not submitted by the closing date, and email
+    each one. Called by Cloud Scheduler with the X-Job-Token header; refuses to
+    run before the deadline. ``dry_run`` lists who it would reject, changing
+    and sending nothing."""
+    if not CLOSE_JOB_TOKEN or not secrets.compare_digest(request.headers.get("x-job-token", ""), CLOSE_JOB_TOKEN):
+        raise HTTPException(403, "Not allowed")
+    if _now() < STARTED_APPLICATIONS_CLOSE and not dry_run:
+        raise HTTPException(400, "Applications haven't closed yet")
+    rejected, still_sitting, failed = [], [], []
+    for d in await db_module.db.collection(COLLECTION).get():
+        uid, application = d.id, d.to_dict() or {}
+        if application.get("status") == S_OA_ACTIVE:
+            await _resolve_and_notify(uid, application)        # a sitting that has run out becomes submitted
+            if application.get("status") == S_OA_ACTIVE:
+                still_sitting.append(application.get("full_name") or application.get("username"))
+                continue
+        if application.get("status") not in (S_CV, S_OA_READY):
+            continue
+        redone = _as_utc(application.get("redone_at"))
+        if redone and redone >= STARTED_APPLICATIONS_CLOSE:
+            continue                                            # an admin reset them after the close: theirs to finish
+        await _with_name(uid, application)
+        name = application.get("full_name") or application.get("username") or ""
+        rejected.append(name)
+        if dry_run:
+            continue
+        application.update({"status": S_REJECTED, "decided_at": _now(), "decided_by": "closing date",
+                            "closed_unsubmitted": True})
+        await _save(uid, application)
+        to = application.get("email") if application.get("oxford_email_verified") is False else await _applicant_to(application)
+        if to:
+            programme = html.escape(application.get("programme") or "the programme")
+            body = (f"<p>Hi {html.escape(application.get('full_name') or 'there')},</p>"
+                    + _CLOSED_UNSUBMITTED["body"].format(programme=programme))
+            if not await mailer.send_email(to=to, subject=_CLOSED_UNSUBMITTED["subject"],
+                                           title=_CLOSED_UNSUBMITTED["title"], body_html=body):
+                failed.append(name)
+    return {"ok": True, "dry_run": dry_run, "rejected": len(rejected), "names": rejected,
+            "still_sitting": still_sitting, "email_failed": failed}
 
 
 # ── Interviewed + waitlist ──────────────────────────────────────────────────
