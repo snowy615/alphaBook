@@ -160,6 +160,12 @@
 
   function renderChoose(state) {
     cvScreen = null;   // a fresh application starts the CV step with a clean decision
+    if (!state.new_applications_open) {
+      $("#app").innerHTML = panel("Applications are closed", `
+        <p class="msp-muted" style="margin-top:0;">New applications closed at midnight on Wednesday 14 October.
+        Thank you for your interest in Alpha Fund; we hope to see you apply in a future round.</p>`);
+      return;
+    }
     const disabled = new Set(state.disabled_programmes || []);
     const options = (state.programmes || []).map((p) => {
       const isDisabled = disabled.has(p);
@@ -969,7 +975,7 @@
     // Decided, but still eligible — accepted into Bootcamp with Analyst
     // still open, or rejected and free to try again. Nothing happens
     // automatically; this is the only way back into the choose-programme step.
-    const canApplyAgain = decided && state.can_apply_again;
+    const canApplyAgain = decided && state.can_apply_again && state.new_applications_open;
     const againLabel = (state.programmes || []).length === 1
       ? `Apply for ${state.programmes[0]}` : "Apply again";
     const againBtn = canApplyAgain
@@ -1317,8 +1323,29 @@
     }
   }
 
+  // The closing date that applies to this person: new applications close
+  // tonight, applications already started have until midnight tomorrow.
+  function setDeadlineNote(state) {
+    const el = $("#deadlineNote");
+    if (!el) return;
+    let html = "";
+    const newApp = state.status === "none" || ((state.status === "accepted" || state.status === "rejected") && state.can_apply_again);
+    if (state.status === "analyst" || (!state.eligible && state.status === "none")) html = "";
+    else if (newApp) html = state.new_applications_open
+      ? `<strong>New applications close at ${esc(state.new_close_label)}.</strong>`
+      : `<strong>Applications are now closed.</strong> New applications closed at midnight on Wednesday 14 October.`;
+    else if (state.status === "cv" || state.status === "oa_ready") html = state.started_applications_open
+      ? `<strong>Please submit your application by ${esc(state.started_close_label)}.</strong> Applications not
+         submitted by then will be rejected. Applications submitted by then are reviewed as normal.`
+      : `<strong>Applications have closed.</strong> Applications closed at midnight on Thursday 15 October, so
+         this application can no longer be completed.`;
+    el.innerHTML = html;
+    el.classList.toggle("hidden", !html);
+  }
+
   function render(state) {
     if (reapplying) return;   // mid "Apply again" — nothing server-side has moved yet
+    setDeadlineNote(state);
     const key = keyFor(state);
     const isLive = key === "motivation" || key === "estimation";
 
@@ -1401,8 +1428,13 @@
         Applying takes an up-to-date CV and a short written assessment — no prior
         trading experience required, just how you think.
       </p>
+      ${CFG.newApplicationsOpen
+        ? `<div class="apl-deadline"><strong>New applications close at ${esc(CFG.newCloseLabel)}.</strong>
+             Already started an application? Log in to finish it.</div>`
+        : `<div class="apl-deadline"><strong>Applications are now closed.</strong> New applications closed at
+             midnight on Wednesday 14 October. Already started one? Log in to see it.</div>`}
       <div class="btn-row" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:18px;">
-        <a class="btn primary" href="/signup">Sign up to apply</a>
+        ${CFG.newApplicationsOpen ? `<a class="btn primary" href="/signup">Sign up to apply</a>` : ""}
         <a class="btn" href="/login?next=/apply">Log in</a>
       </div>
       <p class="apl-hint" style="margin-top:18px;">

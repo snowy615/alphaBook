@@ -26,6 +26,16 @@ from app.models import User
 
 
 @pytest.fixture(autouse=True)
+def _applications_open(monkeypatch):
+    """The real closing dates are fixed calendar dates; tests that aren't
+    about them run as though applications were still open. TestClosingDates
+    sets its own."""
+    far = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(ap, "NEW_APPLICATIONS_CLOSE", far)
+    monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", far)
+
+
+@pytest.fixture(autouse=True)
 def _no_duplicate_check_without_a_db(monkeypatch):
     """Many tests here drive start_application with _load/_save patched and
     no database at all. With nothing to look in, there's no other
@@ -4499,3 +4509,75 @@ class TestRejectLater:
         assert html.count('class="apa-tag is-reject-later">reject later') == 1            # summary row, "s" only
         assert html.count('class="apa-tag is-reject-later" title="Marked by priya">') == 1
         assert "Remove reject later" in html and "Marked by priya, 14 Oct 10:00" in html
+
+
+
+class TestClosingDates:
+    """New applications close at midnight on 14 Oct (UK); applications already
+    started can be finished until midnight on 15 Oct."""
+
+    NEW = dt.datetime(2026, 10, 14, 23, 0, tzinfo=dt.timezone.utc)       # = 00:00 BST on the 15th
+    STARTED = dt.datetime(2026, 10, 15, 23, 0, tzinfo=dt.timezone.utc)
+
+    def _at(self, monkeypatch, when):
+        monkeypatch.setattr(ap, "NEW_APPLICATIONS_CLOSE", self.NEW)
+        monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", self.STARTED)
+        monkeypatch.setattr(ap, "_now", lambda: when)
+
+    def _db(self, monkeypatch, application=None):
+        fake_db, sent, _ = _flow_db(monkeypatch, applications={"u1": application} if application else {},
+                                    users={"u1": {"username": "jo", "email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER}})
+        return fake_db
+
+    def _start(self):
+        return asyncio.run(ap.start_application(ap.StartApplication(
+            programme=mb.M_QUANT_BOOTCAMP, confirms_one_track=True), User(id="u1", username="jo")))
+
+    def test_the_real_dates_are_midnight_uk_time(self):
+        # The constants are patched in every test, so check the values as written.
+        src = open(ap.__file__).read()
+        assert 'NEW_APPLICATIONS_CLOSE = dt.datetime(2026, 10, 15, 0, 0, tzinfo=ZoneInfo("Europe/London"))' in src
+        assert 'STARTED_APPLICATIONS_CLOSE = dt.datetime(2026, 10, 16, 0, 0, tzinfo=ZoneInfo("Europe/London"))' in src
+        london = ap.LONDON_TZ
+        assert dt.datetime(2026, 10, 15, 0, 0, tzinfo=london).astimezone(dt.timezone.utc) == self.NEW
+        assert dt.datetime(2026, 10, 16, 0, 0, tzinfo=london).astimezone(dt.timezone.utc) == self.STARTED
+
+    def test_a_new_application_can_start_until_midnight_tonight(self, monkeypatch):
+        self._at(monkeypatch, self.NEW - dt.timedelta(minutes=1))
+        fake_db = self._db(monkeypatch)
+        assert self._start()["ok"] is True
+
+    def test_no_new_application_after_midnight_tonight(self, monkeypatch):
+        self._at(monkeypatch, self.NEW + dt.timedelta(minutes=1))
+        fake_db = self._db(monkeypatch)
+        with pytest.raises(HTTPException, match="Applications are now closed"):
+            self._start()
+        assert "u1" not in fake_db.collections[ap.COLLECTION]
+
+    def test_a_started_application_can_go_on_until_midnight_tomorrow(self, monkeypatch):
+        self._at(monkeypatch, self.STARTED - dt.timedelta(minutes=5))
+        self._db(monkeypatch, {"user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+                               "oxford_email": "jo@merton.ox.ac.uk", "oxford_email_verified": True})
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), User(id="u1", username="jo")))
+
+    @pytest.mark.parametrize("step", ["ticket", "oa"])
+    def test_nothing_moves_forward_after_midnight_tomorrow(self, monkeypatch, step):
+        self._at(monkeypatch, self.STARTED + dt.timedelta(minutes=1))
+        status = ap.S_CV if step == "ticket" else ap.S_OA_READY
+        self._db(monkeypatch, {"user_id": "u1", "status": status, "programme": mb.M_QUANT_BOOTCAMP,
+                               "oxford_email": "jo@merton.ox.ac.uk", "oxford_email_verified": True,
+                               "cv_blob_path": "cvs/jo.pdf"})
+        jo = User(id="u1", username="jo")
+        with pytest.raises(HTTPException, match="closed at midnight on Thursday 15 October"):
+            if step == "ticket":
+                asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), jo))
+            else:
+                asyncio.run(ap.start_oa(jo))
+
+    def test_the_state_tells_the_page_which_deadline_applies(self, monkeypatch):
+        self._at(monkeypatch, self.NEW + dt.timedelta(hours=1))
+        self._db(monkeypatch, {"user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+                               "oxford_email": "jo@merton.ox.ac.uk", "oxford_email_verified": True})
+        st = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert st["new_applications_open"] is False and st["started_applications_open"] is True
+        assert st["started_close_label"] == "midnight on Thursday 15 October"

@@ -400,6 +400,36 @@ AVAILABILITY_MAX_SLOTS = 700    # generous ceiling against a malformed payload
 LONDON_TZ = ZoneInfo("Europe/London")
 
 
+# ── Closing dates ────────────────────────────────────────────────────────────
+# New applications close at midnight (UK time) at the end of Wednesday 14
+# October; applications already started have until the end of Thursday 15
+# October to be submitted. After that nothing can move an application past the
+# CV step or start the assessment; anything already submitted is reviewed and
+# interviewed as normal. Someone mid-assessment at midnight can still finish.
+NEW_APPLICATIONS_CLOSE = dt.datetime(2026, 10, 15, 0, 0, tzinfo=ZoneInfo("Europe/London"))
+STARTED_APPLICATIONS_CLOSE = dt.datetime(2026, 10, 16, 0, 0, tzinfo=ZoneInfo("Europe/London"))
+NEW_CLOSE_LABEL = "midnight tonight (the end of Wednesday 14 October)"
+STARTED_CLOSE_LABEL = "midnight on Thursday 15 October"
+
+
+def _new_applications_open() -> bool:
+    return _now() < NEW_APPLICATIONS_CLOSE
+
+
+def _started_applications_open(application: Optional[dict] = None) -> bool:
+    # An admin's reset after the close lets that one person sit it again.
+    redone = _as_utc((application or {}).get("redone_at"))
+    if redone and redone >= STARTED_APPLICATIONS_CLOSE:
+        return True
+    return _now() < STARTED_APPLICATIONS_CLOSE
+
+
+def _require_started_open(application: dict) -> None:
+    if not _started_applications_open(application):
+        raise HTTPException(400, "Applications closed at midnight on Thursday 15 October, so this "
+                                 "application can no longer be completed.")
+
+
 class StartApplication(BaseModel):
     programme: str
     # Only required when the account's own email isn't already an Oxford
@@ -889,6 +919,8 @@ async def apply_page(request: Request):
         "motivation_minutes": MOTIVATION_SECONDS // 60,
         "estimation_minutes": ESTIMATION_SECONDS // 60,
         "session_minutes": SESSION_SECONDS // 60,
+        "new_applications_open": _new_applications_open(),
+        "new_close_label": NEW_CLOSE_LABEL,
     })
 
 
@@ -904,6 +936,10 @@ async def state(user: User = Depends(current_user)):
 
     account_email = data.get("email") or ""
     out: Dict[str, Any] = {
+        # Closing dates, for the notices on the apply page.
+        "new_applications_open": _new_applications_open(),
+        "new_close_label": NEW_CLOSE_LABEL,
+        "started_close_label": STARTED_CLOSE_LABEL,
         "eligible": mb.can_apply({**data, "is_admin": user.is_admin}),
         "membership": membership,
         "programmes": mb.apply_programmes_for(membership),
@@ -956,6 +992,7 @@ async def state(user: User = Depends(current_user)):
         await _save(uid, application)
 
     out["status"] = application["status"]
+    out["started_applications_open"] = _started_applications_open(application)
     out["programme"] = application.get("programme")
     out["oxford_email"] = application.get("oxford_email") or ""
     out["needs_email_code"] = _needs_email_code(application)
@@ -1099,6 +1136,12 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         raise HTTPException(409, already_linked_message(await account_hint(other)))
 
     existing = await _load(uid)
+    if existing is None or existing["status"] in DECIDED:
+        if not _new_applications_open():
+            raise HTTPException(400, "Applications are now closed. New applications closed at midnight "
+                                     "on Wednesday 14 October.")
+    else:
+        _require_started_open(existing)
     if existing is not None and existing.get("status") == S_ACCEPTED and not existing.get("offer_response"):
         raise HTTPException(400, "You have an offer waiting: accept or decline it first.")
     # Applicants can apply to Quant or Fundamental, not both: asked of every
@@ -1229,6 +1272,7 @@ async def verify_email(req: EmailCode, user: User = Depends(current_user)):
     application = await _load(uid)
     if application is None:
         raise HTTPException(400, "Start an application first")
+    _require_started_open(application)
     if not _needs_email_code(application):
         return {"ok": True, "verified": True}
     check = application.get("oxford_email_check") or {}
@@ -1368,6 +1412,7 @@ async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(curre
         raise HTTPException(400, "Start an application first")
     if application["status"] != S_CV:
         raise HTTPException(400, "Event registration is only available before you confirm your CV")
+    _require_started_open(application)
     _require_proven_email(application)
     if req.ticket not in EVENT_TICKETS:
         raise HTTPException(400, "Unknown ticket type")
@@ -1405,6 +1450,7 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
         raise HTTPException(400, "Start an application first")
     if application["status"] not in (S_CV, S_OA_READY):
         return {"ok": True, "status": application["status"]}
+    _require_started_open(application)
     _require_proven_email(application)
 
     data = await _user_data(uid)
@@ -1468,6 +1514,7 @@ async def start_oa(user: User = Depends(current_user)):
         raise HTTPException(400, "Upload your CV before starting the assessment")
     if application["status"] != S_OA_READY:
         raise HTTPException(400, "You have already sat the assessment")
+    _require_started_open(application)
     _require_proven_email(application)
 
     # Re-check the CV at the last moment: it can be deleted between confirming

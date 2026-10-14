@@ -199,6 +199,8 @@
       font-size: 34px; color: var(--green); line-height: 1; margin-bottom: 10px;
     }
     .apl-offer-head { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+    .apl-deadline { border: 1px solid #ef7d22; background: rgba(239,125,34,0.10); padding: 10px 14px;
+                    margin: 0 0 14px; font-size: 14px; line-height: 1.5; }
 
     /* ── Interview availability grid ─────────────────────────────────────── */
     .aval-wrap {
@@ -252,6 +254,7 @@
   <div class="container" style="max-width: 720px;">
     <div id="msg" class="msp-msg hidden"></div>
     <div id="steps"></div>
+    <div id="deadlineNote" class="apl-deadline hidden"></div>
     <div id="app">Loading…</div>
   </div>
 
@@ -260,10 +263,12 @@
       motivationMinutes: {{ motivation_minutes }},
       estimationMinutes: {{ estimation_minutes }},
       sessionMinutes: {{ session_minutes }},
+      newApplicationsOpen: {{ "true" if new_applications_open else "false" }},
+      newCloseLabel: {{ new_close_label | tojson }},
     };
   </script>
   <script src="/static/availability.js"></script>
-  <script src="/static/apply.js?v=7"></script>
+  <script src="/static/apply.js?v=8"></script>
 </body>
 
 </html>
