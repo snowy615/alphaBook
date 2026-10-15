@@ -15,6 +15,7 @@ involved.
 import asyncio
 import re
 import datetime as dt
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -672,6 +673,22 @@ class TestDecideFlow:
         for decision in ("shortlist", "accept", "reject"):
             with pytest.raises(HTTPException):
                 asyncio.run(ap.decide("u1", ap.Decision(decision=decision), admin))
+
+    @pytest.mark.parametrize("status,decision,expected", [
+        (ap.S_SHORTLISTED, "shortlist", "Already shortlisted by kim"),
+        (ap.S_ACCEPTED, "accept", "Already accepted by kim"),
+        (ap.S_ACCEPTED, "reject", "Already accepted by kim"),
+        (ap.S_REJECTED, "shortlist", "Already rejected by kim"),
+    ])
+    def test_a_second_decision_from_an_out_of_date_page_says_who_got_there_first(
+            self, monkeypatch, status, decision, expected):
+        _, sent, _ = self._patch(monkeypatch, {**self._base(status), "shortlisted_by": "kim", "decided_by": "kim",
+                                               "shortlisted_at": dt.datetime(2026, 10, 12, 21, 0, tzinfo=dt.timezone.utc),
+                                               "decided_at": dt.datetime(2026, 10, 12, 21, 0, tzinfo=dt.timezone.utc)})
+        with pytest.raises(HTTPException) as e:
+            asyncio.run(ap.decide("u1", ap.Decision(decision=decision), User(id="a1", username="root")))
+        assert e.value.status_code == 409 and e.value.detail.startswith(expected + " on 12 Oct, 22:00")
+        assert sent == []
 
     def test_a_fast_tracked_applicant_can_be_shortlisted_just_like_anyone_else(self, monkeypatch):
         # Fast-Track skips the written assessment, not the interview — the
@@ -2267,6 +2284,31 @@ class TestStalePartOneSubmit:
         clock.advance(30)
         self._written(user, "no section sent", False, None)
         assert fake_db.collections[ap.COLLECTION]["u1"]["oa"]["motivation"]["text"] == "no section sent"
+
+
+class TestStalePageFixes:
+    """Pages left open while things change underneath them."""
+    JS = (Path(__file__).resolve().parent.parent / "app" / "static" / "apply.js").read_text()
+    ADMIN = (Path(__file__).resolve().parent.parent / "app" / "templates" / "applications_admin.html").read_text()
+
+    def test_replying_to_an_offer_redraws_the_screen(self):
+        """keyFor() decides whether to redraw; without the reply in it the
+        Accept button stayed up after accepting and got pressed again."""
+        key_fn = self.JS[self.JS.index("function keyFor(state)"):self.JS.index("function render(state)")]
+        for field in ("state.offer_response", "state.programme", "state.availability_locked"):
+            assert field in key_fn
+
+    def test_offer_buttons_are_disabled_while_the_reply_is_sent(self):
+        assert "b.disabled = true" in self.JS[self.JS.index("const respond = async"):]
+
+    def test_every_failed_review_action_refreshes_its_card(self):
+        assert self.ADMIN.count("flash(err.message, true);") == self.ADMIN.count(
+            "flash(err.message, true);\n        refreshCards([userId], { quiet: true });") \
+            + self.ADMIN.count("flash(err.message, true);\n          refreshCards([userId], { quiet: true });")
+
+    def test_cards_carry_a_fingerprint_and_returning_to_the_tab_catches_up(self):
+        assert self.ADMIN.count('data-ver="{{ r.v }}"') == 2
+        assert "visibilitychange" in self.ADMIN and "next.dataset.ver !== card.dataset.ver" in self.ADMIN
 
 
 class TestApplyJsClientFixes:
@@ -3936,6 +3978,25 @@ class TestMoveToBootcamp:
         with pytest.raises(HTTPException, match="already"):
             self._move()
         assert sent == []
+
+    def test_moving_again_from_an_out_of_date_page_says_who_did_it(self, monkeypatch):
+        """The button stayed on a page left open overnight; the second press
+        got a puzzling "Only an Analyst application can be moved"."""
+        fake_db, sent = self._setup(monkeypatch, status=ap.S_SHORTLISTED)
+        fake_db.collections["users"]["r1"] = {"username": "priya", "full_name": "Priya Shah"}
+        self._move()
+        with pytest.raises(HTTPException) as e:
+            self._move(User(id="r2", username="warren"))
+        assert e.value.status_code == 409
+        assert e.value.detail.startswith("Already moved to Quant Bootcamp by Priya Shah on ")
+        assert len(sent) == 1
+
+    def test_a_decided_application_says_what_happened(self, monkeypatch):
+        self._setup(monkeypatch, status=ap.S_REJECTED, decided_by="al",
+                    decided_at=dt.datetime(2026, 10, 14, 16, 57, tzinfo=dt.timezone.utc))
+        with pytest.raises(HTTPException) as e:
+            self._move()
+        assert e.value.status_code == 409 and e.value.detail.startswith("Already rejected by al on 14 Oct, 17:57")
 
     def test_accepting_after_the_move_grants_bootcamp_once_confirmed(self, monkeypatch):
         fake_db, _ = self._setup(monkeypatch, status=ap.S_SHORTLISTED)

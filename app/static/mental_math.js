@@ -19,7 +19,9 @@
         const r = await fetch(url, { credentials: "include", ...init });
         if (!r.ok) {
             const data = await r.json().catch(() => ({}));
-            throw new Error(data.detail || String(r.status));
+            const err = new Error(data.detail || String(r.status));
+            err.status = r.status;
+            throw err;
         }
         return r.json();
     };
@@ -42,6 +44,16 @@
             gameState = await fetchJSON(`/mental-math/game/${GAME_ID}/state`);
             render();
         } catch (e) {
+            // Not a player in this game (an old or shared link), or it's gone:
+            // say so and stop, rather than "Loading..." and polling forever.
+            if (e.status === 403 || e.status === 404) {
+                stopPolling();
+                $("#gameArea").innerHTML = `<div class="mm-loading">${e.status === 403
+                    ? "You're not in this game. Join one with its code from the"
+                    : "This game no longer exists. Start or join one from the"}
+                    <a href="/mental-math">Mental Math page</a>.</div>`;
+                return;
+            }
             console.error("Poll error:", e);
         }
     }

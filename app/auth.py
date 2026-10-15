@@ -644,6 +644,8 @@ async def email_link_page(request: Request, t: str = ""):
     mail) open every link before the person does, and a link used up on
     arrival would be spent by the scanner."""
     _, link = await _live_link(t)
+    if not link and (back := await _already_signed_in_by(request, t)):
+        return RedirectResponse(back, status_code=303)     # Back or refresh after signing in with it
     account = None
     if link:
         udoc = await db_module.db.collection("users").document(link["uid"]).get()
@@ -653,6 +655,56 @@ async def email_link_page(request: Request, t: str = ""):
         "who": (account or {}).get("username") or (account or {}).get("email") or "",
         "renew_token": t if not account and await _renewable(t) else "",
     })
+
+
+async def _session_uid(request: Request) -> Optional[str]:
+    """The (main) account this browser is already signed in to, if any."""
+    token = request.cookies.get(COOKIE_NAME)
+    user = await get_user_from_token(token) if token else None
+    return str(user.id) if user and not user.is_blacklisted else None
+
+
+async def _already_signed_in_by(request: Request, token: str) -> Optional[str]:
+    """Where to send someone opening a spent link while signed in to the very
+    account it was for (Back, or a refresh, after using it): the page it
+    opens. None otherwise, and they see the usual expired-link page."""
+    if not token:
+        return None
+    doc = await db_module.db.collection(LOGIN_LINKS).document(_hash(token)).get()
+    link = (doc.to_dict() or {}) if doc.exists else {}
+    uid = await _session_uid(request) if link.get("uid") else None
+    if not uid or uid != (await resolve_account(link["uid"]))[0]:
+        return None
+    return safe_next(link.get("next"))
+
+
+# Pages on our own domains that a sign-in button may be pressed from. The site
+# is served at alphabook.uk and on Firebase Hosting's own two domains, and
+# reaches this service on its run.app address.
+_OWN_ORIGINS = {BASE_URL, "https://alphabook-5ef4e.web.app", "https://alphabook-5ef4e.firebaseapp.com"}
+
+
+def _from_own_page(request: Request) -> bool:
+    """Whether a form POST came from one of our pages. No Origin, or the
+    opaque "null" some browsers send (Safari, privacy settings, a page opened
+    from a mail app), isn't evidence of anything and is let through: the
+    one-time token in the form is what proves the link."""
+    origin = (request.headers.get("origin") or "").rstrip("/")
+    if not origin or origin == "null":
+        return True
+    own = {*_OWN_ORIGINS, f"{request.url.scheme}://{request.url.netloc}"}
+    if host := request.headers.get("x-forwarded-host"):
+        own.add(f"https://{host.split(',')[0].strip()}")
+    return origin in own
+
+
+@router.get("/auth/email-link/confirm", include_in_schema=False)
+@router.get("/auth/email-link/renew", include_in_schema=False)
+async def email_link_form_reloaded(request: Request):
+    """Refreshing, or going Back to, the page a sign-in form posted to: the
+    form's token isn't in the address, so there's nothing to redo. Signed in,
+    carry on; otherwise the sign-in page."""
+    return RedirectResponse("/" if await _session_uid(request) else "/login", status_code=303)
 
 
 async def _renewable(token: str) -> Optional[dict]:
@@ -696,10 +748,11 @@ async def renew_email_link(request: Request, t: str = Form("")):
 
 @router.post("/auth/email-link/confirm", include_in_schema=False)
 async def confirm_email_link(request: Request, t: str = Form("")):
-    origin = request.headers.get("origin")
-    if origin and origin.rstrip("/") not in (BASE_URL, f"{request.url.scheme}://{request.url.netloc}"):
-        raise HTTPException(403, "Sign in from the link in your email")
     ref, link = await _live_link(t)
+    if link and not _from_own_page(request):
+        # Posted from somebody else's page: show our own button instead of
+        # signing in, so the person still gets in with one more click.
+        return RedirectResponse(f"/auth/email-link?t={t}", status_code=303)
     if not link:
         return templates.TemplateResponse("login_link.html", {"request": request, "token": "", "who": ""},
                                           status_code=400)

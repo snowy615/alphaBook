@@ -335,13 +335,15 @@ import datetime as _dt
 from starlette.requests import Request as _Request
 
 
-def _req(origin=None, path="/auth/email-link", forwarded_for=None):
+def _req(origin=None, path="/auth/email-link", forwarded_for=None, session=None, method="POST"):
     headers = [(b"host", b"alphabook.uk"), (b"x-forwarded-proto", b"https")]
+    if session:
+        headers.append((b"cookie", f"{auth.COOKIE_NAME}={session}".encode()))
     if forwarded_for:
         headers.append((b"x-forwarded-for", f"{forwarded_for}, 130.211.0.1".encode()))
     if origin:
         headers.append((b"origin", origin.encode()))
-    return _Request({"type": "http", "method": "POST", "path": path, "headers": headers,
+    return _Request({"type": "http", "method": method, "path": path, "headers": headers,
                      "query_string": b"", "server": ("alphabook.uk", 443), "scheme": "https", "root_path": ""})
 
 
@@ -458,11 +460,46 @@ class TestEmailSignInLink:
             _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(seconds=1)
         assert asyncio.run(auth.confirm_email_link(_req(), t=token)).status_code == 400
 
-    def test_a_post_from_another_site_is_refused(self, monkeypatch):
+    def test_a_post_from_another_site_does_not_sign_in(self, monkeypatch):
+        """It's sent to our own page with the button instead, link unspent."""
+        fake_db, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        self._ask("t@gmail.com")
+        token = self._token(sent[0])
+        res = asyncio.run(auth.confirm_email_link(_req(origin="https://evil.example"), t=token))
+        assert res.status_code == 303 and res.headers["location"] == f"/auth/email-link?t={token}"
+        assert "set-cookie" not in res.headers
+        assert fake_db.collections[auth.LOGIN_LINKS][auth._hash(token)]["used_at"] is None
+
+    @pytest.mark.parametrize("origin", ["null", "https://alphabook-5ef4e.web.app",
+                                        "https://alphabook-5ef4e.firebaseapp.com"])
+    def test_a_null_or_firebase_origin_still_signs_in(self, monkeypatch, origin):
+        """Safari sent Origin: null and someone was turned away three times."""
         _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
         self._ask("t@gmail.com")
-        with pytest.raises(auth.HTTPException):
-            asyncio.run(auth.confirm_email_link(_req(origin="https://evil.example"), t=self._token(sent[0])))
+        res = asyncio.run(auth.confirm_email_link(_req(origin=origin), t=self._token(sent[0])))
+        assert res.status_code == 303 and "__session=" in res.headers["set-cookie"]
+
+    def test_reloading_the_form_target_redirects_instead_of_405(self, monkeypatch):
+        self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"}})
+        res = asyncio.run(auth.email_link_form_reloaded(_req(method="GET")))
+        assert res.status_code == 303 and res.headers["location"] == "/login"
+        res = asyncio.run(auth.email_link_form_reloaded(_req(method="GET", session=auth.create_token("u1"))))
+        assert res.headers["location"] == "/"
+        paths = {(r.path, m) for r in auth.router.routes for m in getattr(r, "methods", ())}
+        assert ("/auth/email-link/confirm", "GET") in paths and ("/auth/email-link/renew", "GET") in paths
+
+    def test_going_back_to_a_used_link_while_signed_in_carries_on(self, monkeypatch):
+        _, sent, _ = self._setup(monkeypatch, users={"u1": {"username": "t", "email": "t@gmail.com"},
+                                                     "u2": {"username": "o", "email": "o@gmail.com"}})
+        self._ask("t@gmail.com", next="/apply")
+        token = self._token(sent[0])
+        asyncio.run(auth.confirm_email_link(_req(), t=token))
+        back = asyncio.run(auth.email_link_page(_req(method="GET", session=auth.create_token("u1")), t=token))
+        assert back.status_code == 303 and back.headers["location"] == "/apply"
+        # Signed in as someone else, or not at all: the usual spent-link page.
+        other = asyncio.run(auth.email_link_page(_req(method="GET", session=auth.create_token("u2")), t=token))
+        assert other.status_code == 200 and "Sign me in" not in other.body.decode()
+        assert asyncio.run(auth.email_link_page(_req(method="GET"), t=token)).status_code == 200
 
     def test_an_unverified_account_gets_no_link_and_nothing_is_verified(self, monkeypatch):
         """A throwaway sign-up has to verify the normal way; the link is no shortcut."""

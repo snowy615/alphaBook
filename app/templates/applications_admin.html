@@ -603,7 +603,7 @@
             {% for r in rows %}
             <tr class="apa-item" data-stage="{{ stage(r) }}"
                 data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
-                data-uid="{{ r.user_id }}"
+                data-uid="{{ r.user_id }}" data-ver="{{ r.v }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
@@ -704,7 +704,7 @@
     <div class="card msp-panel apa-card apa-item" id="a-{{ r.user_id }}"
          data-stage="{{ stage(r) }}"
          data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
-         data-uid="{{ r.user_id }}"
+         data-uid="{{ r.user_id }}" data-ver="{{ r.v }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
@@ -1136,12 +1136,22 @@
     }
     renderAvailabilityIn(document);
 
-    // After an action, bring in the fresh version of just the cards it changed
-    // (and the counts above them) instead of reloading the whole page, so the
-    // reviewer stays exactly where they are. Each card keeps its place in the
-    // page, so the filters, ordering and tab counts simply run again. Anything
-    // unexpected falls back to a normal reload.
-    async function refreshCards(uids) {
+    // After an action, bring in the fresh version of the cards it changed,
+    // plus any card another reviewer has changed since this page loaded (each
+    // card carries a fingerprint, data-ver, of what it shows), instead of
+    // reloading the whole page, so the reviewer stays exactly where they are.
+    // Each card keeps its place in the page, so the filters, ordering and tab
+    // counts simply run again. A card someone is in the middle of (typing in,
+    // or with unsaved input) is left for next time unless it's the one they
+    // acted on. Anything unexpected falls back to a normal reload, except
+    // after a failed action (quiet), where the error message should stay.
+    let lastRefresh = Date.now();
+    const busy = (card) => !!card && (
+      (card.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"))
+      || [...card.querySelectorAll("textarea, input:not([type=hidden])")].some((f) =>
+        f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked : f.value !== f.defaultValue));
+    async function refreshCards(uids, { quiet = false } = {}) {
+      lastRefresh = Date.now();
       try {
         const r = await fetch(location.pathname + location.search, { credentials: "include", cache: "no-store" });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -1153,10 +1163,17 @@
           for (const a of next.attributes) now.setAttribute(a.name, a.value);
           now.innerHTML = next.innerHTML;
         };
-        for (const uid of uids) {
+        const asked = new Set(uids);
+        const changed = new Set(uids);
+        for (const card of document.querySelectorAll(".apa-card[data-uid]")) {
+          const next = fresh.getElementById("a-" + card.dataset.uid);
+          if (!next || next.dataset.ver !== card.dataset.ver) changed.add(card.dataset.uid);
+        }
+        for (const uid of changed) {
+          const card = document.getElementById("a-" + uid);
+          if (!asked.has(uid) && busy(card)) continue;
           const q = (doc, sel) => doc.querySelector(sel);
           swap(q(document, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`), q(fresh, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`));
-          const card = document.getElementById("a-" + uid);
           swap(card, fresh.getElementById("a-" + uid));
           if (card && card.isConnected) { renderMath(card); renderAvailabilityIn(card); }
           delete sc.seen[uid];                              // the scoring view re-reads it next time
@@ -1164,9 +1181,14 @@
         for (const id of ["apaScoredCount", "apaOutreach"]) swap(document.getElementById(id), fresh.getElementById(id));
         if (window.apaApply) window.apaApply();             // tabs, ordering, ranks and counts
       } catch (err) {
-        location.reload();
+        if (!quiet) location.reload();
       }
     }
+    // Coming back to a tab left open (overnight, say): catch up on what the
+    // other reviewers did meanwhile, so no button offers something already done.
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible" && Date.now() - lastRefresh > 60 * 1000) refreshCards([], { quiet: true });
+    });
 
     function renderAdminAvailability(userId, slots) {
       const container = document.getElementById("availAdminGrid-" + userId);
@@ -1234,6 +1256,7 @@
         btn.disabled = false;
       } catch (err) {
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
         btn.textContent = original;
         btn.disabled = false;
       }
@@ -1789,6 +1812,7 @@
         await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
         btn.disabled = false;
       }
       return false;
@@ -1846,7 +1870,8 @@
           flash("Shortlisted. They've been emailed.", false);
           await refreshCards([userId]);
         } catch (e) {
-          err.textContent = e.message;
+          if (/^Already /.test(e.message)) { flash(e.message, true); refreshCards([userId], { quiet: true }); }
+          else err.textContent = e.message;
         }
       };
     }
@@ -1872,6 +1897,7 @@
         await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1893,6 +1919,7 @@
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1912,6 +1939,7 @@
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1931,6 +1959,7 @@
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1955,6 +1984,7 @@
       } catch (err) {
         btn.disabled = false;
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1975,6 +2005,7 @@
         await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 
@@ -1994,6 +2025,7 @@
         await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
       }
     }
 

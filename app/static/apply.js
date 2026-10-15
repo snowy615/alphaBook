@@ -994,13 +994,16 @@
       confetti();
       const respond = async (response) => {
         if (response === "decline" && !confirm("Decline your place? This can't be undone from here.")) return;
+        const buttons = [$("#offerAccept"), $("#offerDecline")];
+        buttons.forEach((b) => { b.disabled = true; });
         try {
           await api("/apply/offer", { response });
           if (response === "accept") confetti();
-          await refresh();
         } catch (err) {
           flash(err.message, true);
+          buttons.forEach((b) => { b.disabled = false; });
         }
+        await refresh();
       };
       $("#offerAccept").addEventListener("click", () => respond("accept"));
       $("#offerDecline").addEventListener("click", () => respond("decline"));
@@ -1314,11 +1317,14 @@
         return "oa";
       }
       default: {
-        // The interview is folded in so a poll that picks up a newly
-        // scheduled (or moved) time forces a redraw even though the outer
-        // application status hasn't moved.
+        // The interview, the reply to an offer, the programme (a reviewer
+        // can move them) and whether availability is open again are folded in,
+        // so any of them changing forces a redraw even though the outer
+        // application status hasn't moved. Without the offer reply, accepting
+        // left the Accept button on screen to be pressed again.
         const iv = state.interview ? `${state.interview.status}@${state.interview.when}` : "none";
-        return "done:" + state.status + ":" + iv;
+        return ["done", state.status, iv, state.offer_response || "", state.programme || "",
+                state.availability_locked ? "locked" : "open"].join(":");
       }
     }
   }

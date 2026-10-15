@@ -54,6 +54,7 @@ import hashlib
 import hmac
 import html
 import io
+import json
 import logging
 import os
 import re
@@ -2021,6 +2022,10 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
 @router.get("/admin", include_in_schema=False)
 async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
     rows = await _ranked_rows(str(reviewer.id))
+    for r in rows:
+        # A fingerprint of everything on the card, so the page can tell which
+        # cards someone else has changed since it loaded and bring just those in.
+        r["v"] = hashlib.sha1(json.dumps(r, sort_keys=True, default=str).encode()).hexdigest()[:12]
     scored = [r for r in rows if r["review"]["count"] > 0]
     fast_track_rows, general_rows = await _outreach_roster(rows)
     return templates.TemplateResponse("applications_admin.html", {
@@ -2859,7 +2864,7 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
 
     if payload.decision == "shortlist":
         if status != S_SUBMITTED:
-            raise HTTPException(400, "Only a newly submitted application can be shortlisted")
+            raise await _already_decided(application)
         application["status"] = S_SHORTLISTED
         application["shortlisted_at"] = _now()
         application["shortlisted_by"] = reviewer.username
@@ -2868,7 +2873,7 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         # without needing a CV score. Which criterion, and the details that
         # back it up, are recorded for checking at interview.
         if status != S_SUBMITTED:
-            raise HTTPException(400, "Only a newly submitted application can be shortlisted")
+            raise await _already_decided(application)
         if payload.reason not in AUTO_SHORTLIST_REASONS:
             raise HTTPException(400, "Choose which automatic shortlist criterion they meet")
         details = (payload.note or "").strip()[:500]
@@ -2883,6 +2888,8 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
             "details": details, "by": reviewer.username, "at": _now(),
         }
     elif payload.decision == "accept":
+        if status in (S_ACCEPTED, S_REJECTED):
+            raise await _already_decided(application)
         if status != S_SHORTLISTED:
             raise HTTPException(400, "Shortlist the applicant and hold the interview before accepting")
         application["status"] = S_ACCEPTED
@@ -2890,7 +2897,7 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["decided_by"] = reviewer.username
     else:  # reject
         if status not in (S_SUBMITTED, S_SHORTLISTED):
-            raise HTTPException(400, "That application has already been decided")
+            raise await _already_decided(application)
         application["status"] = S_REJECTED
         application["decided_at"] = _now()
         application["decided_by"] = reviewer.username
@@ -2903,6 +2910,27 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
     # Accepting makes the offer; the membership itself comes when they
     # confirm their place with the button on the platform (respond_to_offer).
     return {"ok": True, "status": application["status"]}
+
+
+async def _by_on(username: Optional[str], at) -> str:
+    """" by Warren on 14 Oct, 17:57" for an action someone already took."""
+    _, by_username, _ = await _people() if username else ({}, {}, set())
+    when = _as_utc(at)
+    return ((f" by {by_username.get(username) or username}" if username else "")
+            + (f" on {when.astimezone(LONDON_TZ).strftime('%d %b, %H:%M').lstrip('0')}" if when else ""))
+
+
+async def _already_decided(application: Dict[str, Any]) -> HTTPException:
+    """409 for a decision on an application that has moved on since the
+    reviewer's page was loaded (usually another reviewer got there first)."""
+    status = application.get("status")
+    if status == S_SHORTLISTED:
+        detail = "Already shortlisted" + await _by_on(application.get("shortlisted_by"), application.get("shortlisted_at"))
+    elif status in (S_ACCEPTED, S_REJECTED):
+        detail = f"Already {status}" + await _by_on(application.get("decided_by"), application.get("decided_at"))
+    else:
+        detail = "Their application has changed since this page was loaded"
+    return HTTPException(409, detail + ". Their card has been refreshed to show it.")
 
 
 async def _grant_membership(uid: str, programme: Optional[str]) -> None:
@@ -2992,9 +3020,13 @@ async def _move_programme(user_id: str, reviewer: User, mapping: Dict[str, str],
     moved_from = application.get("programme")
     moved_to = mapping.get(moved_from)
     if moved_to is None:
+        done = application.get(record_key) or {}
+        if done.get("to") == moved_from:       # someone else already made this move
+            raise HTTPException(409, f"Already moved to {moved_from}" + await _by_on(done.get("by"), done.get("at"))
+                                + ". Their card has been refreshed to show it.")
         raise HTTPException(400, wrong_programme)
     if application.get("status") not in (S_SUBMITTED, S_SHORTLISTED):
-        raise HTTPException(400, "Only an application that's submitted or shortlisted can be moved")
+        raise await _already_decided(application)
     if mb.membership_of(await _user_data(user_id)) == moved_to:
         raise HTTPException(400, f"They're already a {moved_to} member")
     await _with_name(user_id, application)
