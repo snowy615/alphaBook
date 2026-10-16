@@ -390,6 +390,8 @@
     .apa-mail p { margin-bottom: 14px; }
     .apa-mail-row { display: flex; gap: 12px; align-items: baseline; margin: 0 0 10px; }
     .apa-mail-label { flex: 0 0 78px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .apa-reopen { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 18px 0; font-size: 13px; }
+    .apa-reopen input { font: inherit; padding: 4px 8px; }
     .apa-mail-seg { display: flex; flex-wrap: wrap; gap: 6px; }
     .apa-mail-seg button {
       padding: 6px 11px; border: 1px solid var(--border); background: transparent;
@@ -585,6 +587,17 @@
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
         {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>{% endif %}
       </div>
+      {% if is_admin %}
+      <form class="apa-reopen" onsubmit="reopenFor(this); return false;"
+            title="Let one person sign up or finish after the closing date, until the end of that day. Nothing is emailed: tell them yourself.">
+        <span class="msp-muted">Reopen for</span>
+        <input type="email" name="email" placeholder="applicant@college.ox.ac.uk" required>
+        <span class="msp-muted">until the end of</span>
+        <input type="date" name="until" required>
+        <button type="submit" class="btn ghost">Reopen</button>
+        {% if reopened %}<span class="msp-muted">Reopened: {% for e, re in reopened.items() %}{{ e }} until {{ re.label }}{{ ", " if not loop.last }}{% endfor %}</span>{% endif %}
+      </form>
+      {% endif %}
       <div class="apa-yearbar">
         <button type="button" class="btn" id="apaTrackOrder" aria-pressed="false"
                 title="Which programme is listed (and stepped through with Next) first">Bootcamp first</button>
@@ -736,6 +749,10 @@
             <span class="apa-tag">{{ r.applicant_category or "General public" }}</span>
             {% if r.event_ticket == "fast_track" %}<span class="apa-tag is-info">Fast-Track CV Clinic</span>
             {% elif r.event_ticket == "general" %}<span class="apa-tag">Event: General Attendance</span>{% endif %}
+            {% if r.needs_email_code %}<span class="apa-tag is-warn" title="{{ r.email_code_sends }} code{{ "s" if r.email_code_sends != 1 }} sent{% if r.email_code_sent_at %}, last {{ r.email_code_sent_at.strftime("%d %b, %H:%M") }}{% endif %}">waiting for email code{% if r.email_code_sends > 1 %} ({{ r.email_code_sends }} sent){% endif %}</span>{% endif %}
+            {% if r.oxford_email_verified_by %}<span class="apa-tag" title="Confirmed without a code">email confirmed by {{ r.oxford_email_verified_by }}</span>{% endif %}
+            {% set re = reopened.get(r.email | lower) or reopened.get(r.oxford_email | lower) %}
+            {% if re %}<span class="apa-tag is-info" title="By {{ re.by }}">reopened until {{ re.label }}</span>{% endif %}
             {% if r.status == "accepted" %}<span class="apa-tag is-good">accepted</span>{% if r.offer_response == "accepted" %} <span class="apa-tag is-good">offer accepted</span>{% elif r.offer_response == "declined" %} <span class="apa-tag is-bad">offer declined</span>{% else %} <span class="apa-tag is-warn">awaiting reply</span>{% endif %}
             {% elif r.status == "rejected" %}<span class="apa-tag is-bad">rejected</span>
             {% elif r.status == "shortlisted" and r.interview_booked %}<span class="apa-tag is-info">interview booked</span>
@@ -754,6 +771,9 @@
           </div>
           {% if is_admin and r.status in ("cv", "oa_ready") %}
           <div class="apa-toolbar">
+            {% if r.needs_email_code %}
+            <button class="btn ghost" onclick="confirmEmail('{{ r.user_id }}', '{{ r.oxford_email }}', this)">Confirm Oxford email</button>
+            {% endif %}
             <button class="btn ghost" onclick="remind('{{ r.user_id }}', this)">
               {% if r.last_reminded_at %}Remind again{% else %}Send reminder{% endif %}
             </button>
@@ -1235,6 +1255,46 @@
       box.className = "msp-msg msp-msg-" + (bad ? "error" : "ok");
       box.classList.remove("hidden");
       box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    // Let one person back in after the closing date. Nothing is emailed.
+    async function reopenFor(form) {
+      const btn = form.querySelector("button");
+      btn.disabled = true;
+      try {
+        const r = await fetch("/apply/admin/reopen", {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: form.email.value.trim(), until: form.until.value }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash(`Reopened for ${d.email} until ${d.until_label}. Tell them yourself (from an Oxford address): nothing is emailed.`, false);
+        form.reset();
+        setTimeout(() => location.reload(), 2500);
+      } catch (err) {
+        flash("Could not reopen: " + err.message, true);
+      }
+      btn.disabled = false;
+      return false;
+    }
+
+    // For someone whose codes never arrive: confirm the address by hand and
+    // tell them, at both their addresses, that they can carry on.
+    async function confirmEmail(userId, email, btn) {
+      if (!confirm(`Mark ${email} as confirmed without a code, and email them that they can carry on?`)) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/confirm-email`, {
+          method: "POST", credentials: "include",
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        flash(d.sent_to ? `Confirmed. Told them at ${d.sent_to}` : "Confirmed (no email address to tell)", false);
+        refreshCards([userId]);
+      } catch (err) {
+        flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
+      }
     }
 
     async function remind(userId, btn) {

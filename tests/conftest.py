@@ -47,3 +47,20 @@ def make_sell(**kw) -> Order:
     """Shortcut for ``make_order(side="SELL", ...)``."""
     kw.setdefault("side", "SELL")
     return make_order(**kw)
+
+
+@pytest.fixture(autouse=True)
+def _applications_open_and_no_dns(monkeypatch):
+    """The real closing dates are fixed calendar dates (now past), so every
+    test runs as though applications were still open unless it sets its own
+    dates. And no DNS from the tests: a typed Oxford address counts as
+    deliverable. TestClosingDates and TestMailDomainCheck override these."""
+    import datetime as dt
+    from app import applications as ap
+    far = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
+    monkeypatch.setattr(ap, "NEW_APPLICATIONS_CLOSE", far)
+    monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", far)
+
+    async def takes_mail(domain):
+        return True
+    monkeypatch.setattr(ap, "_domain_takes_mail", takes_mail)

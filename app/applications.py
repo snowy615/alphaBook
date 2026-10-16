@@ -413,11 +413,42 @@ NEW_CLOSE_LABEL = "midnight tonight (the end of Wednesday 14 October)"
 STARTED_CLOSE_LABEL = "midnight on Thursday 15 October"
 
 
-def _new_applications_open() -> bool:
-    return _now() < NEW_APPLICATIONS_CLOSE
+# One person at a time can be let back in after the close (told the wrong
+# date, codes that never arrived): an admin reopens applications for their
+# email address until the end of a given day. Keyed by address rather than
+# account so it works before they've even signed up.
+EXTENSIONS = "apply_extensions"
 
 
-def _started_applications_open(application: Optional[dict] = None) -> bool:
+async def _extension_until(*emails: Optional[str]) -> Optional[dt.datetime]:
+    """The latest date applications were reopened to for any of these addresses."""
+    best = None
+    if db_module.db is None:
+        return None
+    for email in {(e or "").strip().lower() for e in emails if e}:
+        doc = await db_module.db.collection(EXTENSIONS).document(email).get()
+        if doc.exists:
+            until = _as_utc((doc.to_dict() or {}).get("until"))
+            if until and (best is None or until > best):
+                best = until
+    return best
+
+
+def _until_label(until: Optional[dt.datetime]) -> str:
+    """"midnight on Saturday 18 October" for a reopening that ends then."""
+    if not until or _now() >= until:
+        return ""
+    last_day = until.astimezone(LONDON_TZ) - dt.timedelta(days=1)
+    return f"midnight on {last_day.strftime('%A')} {last_day.day} {last_day.strftime('%B')}"
+
+
+def _new_applications_open(until: Optional[dt.datetime] = None) -> bool:
+    return _now() < NEW_APPLICATIONS_CLOSE or bool(until and _now() < until)
+
+
+def _started_applications_open(application: Optional[dict] = None, until: Optional[dt.datetime] = None) -> bool:
+    if until and _now() < until:
+        return True
     # An admin's reset after the close lets that one person sit it again.
     redone = _as_utc((application or {}).get("redone_at"))
     if redone and redone >= STARTED_APPLICATIONS_CLOSE:
@@ -425,8 +456,9 @@ def _started_applications_open(application: Optional[dict] = None) -> bool:
     return _now() < STARTED_APPLICATIONS_CLOSE
 
 
-def _require_started_open(application: dict) -> None:
-    if not _started_applications_open(application):
+async def _require_started_open(application: dict) -> None:
+    until = await _extension_until(application.get("email"), application.get("oxford_email"))
+    if not _started_applications_open(application, until):
         raise HTTPException(400, "Applications closed at midnight on Thursday 15 October, so this "
                                  "application can no longer be completed.")
 
@@ -950,11 +982,13 @@ async def state(user: User = Depends(current_user)):
     is_reviewer = bool(user.is_admin) or membership in mb.ANALYST_MEMBERSHIPS
 
     account_email = data.get("email") or ""
+    reopened_until = await _extension_until(account_email)
     out: Dict[str, Any] = {
         # Closing dates, for the notices on the apply page.
-        "new_applications_open": _new_applications_open(),
+        "new_applications_open": _new_applications_open(reopened_until),
         "new_close_label": NEW_CLOSE_LABEL,
         "started_close_label": STARTED_CLOSE_LABEL,
+        "reopened_until_label": _until_label(reopened_until),
         "eligible": mb.can_apply({**data, "is_admin": user.is_admin}),
         "membership": membership,
         "programmes": mb.apply_programmes_for(membership),
@@ -1007,7 +1041,10 @@ async def state(user: User = Depends(current_user)):
         await _save(uid, application)
 
     out["status"] = application["status"]
-    out["started_applications_open"] = _started_applications_open(application)
+    reopened_until = await _extension_until(account_email, application.get("oxford_email")) or reopened_until
+    out["started_applications_open"] = _started_applications_open(application, reopened_until)
+    out["new_applications_open"] = _new_applications_open(reopened_until)
+    out["reopened_until_label"] = _until_label(reopened_until)
     out["programme"] = application.get("programme")
     out["oxford_email"] = application.get("oxford_email") or ""
     out["needs_email_code"] = _needs_email_code(application)
@@ -1104,6 +1141,61 @@ def _resolve_oxford_email(account_email: str, provided: Optional[str]) -> str:
     return candidate
 
 
+# A typed address whose domain can't take mail (pemb.ox.ac.uk for Pembroke's
+# pmb.ox.ac.uk, catz for stcatz) used to get a code that bounced straight
+# back to us, and the person sat waiting for it. Every real Oxford mail
+# domain has an MX record and a typo has none, so the address is refused on
+# the spot instead. Our own lookup failing (timeout, no resolver) isn't held
+# against them.
+_OXFORD_DOMAIN_TYPOS = {
+    "pemb": "pmb", "pembroke": "pmb", "catz": "stcatz", "stcatherines": "stcatz", "linc": "lincoln",
+    "hildas": "st-hildas", "sthildas": "st-hildas", "hughs": "st-hughs", "sthughs": "st-hughs",
+    "annes": "st-annes", "stannes": "st-annes", "johns": "sjc", "stjohns": "sjc", "magdalen": "magd",
+    "worcester": "worc", "univ": "univ", "lmh": "lmh", "teddy": "seh", "sehall": "seh", "wadham": "wadham",
+    "hertford": "hertford", "somerville": "some", "trinity": "trinity", "oriel": "oriel", "queens": "queens",
+    "christchurch": "chch", "exeter": "exeter", "new": "new", "merton": "merton", "balliol": "balliol",
+}
+_mail_domain_cache: Dict[str, bool] = {}
+
+
+async def _domain_takes_mail(domain: str) -> bool:
+    if domain in _mail_domain_cache:
+        return _mail_domain_cache[domain]
+    try:
+        import dns.asyncresolver
+        import dns.resolver
+        resolver = dns.asyncresolver.Resolver()
+        resolver.lifetime = 3
+        try:
+            await resolver.resolve(domain, "MX")
+            ok = True
+        except dns.resolver.NXDOMAIN:
+            ok = False
+        except dns.resolver.NoAnswer:
+            # No MX, but a domain with an address record still takes mail.
+            try:
+                await resolver.resolve(domain, "A")
+                ok = True
+            except (dns.resolver.NXDOMAIN, dns.resolver.NoAnswer):
+                ok = False
+    except Exception:
+        return True
+    _mail_domain_cache[domain] = ok
+    return ok
+
+
+async def _require_mail_domain(address: str) -> None:
+    domain = address.rsplit("@", 1)[-1]
+    if await _domain_takes_mail(domain):
+        return
+    local = address.split("@", 1)[0]
+    sub = domain[: -len("." + _OXFORD_SUFFIX)] if domain.endswith("." + _OXFORD_SUFFIX) else ""
+    fix = _OXFORD_DOMAIN_TYPOS.get(sub)
+    hint = (f" Did you mean {local}@{fix}.{_OXFORD_SUFFIX}?" if fix and fix != sub
+            else " Check it for typos (your college's address is on your university email).")
+    raise HTTPException(400, f"{address} can't receive email: there's no such domain as {domain}.{hint}")
+
+
 @router.post("/start")
 async def start_application(req: StartApplication, user: User = Depends(current_user)):
     """
@@ -1144,6 +1236,8 @@ async def start_application(req: StartApplication, user: User = Depends(current_
         )
 
     oxford_email = _resolve_oxford_email(data.get("email") or "", req.oxford_email)
+    if oxford_email != (data.get("email") or "").strip().lower():
+        await _require_mail_domain(oxford_email)   # typed, not the account's own verified address
     # One application per Oxford email: someone who already applied from
     # another account is sent back to it, not given a second application.
     other = await application_using_email(oxford_email, exclude_uid=uid)
@@ -1152,11 +1246,11 @@ async def start_application(req: StartApplication, user: User = Depends(current_
 
     existing = await _load(uid)
     if existing is None or existing["status"] in DECIDED:
-        if not _new_applications_open():
+        if not _new_applications_open(await _extension_until(data.get("email"), oxford_email)):
             raise HTTPException(400, "Applications are now closed. New applications closed at midnight "
                                      "on Wednesday 14 October.")
     else:
-        _require_started_open(existing)
+        await _require_started_open(existing)
     if existing is not None and existing.get("status") == S_ACCEPTED and not existing.get("offer_response"):
         raise HTTPException(400, "You have an offer waiting: accept or decline it first.")
     # Applicants can apply to Quant or Fundamental, not both: asked of every
@@ -1233,6 +1327,10 @@ async def start_application(req: StartApplication, user: User = Depends(current_
 EMAIL_CODE_TTL = dt.timedelta(minutes=30)
 EMAIL_CODE_MAX_TRIES = 5
 EMAIL_CODE_RESEND_GAP = dt.timedelta(seconds=60)
+# Oxford's mail filter can hold our emails for minutes, so by the time the
+# first code lands the person has often asked for another. Every code sent
+# in the last 30 minutes stays valid, not just the latest.
+EMAIL_CODE_KEEP = 5
 
 
 def _code_hash(uid: str, code: str) -> str:
@@ -1241,6 +1339,16 @@ def _code_hash(uid: str, code: str) -> str:
 
 def _needs_email_code(application: dict) -> bool:
     return application.get("oxford_email_verified") is False
+
+
+def _live_code_hashes(check: dict) -> List[str]:
+    """The hashes of every code still within its 30 minutes. Older records
+    hold a single ``hash``/``expires_at``; newer ones a ``codes`` list."""
+    now = _now()
+    codes = check.get("codes")
+    if codes is None:
+        codes = [{"hash": check.get("hash", ""), "expires_at": check.get("expires_at")}]
+    return [c["hash"] for c in codes if (_as_utc(c.get("expires_at")) or now) > now]
 
 
 async def _require_oxford_email_proof(application: dict, account: Dict[str, Any]) -> None:
@@ -1259,9 +1367,17 @@ async def _require_oxford_email_proof(application: dict, account: Dict[str, Any]
 
 async def _send_email_code(application: dict) -> None:
     code = f"{secrets.randbelow(10 ** 6):06d}"
+    previous = application.get("oxford_email_check") or {}
+    # Codes for a different address die with it; same address, they live on.
+    same_address = previous.get("to") == application["oxford_email"]
+    live = [c for c in (previous.get("codes") or []) if same_address][-(EMAIL_CODE_KEEP - 1):]
+    if same_address and "hash" in previous and not previous.get("codes"):
+        live = [{"hash": previous["hash"], "expires_at": previous.get("expires_at")}]
     application["oxford_email_check"] = {
-        "hash": _code_hash(application["user_id"], code), "sent_at": _now(),
-        "expires_at": _now() + EMAIL_CODE_TTL, "tries": 0,
+        "to": application["oxford_email"],
+        "codes": live + [{"hash": _code_hash(application["user_id"], code), "expires_at": _now() + EMAIL_CODE_TTL}],
+        "sent_at": _now(), "expires_at": _now() + EMAIL_CODE_TTL, "tries": 0,
+        "sends": int(previous.get("sends") or 0) + 1 if same_address else 1,
     }
     await mailer.send_email(
         to=application["oxford_email"],
@@ -1287,16 +1403,18 @@ async def verify_email(req: EmailCode, user: User = Depends(current_user)):
     application = await _load(uid)
     if application is None:
         raise HTTPException(400, "Start an application first")
-    _require_started_open(application)
+    await _require_started_open(application)
     if not _needs_email_code(application):
         return {"ok": True, "verified": True}
     check = application.get("oxford_email_check") or {}
-    if not check or (_as_utc(check.get("expires_at")) or _now()) <= _now():
+    live = _live_code_hashes(check) if check else []
+    if not live:
         raise HTTPException(400, "That code has expired. Send a new one.")
     if int(check.get("tries") or 0) >= EMAIL_CODE_MAX_TRIES:
         raise HTTPException(400, "Too many wrong codes. Send a new one.")
     code = re.sub(r"\D", "", req.code or "")
-    if not hmac.compare_digest(_code_hash(uid, code), check.get("hash", "")):
+    given = _code_hash(uid, code)
+    if not any(hmac.compare_digest(given, h) for h in live):
         check["tries"] = int(check.get("tries") or 0) + 1
         application["oxford_email_check"] = check
         await _save(uid, application)
@@ -1317,7 +1435,9 @@ async def resend_email_code(user: User = Depends(current_user)):
         raise HTTPException(400, "There's no email waiting to be confirmed")
     sent = _as_utc((application.get("oxford_email_check") or {}).get("sent_at"))
     if sent and _now() - sent < EMAIL_CODE_RESEND_GAP:
-        raise HTTPException(400, "Wait a minute before asking for another code")
+        left = int((EMAIL_CODE_RESEND_GAP - (_now() - sent)).total_seconds()) + 1
+        raise HTTPException(400, f"Wait {left}s before asking for another code. Every code we've sent "
+                                 f"in the last {int(EMAIL_CODE_TTL.total_seconds() // 60)} minutes still works.")
     await _send_email_code(application)
     await _save(uid, application)
     return {"ok": True}
@@ -1427,7 +1547,7 @@ async def choose_event_ticket(req: EventTicketChoice, user: User = Depends(curre
         raise HTTPException(400, "Start an application first")
     if application["status"] != S_CV:
         raise HTTPException(400, "Event registration is only available before you confirm your CV")
-    _require_started_open(application)
+    await _require_started_open(application)
     _require_proven_email(application)
     if req.ticket not in EVENT_TICKETS:
         raise HTTPException(400, "Unknown ticket type")
@@ -1465,7 +1585,7 @@ async def confirm_cv(payload: ConfirmCv, user: User = Depends(current_user)):
         raise HTTPException(400, "Start an application first")
     if application["status"] not in (S_CV, S_OA_READY):
         return {"ok": True, "status": application["status"]}
-    _require_started_open(application)
+    await _require_started_open(application)
     _require_proven_email(application)
 
     data = await _user_data(uid)
@@ -1529,7 +1649,7 @@ async def start_oa(user: User = Depends(current_user)):
         raise HTTPException(400, "Upload your CV before starting the assessment")
     if application["status"] != S_OA_READY:
         raise HTTPException(400, "You have already sat the assessment")
-    _require_started_open(application)
+    await _require_started_open(application)
     _require_proven_email(application)
 
     # Re-check the CV at the last moment: it can be deleted between confirming
@@ -1799,6 +1919,11 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
         "full_name": application.get("full_name") or "",
         "email": application.get("email") or "",
         "oxford_email": application.get("oxford_email") or "",
+        # Stuck at the code step: how many codes went out, and when the last did.
+        "needs_email_code": _needs_email_code(application),
+        "email_code_sends": int((application.get("oxford_email_check") or {}).get("sends") or 0),
+        "email_code_sent_at": _as_utc((application.get("oxford_email_check") or {}).get("sent_at")),
+        "oxford_email_verified_by": application.get("oxford_email_verified_by") or "",
         "applicant_category": application.get("applicant_category") or "",
         "confirmed_oxford_student": bool(application.get("confirmed_oxford_student")),
         "programme": application.get("programme", ""),
@@ -2028,10 +2153,17 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         r["v"] = hashlib.sha1(json.dumps(r, sort_keys=True, default=str).encode()).hexdigest()[:12]
     scored = [r for r in rows if r["review"]["count"] > 0]
     fast_track_rows, general_rows = await _outreach_roster(rows)
+    # Who's been let back in after the close, by address, for the cards.
+    reopened: Dict[str, Dict[str, str]] = {}
+    for d in await db_module.db.collection(EXTENSIONS).get():
+        label = _until_label(_as_utc((d.to_dict() or {}).get("until")))
+        if label:
+            reopened[d.id] = {"label": label, "by": (d.to_dict() or {}).get("by") or ""}
     return templates.TemplateResponse("applications_admin.html", {
         "request": request,
         "app_name": "AlphaBook",
         "rows": rows,
+        "reopened": reopened,
         "total": len(rows),
         "scored": len(scored),
         "motivation_prompt": MOTIVATION_PROMPT,
@@ -2459,6 +2591,63 @@ async def remind(user_id: str, payload: RemindRequest, admin: User = Depends(req
     application["last_reminded_by"] = admin.username
     await _save(user_id, application)
     return {"ok": True, "sent_to": to}
+
+
+@router.post("/admin/{user_id}/confirm-email")
+async def confirm_oxford_email(user_id: str, admin: User = Depends(require_admin)):
+    """Mark the application's Oxford email as proven without a code, for
+    someone whose codes never arrive (Oxford's mail filter holds them), and
+    tell them at both their addresses that they can carry on."""
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    if not _needs_email_code(application):
+        raise HTTPException(409, "That email is already confirmed")
+    await _with_name(user_id, application)
+    application["oxford_email_verified"] = True
+    application["oxford_email_verified_at"] = _now()
+    application["oxford_email_verified_by"] = admin.username
+    application.pop("oxford_email_check", None)
+    await _save(user_id, application)
+
+    to = await _applicant_to(application)
+    sent = False
+    if to:
+        name = html.escape(application.get("full_name") or application.get("username") or "there")
+        programme = html.escape(application.get("programme") or "the programme")
+        sent = await mailer.send_email(
+            to=to, subject="Alpha Fund: your Oxford email is confirmed", title="You're all set to continue",
+            body_html=(f"<p>Hi {name},</p><p>We've confirmed <strong>{html.escape(application['oxford_email'])}"
+                       f"</strong> for your {programme} application, so you can carry on. Our confirmation codes "
+                       f"to that address seem to have been held by a mail filter, so we've confirmed it for you.</p>"),
+            cta_label="Continue your application", cta_url=await _apply_button_url(user_id, application),
+        )
+    return {"ok": True, "sent_to": to if sent else ""}
+
+
+class ReopenRequest(BaseModel):
+    email: str
+    until: str   # YYYY-MM-DD: open until the end of that day, UK time
+
+
+@router.post("/admin/reopen")
+async def reopen_for(req: ReopenRequest, admin: User = Depends(require_admin)):
+    """Let one person sign up or finish their application after the closing
+    date, until the end of the given day. Nothing is emailed: the admin tells
+    them (from an Oxford address, which actually arrives)."""
+    email = (req.email or "").strip().lower()
+    if not _EMAIL_RE.match(email):
+        raise HTTPException(400, "Enter their email address")
+    try:
+        day = dt.date.fromisoformat((req.until or "").strip())
+    except ValueError:
+        raise HTTPException(400, "Enter the last day they can apply, as YYYY-MM-DD")
+    until = dt.datetime.combine(day + dt.timedelta(days=1), dt.time(0, 0), tzinfo=LONDON_TZ)
+    if until <= _now():
+        raise HTTPException(400, "That day has already ended")
+    await db_module.db.collection(EXTENSIONS).document(email).set(
+        {"email": email, "until": until, "by": admin.username, "created_at": _now()})
+    return {"ok": True, "email": email, "until_label": _until_label(until)}
 
 
 # ── Emailing applicants in bulk ────────────────────────────────────────────
@@ -3066,6 +3255,9 @@ async def close_unfinished(request: Request, dry_run: bool = False):
         redone = _as_utc(application.get("redone_at"))
         if redone and redone >= STARTED_APPLICATIONS_CLOSE:
             continue                                            # an admin reset them after the close: theirs to finish
+        until = await _extension_until(application.get("email"), application.get("oxford_email"))
+        if until and _now() < until:
+            continue                                            # reopened for them by an admin
         await _with_name(uid, application)
         name = application.get("full_name") or application.get("username") or ""
         rejected.append(name)

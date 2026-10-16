@@ -26,14 +26,9 @@ from app import auth as ap_auth
 from app.models import User
 
 
-@pytest.fixture(autouse=True)
-def _applications_open(monkeypatch):
-    """The real closing dates are fixed calendar dates; tests that aren't
-    about them run as though applications were still open. TestClosingDates
-    sets its own."""
-    far = dt.datetime(2099, 1, 1, tzinfo=dt.timezone.utc)
-    monkeypatch.setattr(ap, "NEW_APPLICATIONS_CLOSE", far)
-    monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", far)
+# The closing dates and the mail-domain lookup are neutralised for every test
+# file in conftest.py; TestClosingDates and TestMailDomainCheck set their own.
+_REAL_DOMAIN_LOOKUP = ap._domain_takes_mail
 
 
 @pytest.fixture(autouse=True)
@@ -3483,11 +3478,63 @@ class TestOxfordEmailProof:
 
     def test_an_expired_code_is_refused(self, monkeypatch):
         fake_db, sent, user, _ = self._start(monkeypatch)
-        fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["expires_at"] = \
-            dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1)
+        for c in fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["codes"]:
+            c["expires_at"] = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=1)
         with pytest.raises(HTTPException) as exc:
             asyncio.run(ap.verify_email(ap.EmailCode(code=self._code(sent)), user))
         assert "expired" in exc.value.detail
+
+    def test_a_record_from_before_the_codes_list_still_works(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        check = fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]
+        old = check["codes"][-1]
+        fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"] = {
+            "hash": old["hash"], "expires_at": old["expires_at"], "sent_at": check["sent_at"], "tries": 0}
+        asyncio.run(ap.verify_email(ap.EmailCode(code=self._code(sent)), user))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_verified"] is True
+
+    def _resend(self, fake_db, user):
+        fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["sent_at"] = \
+            dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+        asyncio.run(ap.resend_email_code(user))
+
+    def test_an_earlier_code_still_works_after_a_resend(self, monkeypatch):
+        # Oxford's filter delivers late: the first code lands after the
+        # second was asked for. Either one gets them through.
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        first = self._code(sent)
+        self._resend(fake_db, user)
+        self._resend(fake_db, user)
+        assert len(sent) == 3 and self._code(sent) != first
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]
+        assert stored["sends"] == 3 and len(stored["codes"]) == 3
+        asyncio.run(ap.verify_email(ap.EmailCode(code=first), user))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_verified"] is True
+
+    def test_only_the_last_few_codes_are_kept(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        first = self._code(sent)
+        for _ in range(ap.EMAIL_CODE_KEEP):
+            self._resend(fake_db, user)
+        assert len(fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]["codes"]) == ap.EMAIL_CODE_KEEP
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.verify_email(ap.EmailCode(code=first), user))
+
+    def test_codes_for_an_old_address_die_with_it(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        first = self._code(sent)
+        asyncio.run(ap.start_application(ap.StartApplication(confirms_one_track=True,
+            programme=mb.M_QUANT_BOOTCAMP, oxford_email="jo@keble.ox.ac.uk", confirms_oxford_student=True), user))
+        stored = fake_db.collections[ap.COLLECTION]["u1"]["oxford_email_check"]
+        assert stored["to"] == "jo@keble.ox.ac.uk" and stored["sends"] == 1 and len(stored["codes"]) == 1
+        with pytest.raises(HTTPException):
+            asyncio.run(ap.verify_email(ap.EmailCode(code=first), user))
+
+    def test_resend_too_soon_says_how_long_and_that_old_codes_work(self, monkeypatch):
+        fake_db, sent, user, _ = self._start(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.resend_email_code(user))
+        assert re.search(r"Wait \d+s", exc.value.detail) and "still work" in exc.value.detail
 
     def test_resend_is_limited_to_one_a_minute(self, monkeypatch):
         fake_db, sent, user, _ = self._start(monkeypatch)
@@ -4706,3 +4753,239 @@ class TestCloseUnfinished:
         before = len(sent)
         assert asyncio.run(ap.close_unfinished(self._req()))["rejected"] == 0
         assert len(sent) == before
+
+
+class TestMailDomainCheck:
+    """A typed Oxford address at a domain that can't take mail (a typo'd
+    college) is refused at once, instead of sending a code that bounces."""
+
+    def _start(self, monkeypatch, oxford, takes_mail):
+        fake_db, sent, _ = _flow_db(monkeypatch, users={"u1": {
+            "username": "jo", "email": "someone@gmail.com", "membership": mb.M_PUBLIC}})
+        monkeypatch.setattr(ap, "_domain_takes_mail", takes_mail)
+        user = User(id="u1", username="jo")
+        return fake_db, sent, asyncio.run(ap.start_application(ap.StartApplication(
+            confirms_one_track=True, programme=mb.M_QUANT_BOOTCAMP, oxford_email=oxford,
+            confirms_oxford_student=True), user))
+
+    def test_a_typo_college_is_refused_with_the_right_one(self, monkeypatch):
+        looked_up = []
+        async def takes_mail(domain):
+            looked_up.append(domain)
+            return domain != "pemb.ox.ac.uk"
+        with pytest.raises(HTTPException) as exc:
+            self._start(monkeypatch, "felix@pemb.ox.ac.uk", takes_mail)
+        assert exc.value.status_code == 400
+        assert "no such domain as pemb.ox.ac.uk" in exc.value.detail
+        assert "Did you mean felix@pmb.ox.ac.uk?" in exc.value.detail
+        assert looked_up == ["pemb.ox.ac.uk"]
+
+    def test_an_unknown_typo_is_refused_with_a_hint(self, monkeypatch):
+        async def takes_mail(domain):
+            return False
+        with pytest.raises(HTTPException) as exc:
+            self._start(monkeypatch, "jo@kebel.ox.ac.uk", takes_mail)
+        assert "Check it for typos" in exc.value.detail
+
+    def test_a_real_domain_gets_its_code(self, monkeypatch):
+        async def takes_mail(domain):
+            return domain == "merton.ox.ac.uk"
+        fake_db, sent, result = self._start(monkeypatch, "jo@merton.ox.ac.uk", takes_mail)
+        assert result["needs_email_code"] is True and sent[-1]["to"] == "jo@merton.ox.ac.uk"
+
+    def test_the_accounts_own_address_is_not_looked_up(self, monkeypatch):
+        async def takes_mail(domain):
+            raise AssertionError("looked up " + domain)
+        fake_db, sent, _ = _flow_db(monkeypatch, users={"u1": {
+            "username": "jo", "email": "jo@merton.ox.ac.uk", "membership": mb.M_MEMBER}})
+        monkeypatch.setattr(ap, "_domain_takes_mail", takes_mail)
+        result = asyncio.run(ap.start_application(ap.StartApplication(
+            confirms_one_track=True, programme=mb.M_QUANT_BOOTCAMP), User(id="u1", username="jo")))
+        assert result["needs_email_code"] is False
+
+    def test_the_lookup_itself(self, monkeypatch):
+        import dns.resolver
+
+        class Resolver:
+            lifetime = None
+            async def resolve(self, domain, kind):
+                if domain == "pemb.ox.ac.uk":
+                    raise dns.resolver.NXDOMAIN()
+                if domain == "a-only.ox.ac.uk" and kind == "MX":
+                    raise dns.resolver.NoAnswer()
+                if domain == "down.ox.ac.uk":
+                    raise dns.resolver.LifetimeTimeout()
+                return ["ok"]
+        import dns.asyncresolver
+        monkeypatch.setattr(dns.asyncresolver, "Resolver", Resolver)
+        monkeypatch.setattr(ap, "_mail_domain_cache", {})
+        lookup = _REAL_DOMAIN_LOOKUP
+        assert asyncio.run(lookup("pmb.ox.ac.uk")) is True
+        assert asyncio.run(lookup("pemb.ox.ac.uk")) is False
+        assert asyncio.run(lookup("a-only.ox.ac.uk")) is True
+        assert asyncio.run(lookup("down.ox.ac.uk")) is True     # our problem, not theirs
+        assert ap._mail_domain_cache == {"pmb.ox.ac.uk": True, "pemb.ox.ac.uk": False, "a-only.ox.ac.uk": True}
+
+
+class TestConfirmEmailByHand:
+    """When the codes never arrive, an admin confirms the address from the
+    review page and the applicant is told at both addresses."""
+
+    def _db(self, monkeypatch):
+        return _flow_db(monkeypatch,
+                        applications={"u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs",
+                                             "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+                                             "email": "jo@gmail.com", "oxford_email": "jo@keble.ox.ac.uk",
+                                             "oxford_email_verified": False,
+                                             "oxford_email_check": {"to": "jo@keble.ox.ac.uk", "sends": 4, "codes": [],
+                                                                    "sent_at": dt.datetime(2026, 10, 14, 21, 40, tzinfo=dt.timezone.utc)}}},
+                        users={"u1": {"username": "jo", "email": "jo@gmail.com", "membership": mb.M_PUBLIC}})
+
+    def _page(self, is_admin=True):
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        return asyncio.run(ap.admin_applications(request, User(id="r1", username="al", is_admin=is_admin))).body.decode()
+
+    def test_the_card_shows_they_are_stuck_and_offers_the_button(self, monkeypatch):
+        self._db(monkeypatch)
+        html = self._page()
+        assert "waiting for email code (4 sent)" in html
+        assert "last 14 Oct, 21:40" in html
+        assert "confirmEmail('u1', 'jo@keble.ox.ac.uk', this)" in html
+        assert "Confirm Oxford email" in html
+
+    def test_confirming_unblocks_them_and_tells_them(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        out = asyncio.run(ap.confirm_oxford_email("u1", User(id="a1", username="snow", is_admin=True)))
+        stored = fake_db.collections[ap.COLLECTION]["u1"]
+        assert stored["oxford_email_verified"] is True and stored["oxford_email_verified_by"] == "snow"
+        assert "oxford_email_check" not in stored
+        assert sent[-1]["subject"] == "Alpha Fund: your Oxford email is confirmed"
+        assert "jo@keble.ox.ac.uk" in sent[-1]["to"] and "jo@gmail.com" in sent[-1]["to"]
+        assert out["sent_to"] == sent[-1]["to"]
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), User(id="u1", username="jo")))
+        html = self._page()
+        assert "email confirmed by snow" in html and "Confirm Oxford email" not in html
+
+    def test_confirming_twice_or_a_missing_application_is_refused(self, monkeypatch):
+        self._db(monkeypatch)
+        admin = User(id="a1", username="snow", is_admin=True)
+        asyncio.run(ap.confirm_oxford_email("u1", admin))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.confirm_oxford_email("u1", admin))
+        assert exc.value.status_code == 409
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.confirm_oxford_email("nobody", admin))
+        assert exc.value.status_code == 404
+
+    def test_the_review_page_wires_the_button_to_the_endpoint(self):
+        src = Path(ap.__file__).parent.joinpath("templates", "applications_admin.html").read_text()
+        assert "/confirm-email`" in src and "async function confirmEmail(" in src
+        assert "Mark ${email} as confirmed without a code" in src
+        js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
+        assert "Any code we've sent you in the last 30 minutes works" in js
+        assert "/Wait (\\d+)s/" in js
+        assert 'apply.js?v=11' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
+
+
+class TestReopenForOnePerson:
+    """After the close, an admin can let one person (by email) sign up or
+    finish until the end of a given day, without moving the deadline."""
+
+    NEW = dt.datetime(2026, 10, 14, 23, 0, tzinfo=dt.timezone.utc)
+    STARTED = dt.datetime(2026, 10, 15, 23, 0, tzinfo=dt.timezone.utc)
+    NOW = dt.datetime(2026, 10, 16, 10, 0, tzinfo=dt.timezone.utc)      # the morning after the close
+    ADMIN = User(id="a1", username="snow", is_admin=True)
+
+    def _db(self, monkeypatch, application=None, account_email="anqi@gmail.com"):
+        monkeypatch.setattr(ap, "NEW_APPLICATIONS_CLOSE", self.NEW)
+        monkeypatch.setattr(ap, "STARTED_APPLICATIONS_CLOSE", self.STARTED)
+        monkeypatch.setattr(ap, "_now", lambda: self.NOW)
+        return _flow_db(monkeypatch, applications={"u1": application} if application else {},
+                        users={"u1": {"username": "anqi", "email": account_email, "membership": mb.M_PUBLIC}})
+
+    def _reopen(self, email="anqi.zu@stcatz.ox.ac.uk", until="2026-10-18"):
+        return asyncio.run(ap.reopen_for(ap.ReopenRequest(email=email, until=until), self.ADMIN))
+
+    def _start(self):
+        return asyncio.run(ap.start_application(ap.StartApplication(
+            programme=mb.M_QUANT_BOOTCAMP, oxford_email="anqi.zu@stcatz.ox.ac.uk", confirms_oxford_student=True,
+            confirms_one_track=True), User(id="u1", username="anqi")))
+
+    def test_the_reopening_is_stored_until_the_end_of_that_uk_day(self, monkeypatch):
+        fake_db, _, _ = self._db(monkeypatch)
+        out = self._reopen(email=" Anqi.Zu@stcatz.ox.ac.uk ")
+        stored = fake_db.collections[ap.EXTENSIONS]["anqi.zu@stcatz.ox.ac.uk"]
+        assert stored["until"] == dt.datetime(2026, 10, 19, 0, 0, tzinfo=ap.LONDON_TZ) and stored["by"] == "snow"
+        assert out == {"ok": True, "email": "anqi.zu@stcatz.ox.ac.uk", "until_label": "midnight on Sunday 18 October"}
+
+    @pytest.mark.parametrize("email,until,words", [
+        ("not-an-email", "2026-10-18", "email"), ("a@b.co", "18/10/2026", "YYYY-MM-DD"), ("a@b.co", "2026-10-15", "already ended")])
+    def test_bad_requests_are_refused(self, monkeypatch, email, until, words):
+        self._db(monkeypatch)
+        with pytest.raises(HTTPException) as exc:
+            self._reopen(email=email, until=until)
+        assert exc.value.status_code == 400 and words in exc.value.detail
+
+    def test_without_it_a_new_application_is_closed(self, monkeypatch):
+        self._db(monkeypatch)
+        with pytest.raises(HTTPException, match="Applications are now closed"):
+            self._start()
+
+    def test_reopened_by_the_oxford_email_they_type_they_can_start(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        self._reopen()
+        assert self._start()["ok"] is True
+        st = asyncio.run(ap.state(User(id="u1", username="anqi")))
+        assert st["new_applications_open"] is True and st["started_applications_open"] is True
+        assert st["reopened_until_label"] == "midnight on Sunday 18 October"
+
+    def test_reopened_by_the_account_email_works_before_they_type_anything(self, monkeypatch):
+        self._db(monkeypatch)
+        self._reopen(email="anqi@gmail.com")
+        st = asyncio.run(ap.state(User(id="u1", username="anqi")))
+        assert st["new_applications_open"] is True and st["reopened_until_label"] == "midnight on Sunday 18 October"
+        assert self._start()["ok"] is True
+
+    def test_a_started_application_can_go_on_and_the_close_out_leaves_it(self, monkeypatch):
+        app = {"user_id": "u1", "username": "anqi", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+               "email": "anqi@gmail.com", "oxford_email": "anqi.zu@stcatz.ox.ac.uk", "oxford_email_verified": True}
+        fake_db, sent, _ = self._db(monkeypatch, application=app)
+        jo = User(id="u1", username="anqi")
+        with pytest.raises(HTTPException, match="closed at midnight"):
+            asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), jo))
+        self._reopen()
+        asyncio.run(ap.choose_event_ticket(ap.EventTicketChoice(ticket="none"), jo))
+        monkeypatch.setattr(ap, "CLOSE_JOB_TOKEN", "t")
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "POST", "path": "/apply/internal/close-unfinished",
+                           "headers": [(b"x-job-token", b"t")], "query_string": b"", "server": ("t", 80),
+                           "scheme": "http", "root_path": ""})
+        out = asyncio.run(ap.close_unfinished(request))
+        assert fake_db.collections[ap.COLLECTION]["u1"]["status"] == ap.S_CV and out["rejected"] == 0
+
+    def test_it_runs_out(self, monkeypatch):
+        self._db(monkeypatch)
+        self._reopen(until="2026-10-18")
+        monkeypatch.setattr(ap, "_now", lambda: dt.datetime(2026, 10, 19, 0, 1, tzinfo=ap.LONDON_TZ))
+        with pytest.raises(HTTPException, match="Applications are now closed"):
+            self._start()
+        assert asyncio.run(ap.state(User(id="u1", username="anqi")))["reopened_until_label"] == ""
+
+    def test_the_review_page_has_the_form_and_tags_the_card(self, monkeypatch):
+        app = {"user_id": "u1", "username": "anqi", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP,
+               "email": "anqi@gmail.com", "oxford_email": "anqi.zu@stcatz.ox.ac.uk", "oxford_email_verified": True}
+        self._db(monkeypatch, application=app)
+        self._reopen()
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, self.ADMIN)).body.decode()
+        # An async handler returns a Promise (truthy), so "return reopenFor(this)" would let the
+        # native GET submit go ahead as well; the false has to be literal.
+        assert 'onsubmit="reopenFor(this); return false;"' in html and "/apply/admin/reopen" in html
+        assert "reopened until midnight on Sunday 18 October" in html
+        assert "Reopened: anqi.zu@stcatz.ox.ac.uk until midnight on Sunday 18 October" in html
+        js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
+        assert "Your application has been reopened until" in js

@@ -51,6 +51,7 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM") or SMTP_USER
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "AlphaBook")
+SMTP_REPLY_TO = os.getenv("SMTP_REPLY_TO", "")
 # STARTTLS is right for the common case (port 587); an implicit-TLS relay on
 # 465 sets this to false and connects over SSL from the start instead.
 SMTP_USE_STARTTLS = os.getenv("SMTP_USE_STARTTLS", "true").lower() not in ("0", "false", "no")
@@ -163,6 +164,10 @@ def _build_message(sender: str, to: str, subject: str, html: str, text: str,
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((SMTP_FROM_NAME, sender))
+    if SMTP_REPLY_TO and SMTP_REPLY_TO.lower() != sender.lower():
+        # Sent from a no-reply address on the fund's domain, answered in the
+        # fund's inbox.
+        msg["Reply-To"] = formataddr((SMTP_FROM_NAME, SMTP_REPLY_TO))
     msg["To"] = to
     if cc:
         # A real Cc header, not a second send — smtplib delivers to every
@@ -223,8 +228,15 @@ GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 _gmail_state = {"refused": False}
 
 
+# MAIL_VIA_GMAIL=false sends everything through SMTP even while the Google
+# connection (which the calendar still needs) is in place: for sending from
+# the fund's own domain rather than the gmail.com account, which Oxford's
+# mail filter has taken against.
+MAIL_VIA_GMAIL = os.getenv("MAIL_VIA_GMAIL", "true").lower() not in ("0", "false", "no")
+
+
 def gmail_enabled() -> bool:
-    return gcal.CONFIGURED and not _gmail_state["refused"]
+    return MAIL_VIA_GMAIL and gcal.CONFIGURED and not _gmail_state["refused"]
 
 
 async def _send_via_gmail(to: str, subject: str, html: str, text: str,

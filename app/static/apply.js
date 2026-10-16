@@ -301,7 +301,13 @@
     $("#app").innerHTML = panel("Confirm your Oxford email", `
       <p class="msp-muted" style="margin-top:0;">
         We've sent a 6-digit code to <strong>${esc(state.oxford_email)}</strong>. Enter it below to
-        carry on with your application. Check your junk folder if it hasn't arrived.
+        carry on with your application.
+      </p>
+      <p class="msp-muted" style="font-size:13px;">
+        Oxford's mail filter can hold our emails for a few minutes: check your junk folder and any
+        quarantine digest. Any code we've sent you in the last 30 minutes works. If nothing has arrived
+        after ten minutes, email <a href="mailto:oxfordalphafund@gmail.com">oxfordalphafund@gmail.com</a>
+        from your Oxford address and we'll confirm it for you.
       </p>
       <div class="field-group">
         <label for="emailCode">Code</label>
@@ -331,10 +337,31 @@
       await refresh();
     }));
     $("#emailCode").addEventListener("keydown", (e) => { if (e.key === "Enter") $("#emailCodeGo").click(); });
-    $("#emailCodeResend").addEventListener("click", (e) => go(e.target, async () => {
-      await api("/apply/resend-email-code", {});
-      flash("A new code is on its way.", false);
-    }));
+    // One code a minute: the button counts down rather than erroring, and
+    // picks up the server's own "wait Ns" when the page was behind.
+    const resendBtn = $("#emailCodeResend");
+    const cooldown = (secs) => {
+      let left = secs;
+      resendBtn.disabled = true;
+      const tick = () => {
+        if (!resendBtn.isConnected) return;
+        resendBtn.textContent = left > 0 ? `Send a new code (${left}s)` : "Send a new code";
+        if (left-- > 0) setTimeout(tick, 1000); else resendBtn.disabled = false;
+      };
+      tick();
+    };
+    resendBtn.addEventListener("click", async () => {
+      resendBtn.disabled = true;
+      try {
+        await api("/apply/resend-email-code", {});
+        flash("A new code is on its way. Earlier ones still work too.", false);
+        cooldown(60);
+      } catch (err) {
+        flash(err.message, true);
+        const m = /Wait (\d+)s/.exec(err.message || "");
+        if (m) cooldown(+m[1]); else resendBtn.disabled = false;
+      }
+    });
     $("#emailChangeGo").addEventListener("click", (e) => go(e.target, async () => {
       await api("/apply/start", { programme: state.programme, oxford_email: $("#emailChange").value.trim(),
                                   confirms_oxford_student: true });
@@ -1337,6 +1364,9 @@
     let html = "";
     const newApp = state.status === "none" || ((state.status === "accepted" || state.status === "rejected") && state.can_apply_again);
     if (state.status === "analyst" || (!state.eligible && state.status === "none")) html = "";
+    else if (state.reopened_until_label && (newApp || state.status === "cv" || state.status === "oa_ready"))
+      html = `<strong>Your application has been reopened until ${esc(state.reopened_until_label)}.</strong>
+              Please submit it by then.`;
     else if (newApp) html = state.new_applications_open
       ? `<strong>New applications close at ${esc(state.new_close_label)}.</strong>`
       : `<strong>Applications are now closed.</strong> New applications closed at midnight on Wednesday 14 October.`;

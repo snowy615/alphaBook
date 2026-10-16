@@ -350,3 +350,43 @@ def test_the_email_shell_has_no_logo_header():
     assert "<img" not in html
     assert "&middot; Alpha Fund" not in html
     assert "Welcome" in html and "Hi Jo," in html and "Verify my email" in html
+
+
+class TestSendingFromTheFundsOwnDomain:
+    """Oxford's mail filter has taken against the gmail.com account, so the
+    app can send from an address on alphabook.uk over SMTP instead, with
+    replies still going to the fund's inbox."""
+
+    def test_mail_via_gmail_off_uses_smtp_even_with_the_google_connection(self, monkeypatch):
+        posts = []
+        smtp = []
+
+        async def fake_token():
+            return "tok"
+
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            smtp.append(to)
+            return True
+
+        monkeypatch.setattr(gcal, "CONFIGURED", True)
+        monkeypatch.setattr(gcal, "access_token", fake_token)
+        monkeypatch.setattr(mailer, "MAIL_VIA_GMAIL", False)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        monkeypatch.setattr(mailer, "SMTP_FROM", "noreply@alphabook.uk")
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+        assert mailer.gmail_enabled() is False and mailer.sender() == "noreply@alphabook.uk"
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "noreply@alphabook.uk"
+        assert smtp == ["jo@ox.ac.uk"] and posts == []
+
+    def test_reply_to_points_at_the_funds_inbox(self, monkeypatch):
+        monkeypatch.setattr(mailer, "SMTP_FROM_NAME", "Alpha Fund")
+        monkeypatch.setattr(mailer, "SMTP_REPLY_TO", "oxfordalphafund@gmail.com")
+        msg = mailer._build_message("noreply@alphabook.uk", "jo@ox.ac.uk", "S", "<p>hi</p>", "hi")
+        assert msg["From"] == "Alpha Fund <noreply@alphabook.uk>"
+        assert msg["Reply-To"] == "Alpha Fund <oxfordalphafund@gmail.com>"
+
+    @pytest.mark.parametrize("reply_to", ["", "NoReply@alphabook.uk"])
+    def test_no_reply_to_when_unset_or_the_same_address(self, monkeypatch, reply_to):
+        monkeypatch.setattr(mailer, "SMTP_REPLY_TO", reply_to)
+        msg = mailer._build_message("noreply@alphabook.uk", "jo@ox.ac.uk", "S", "<p>hi</p>", "hi")
+        assert msg["Reply-To"] is None
