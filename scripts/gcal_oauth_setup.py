@@ -1,27 +1,26 @@
 """
-One-time OAuth consent flow for app/gcal.py's Google Meet link generation,
-and for sending the site's email as the same account (app/mailer.py).
+One-time OAuth consent flow for the site's Google connections: app/gcal.py's
+Google Meet links, and sending the site's email as that account
+(app/mailer.py).
 
-Run this once, locally, signed into oxfordalphafund@gmail.com in the browser
-it opens. It prints a refresh token — set that (plus the client id/secret)
-as Cloud Run env vars and app/gcal.py can start minting Meet links for
-interviews. Nobody else needs to run this again unless the refresh token is
-revoked.
+There are two connections, both made with this script and the same OAuth
+client:
 
-Before running, in Google Cloud Console for this project:
-  1. APIs & Services -> Library -> enable "Google Calendar API".
+  * the main one, admin@alphabook.uk: Meet links and email
+        python scripts/gcal_oauth_setup.py --client-id ... --client-secret ...
+  * the backup sender, admin@oxfordalphafund.com: email only, used when the
+    main one can't send
+        python scripts/gcal_oauth_setup.py --client-id ... --client-secret ... --backup
+
+It opens a browser tab; sign in as the account named, and allow both
+permissions. It then prints the env vars to set on Cloud Run. Nobody needs to
+run it again unless a refresh token is revoked.
+
+Before the first run, in Google Cloud Console for this project:
+  1. APIs & Services -> Library -> enable "Google Calendar API" and "Gmail API".
   2. APIs & Services -> Credentials -> Create Credentials -> OAuth client ID.
      - Application type: Desktop app.
      - Note the Client ID and Client Secret it gives you.
-  3. Run this script with those two values:
-       python scripts/gcal_oauth_setup.py --client-id ... --client-secret ...
-  4. It opens a browser tab. Sign in as oxfordalphafund@gmail.com and grant
-     calendar access. The tab will say "you may close this window" once done.
-  5. Copy the refresh token this script prints, then set all three as
-     Cloud Run env vars:
-
-       gcloud run services update alphabook-api --region us-central1 \\
-         --update-env-vars GOOGLE_OAUTH_CLIENT_ID=...,GOOGLE_OAUTH_CLIENT_SECRET=...,GOOGLE_OAUTH_REFRESH_TOKEN=...
 
 No dependency beyond the stdlib and httpx (already required by the app).
 """
@@ -52,6 +51,8 @@ SCOPE = " ".join([
 ])
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
+MAIN_ACCOUNT = "admin@alphabook.uk"
+BACKUP_ACCOUNT = "admin@oxfordalphafund.com"
 
 _result: dict = {}
 
@@ -79,7 +80,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--client-id", required=True)
     parser.add_argument("--client-secret", required=True)
+    parser.add_argument("--backup", action="store_true",
+                        help="connect the backup sender (admin@oxfordalphafund.com) instead of the main account")
+    parser.add_argument("--save-to", metavar="FILE",
+                        help="write the env vars to FILE (readable only by you) instead of printing them; "
+                             "scripts/connect_google.sh uses this so the token is never shown")
     args = parser.parse_args()
+    account = BACKUP_ACCOUNT if args.backup else MAIN_ACCOUNT
 
     # Threaded: browsers often open a spare "preconnect" socket and leave it
     # idle. A single-threaded server blocks on it, so shutdown() below never
@@ -98,7 +105,10 @@ def main() -> None:
         # authorized before — without this a repeat run can silently get
         # none back at all.
         "prompt": "consent",
+        # Picks the right account in the browser's account chooser.
+        "login_hint": account,
     })
+    print(f"Sign in as {account}.")
     print(f"Opening your browser to sign in — if it doesn't open, visit:\n{auth_url}\n")
     webbrowser.open(auth_url)
 
@@ -139,14 +149,24 @@ def main() -> None:
         raise SystemExit(
             "Google didn't return a refresh token. This usually means the app was already "
             "authorized before without --prompt=consent taking effect — revoke access at "
-            "https://myaccount.google.com/permissions (for oxfordalphafund@gmail.com) and run this again."
+            f"https://myaccount.google.com/permissions (for {account}) and run this again."
         )
 
-    print("\nSuccess. Set these as Cloud Run env vars:\n")
-    print(f"GOOGLE_OAUTH_CLIENT_ID={args.client_id}")
-    print(f"GOOGLE_OAUTH_CLIENT_SECRET={args.client_secret}")
-    print(f"GOOGLE_OAUTH_REFRESH_TOKEN={refresh_token}")
-
+    env = {"GOOGLE_OAUTH_CLIENT_ID": args.client_id, "GOOGLE_OAUTH_CLIENT_SECRET": args.client_secret}
+    if args.backup:
+        env.update(GOOGLE_BACKUP_ACCOUNT_EMAIL=account, GOOGLE_BACKUP_REFRESH_TOKEN=refresh_token)
+    else:
+        env.update(GOOGLE_ACCOUNT_EMAIL=account, GOOGLE_OAUTH_REFRESH_TOKEN=refresh_token)
+    if args.save_to:
+        import os
+        fd = os.open(args.save_to, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.writelines(f"{k}={v}\n" for k, v in env.items())
+        print(f"\nSuccess, connected {account}.")
+        return
+    print(f"\nSuccess, connected {account}. Set these as Cloud Run env vars:\n")
+    for k, v in env.items():
+        print(f"{k}={v}")
 
 if __name__ == "__main__":
     main()

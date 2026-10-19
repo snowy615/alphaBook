@@ -460,7 +460,7 @@
     <div class="apa-modal apa-mail">
       <h3>Email applicants</h3>
       <p>Pick a group to tick everyone in it, then tick or untick anyone by hand. Each person gets their own
-        copy from oxfordalphafund@gmail.com.</p>
+        copy from {{ mail_sender }}.</p>
 
       <div class="apa-mail-row">
         <span class="apa-mail-label">Programme</span>
@@ -1407,7 +1407,7 @@
       const ids = [...mailPicked];
       if (!ids.length) { err.textContent = "Tick at least one person."; return; }
       if (!subject || !message) { err.textContent = "Write a subject and a message."; return; }
-      if (!confirm(`Send "${subject}" to ${ids.length} ${ids.length === 1 ? "person" : "people"} from oxfordalphafund@gmail.com?`)) return;
+      if (!confirm(`Send "${subject}" to ${ids.length} ${ids.length === 1 ? "person" : "people"} from {{ mail_sender }}?`)) return;
       const btn = e.currentTarget;
       btn.disabled = true;
       btn.textContent = "Sending…";

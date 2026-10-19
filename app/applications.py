@@ -2169,6 +2169,7 @@ async def admin_applications(request: Request, reviewer: User = Depends(require_
         "motivation_prompt": MOTIVATION_PROMPT,
         "estimation_prompt": ESTIMATION_PROMPT,
         "is_admin": reviewer.is_admin,
+        "mail_sender": mailer.sender() or gcal.ACCOUNT_EMAIL,
         "score_min": SCORE_MIN,
         "score_max": SCORE_MAX,
         "online_cv_rubric": ONLINE_CV_RUBRIC,

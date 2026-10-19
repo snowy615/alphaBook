@@ -11,14 +11,16 @@ operator supplies credentials for a mailbox they already control.
 Also sends the sign-up verification email: the link comes from Firebase, but
 the email around it is ours (see ``auth._send_branded_verification_email``).
 
-Two ways out, tried in order:
+Ways out, tried in order:
 
-1. **Gmail API, as oxfordalphafund@gmail.com** — using the same Google
-   connection that mints Meet links (:mod:`app.gcal`), when that connection
-   was granted the ``gmail.send`` permission. No app password needed.
-2. **SMTP** — whatever mailbox ``SMTP_*`` points at. Used if the Gmail route
-   isn't set up, isn't permitted, or fails for a given message, so an email
-   is never lost just because one route is down.
+1. **Gmail API, as admin@alphabook.uk** — using the same Google connection
+   that mints Meet links (:mod:`app.gcal`), granted the ``gmail.send``
+   permission. No app password needed.
+2. **Gmail API, as admin@oxfordalphafund.com** — the backup connection
+   (``GOOGLE_BACKUP_*``), used when the first one fails or is refused for a
+   given message, so an email isn't lost because one mailbox is down.
+3. **SMTP** — whatever mailbox ``SMTP_*`` points at, if anything. Not used in
+   production any more; kept for local development against a test relay.
 
 If neither is configured, ``send_email`` logs and returns False instead of
 raising. That keeps local dev and the test suite working with no mail server
@@ -222,16 +224,15 @@ def _send_sync(to: str, subject: str, html: str, text: str,
 
 GMAIL_SEND_URL = "https://gmail.googleapis.com/gmail/v1/users/me/messages/send"
 # Flips on the first "not allowed" answer from Google (the connection was
-# granted calendar access only) so every later email goes straight to SMTP
-# instead of asking again. Reset by a redeploy, which is what updating the
-# token env var causes anyway.
-_gmail_state = {"refused": False}
+# granted calendar access only) so every later email goes straight to the
+# next route instead of asking again. Reset by a redeploy, which is what
+# updating the token env var causes anyway. One flag per mailbox.
+_gmail_state = {"refused": False, "backup_refused": False}
 
 
 # MAIL_VIA_GMAIL=false sends everything through SMTP even while the Google
-# connection (which the calendar still needs) is in place: for sending from
-# the fund's own domain rather than the gmail.com account, which Oxford's
-# mail filter has taken against.
+# connection (which the calendar still needs) is in place: for pointing the
+# site at a transactional provider's SMTP relay instead.
 MAIL_VIA_GMAIL = os.getenv("MAIL_VIA_GMAIL", "true").lower() not in ("0", "false", "no")
 
 
@@ -239,28 +240,36 @@ def gmail_enabled() -> bool:
     return MAIL_VIA_GMAIL and gcal.CONFIGURED and not _gmail_state["refused"]
 
 
+def backup_gmail_enabled() -> bool:
+    return MAIL_VIA_GMAIL and gcal.BACKUP_CONFIGURED and not _gmail_state["backup_refused"]
+
+
 async def _send_via_gmail(to: str, subject: str, html: str, text: str,
-                          ics: Optional[bytes], cc: Optional[str]) -> bool:
-    if not gmail_enabled():
+                          ics: Optional[bytes], cc: Optional[str], backup: bool = False) -> bool:
+    """Send through the Gmail API as the main mailbox, or as the backup one."""
+    if not (backup_gmail_enabled() if backup else gmail_enabled()):
         return False
-    token = await gcal.access_token()
+    account = gcal.BACKUP_ACCOUNT_EMAIL if backup else gcal.ACCOUNT_EMAIL
+    flag = "backup_refused" if backup else "refused"
+    token = await (gcal.backup_access_token() if backup else gcal.access_token())
     if not token:
         return False
-    msg = _build_message(gcal.ACCOUNT_EMAIL, to, subject, html, text, ics, cc)
+    msg = _build_message(account, to, subject, html, text, ics, cc)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode("ascii")
     try:
         async with httpx.AsyncClient(timeout=15) as client:
             r = await client.post(GMAIL_SEND_URL, headers={"Authorization": f"Bearer {token}"},
                                   json={"raw": raw})
         if r.status_code in (401, 403):
-            _gmail_state["refused"] = True
-            log.warning("mailer: Google refused gmail.send (HTTP %s) — the connection has no "
-                        "email permission; using SMTP from now on", r.status_code)
+            _gmail_state[flag] = True
+            log.warning("mailer: Google refused gmail.send for %s (HTTP %s) — that connection has no "
+                        "email permission; using the next route from now on", account, r.status_code)
             return False
         r.raise_for_status()
         return True
     except Exception:
-        log.exception("mailer: Gmail API send failed for %r to %s — falling back to SMTP", subject, to)
+        log.exception("mailer: Gmail API send as %s failed for %r to %s — trying the next route",
+                      account, subject, to)
         return False
 
 
@@ -280,18 +289,22 @@ def sender() -> Optional[str]:
     has actually refused it once."""
     if gmail_enabled():
         return gcal.ACCOUNT_EMAIL
+    if backup_gmail_enabled():
+        return gcal.BACKUP_ACCOUNT_EMAIL
     return SMTP_FROM if CONFIGURED else None
 
 
 async def deliver(to: str, subject: str, title: str, body_html: str,
                   cta_label: Optional[str] = None, cta_url: Optional[str] = None,
-                  ics: Optional[bytes] = None, cc: Optional[str] = None) -> Optional[str]:
+                  ics: Optional[bytes] = None, cc: Optional[str] = None,
+                  backup_only: bool = False) -> Optional[str]:
     """Send one email; return the address it went out from, or None if it
-    didn't. Never raises."""
+    didn't. Never raises. ``backup_only`` sends through the backup mailbox
+    alone, for the admin connection check."""
     if not to or "@" not in to:
         log.warning("mailer: refusing to send %r to invalid address %r", subject, to)
         return None
-    if not CONFIGURED and not gmail_enabled():
+    if not CONFIGURED and not gmail_enabled() and not backup_gmail_enabled():
         log.warning("mailer: no email route configured — skipping %r to %s", subject, to)
         return None
 
@@ -307,9 +320,14 @@ async def deliver(to: str, subject: str, title: str, body_html: str,
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
 
-    if await _send_via_gmail(to, subject, html, text, ics, cc):
+    if not backup_only and await _send_via_gmail(to, subject, html, text, ics, cc):
         return gcal.ACCOUNT_EMAIL
+    if await _send_via_gmail(to, subject, html, text, ics, cc, backup=True):
+        return gcal.BACKUP_ACCOUNT_EMAIL
+    if backup_only:
+        return None
     if not CONFIGURED:
+        log.warning("mailer: every email route failed for %r to %s", subject, to)
         return None
     return SMTP_FROM if await asyncio.to_thread(_send_sync, to, subject, html, text, ics, cc) else None
 

@@ -2,17 +2,17 @@
 Google Meet links for interviews, via the Calendar API.
 =========================================================
 
-A Calendar event on oxfordalphafund@gmail.com's own calendar is created (or,
+A Calendar event on admin@alphabook.uk's own calendar is created (or,
 on a reschedule, moved) purely to mint a Meet link. Attendees are never sent
 Google's own invite for it (``sendUpdates=none``) — AlphaBook's own email
 with its own .ics attachment is the actual invite; this just supplies the
 link that goes inside it.
 
-Authenticated as that one mailbox via a long-lived refresh token: a personal
-Gmail account has no service-account / domain-wide-delegation equivalent, so
-real user consent is required. The token is obtained once, outside this app
-(see the setup script), and stored like any other secret (``SMTP_PASSWORD``
-is configured the same way).
+Authenticated as that one mailbox via a long-lived refresh token, obtained
+once outside this app (see scripts/gcal_oauth_setup.py) and stored like any
+other secret. A second mailbox (``GOOGLE_BACKUP_*``, admin@oxfordalphafund.com)
+can be connected the same way: it's only used to send email when the main one
+can't, never for calendar events.
 
 Every function here fails soft: unconfigured, or a bad response from Google,
 just means no Meet link — an interview still gets scheduled, exactly like
@@ -40,36 +40,55 @@ CALENDAR_ID = os.getenv("GOOGLE_CALENDAR_ID", "primary")
 CONFIGURED = bool(CLIENT_ID and CLIENT_SECRET and REFRESH_TOKEN)
 # The mailbox the refresh token belongs to. The same token also sends email
 # as this address when it was granted the gmail.send scope (see app/mailer).
-ACCOUNT_EMAIL = os.getenv("GOOGLE_ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
+ACCOUNT_EMAIL = os.getenv("GOOGLE_ACCOUNT_EMAIL", "admin@alphabook.uk")
+
+# The backup sender: a second mailbox, connected with the same OAuth client,
+# that app/mailer falls back to when the main one fails or is refused.
+BACKUP_REFRESH_TOKEN = os.getenv("GOOGLE_BACKUP_REFRESH_TOKEN", "")
+BACKUP_ACCOUNT_EMAIL = os.getenv("GOOGLE_BACKUP_ACCOUNT_EMAIL", "admin@oxfordalphafund.com")
+BACKUP_CONFIGURED = bool(CLIENT_ID and CLIENT_SECRET and BACKUP_REFRESH_TOKEN)
 
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 _EVENTS_URL = f"https://www.googleapis.com/calendar/v3/calendars/{CALENDAR_ID}/events"
 
 # Module-level so every call in the process reuses the same access token
 # until it's about to expire, instead of trading a fresh one for every
-# interview scheduled.
+# interview scheduled. One cache per mailbox.
 _token_cache: Dict[str, Any] = {"access_token": None, "expires_at": None}
+_backup_token_cache: Dict[str, Any] = {"access_token": None, "expires_at": None}
 
 
-async def access_token() -> Optional[str]:
+async def _access_token(refresh_token: str, cache: Dict[str, Any], label: str) -> Optional[str]:
     now = dt.datetime.now(dt.timezone.utc)
-    cached, expires_at = _token_cache["access_token"], _token_cache["expires_at"]
+    cached, expires_at = cache["access_token"], cache["expires_at"]
     if cached and expires_at and now < expires_at:
         return cached
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             r = await client.post(TOKEN_URL, data={
                 "client_id": CLIENT_ID, "client_secret": CLIENT_SECRET,
-                "refresh_token": REFRESH_TOKEN, "grant_type": "refresh_token",
+                "refresh_token": refresh_token, "grant_type": "refresh_token",
             })
             r.raise_for_status()
             data = r.json()
     except Exception:
-        log.exception("gcal: failed to refresh access token")
+        log.exception("gcal: failed to refresh the %s access token", label)
         return None
-    _token_cache["access_token"] = data.get("access_token")
-    _token_cache["expires_at"] = now + dt.timedelta(seconds=int(data.get("expires_in", 3600)) - 60)
-    return _token_cache["access_token"]
+    cache["access_token"] = data.get("access_token")
+    cache["expires_at"] = now + dt.timedelta(seconds=int(data.get("expires_in", 3600)) - 60)
+    return cache["access_token"]
+
+
+async def access_token() -> Optional[str]:
+    """For the main mailbox (ACCOUNT_EMAIL): calendar events and email."""
+    return await _access_token(REFRESH_TOKEN, _token_cache, "main")
+
+
+async def backup_access_token() -> Optional[str]:
+    """For the backup mailbox (BACKUP_ACCOUNT_EMAIL): email only."""
+    if not BACKUP_CONFIGURED:
+        return None
+    return await _access_token(BACKUP_REFRESH_TOKEN, _backup_token_cache, "backup")
 
 
 def _rfc3339(when: dt.datetime) -> str:

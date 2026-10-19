@@ -261,7 +261,8 @@ class TestIntegrationsCheck:
     """The admin "Run check" button: a real Meet link is made and cleaned up,
     and a test email reports which address it actually went out from."""
 
-    def _patch(self, monkeypatch, created=True, sent_from="oxfordalphafund@gmail.com"):
+    def _patch(self, monkeypatch, created=True, sent_from="admin@alphabook.uk",
+               backup=False, backup_from="admin@oxfordalphafund.com"):
         deleted, emails = [], []
 
         async def fake_create(**kwargs):
@@ -272,11 +273,13 @@ class TestIntegrationsCheck:
             return True
 
         async def fake_deliver(to, subject, title, body_html, *a, **k):
-            emails.append(to)
-            return sent_from
+            emails.append((to, "backup" if k.get("backup_only") else "main"))
+            return backup_from if k.get("backup_only") else sent_from
 
         monkeypatch.setattr(admin.gcal, "CONFIGURED", True)
-        monkeypatch.setattr(admin.gcal, "ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
+        monkeypatch.setattr(admin.gcal, "BACKUP_CONFIGURED", backup)
+        monkeypatch.setattr(admin.gcal, "ACCOUNT_EMAIL", "admin@alphabook.uk")
+        monkeypatch.setattr(admin.gcal, "BACKUP_ACCOUNT_EMAIL", "admin@oxfordalphafund.com")
         monkeypatch.setattr(admin.gcal, "create_meet_event", fake_create)
         monkeypatch.setattr(admin.gcal, "delete_event", fake_delete)
         monkeypatch.setattr(admin.mailer, "deliver", fake_deliver)
@@ -287,15 +290,30 @@ class TestIntegrationsCheck:
         result = run(admin.check_integrations(admin=ADMIN))
         assert result["meet"]["ok"] and result["meet"]["sample_link"].startswith("https://meet.google.com/")
         assert deleted == ["ev1"]                       # the test event doesn't linger
-        assert emails == ["oxfordalphafund@gmail.com"]  # never sent to an applicant
-        assert result["email"]["ok"] and result["email"]["sent_from"] == "oxfordalphafund@gmail.com"
-        assert "still going out" not in result["email"]["detail"]
+        assert emails == [("admin@alphabook.uk", "main")]  # never sent to an applicant
+        assert result["email"]["ok"] and result["email"]["sent_from"] == "admin@alphabook.uk"
+        assert "are going out from" not in result["email"]["detail"]
 
-    def test_says_so_when_email_is_still_on_the_old_address(self, monkeypatch):
-        self._patch(monkeypatch, sent_from="yansnow615@gmail.com")
+    def test_says_so_when_email_is_going_out_from_the_backup(self, monkeypatch):
+        self._patch(monkeypatch, sent_from="admin@oxfordalphafund.com")
         result = run(admin.check_integrations(admin=ADMIN))
         assert result["email"]["ok"] is True
-        assert "still going out from yansnow615@gmail.com" in result["email"]["detail"]
+        assert "going out from admin@oxfordalphafund.com, not admin@alphabook.uk" in result["email"]["detail"]
+
+    def test_the_backup_sender_is_checked_on_its_own(self, monkeypatch):
+        _, emails = self._patch(monkeypatch, backup=True)
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert emails == [("admin@alphabook.uk", "main"), ("admin@alphabook.uk", "backup")]
+        assert result["backup_email"] == {"ok": True, "sent_from": "admin@oxfordalphafund.com",
+                                          "detail": "Sent a test email to admin@alphabook.uk from the backup "
+                                                    "sender, admin@oxfordalphafund.com."}
+
+    def test_a_missing_or_broken_backup_sender_is_reported(self, monkeypatch):
+        self._patch(monkeypatch)
+        assert run(admin.check_integrations(admin=ADMIN))["backup_email"]["ok"] is False
+        self._patch(monkeypatch, backup=True, backup_from=None)
+        result = run(admin.check_integrations(admin=ADMIN))
+        assert result["backup_email"]["ok"] is False and "couldn't send" in result["backup_email"]["detail"]
 
     def test_a_refused_google_connection_is_reported(self, monkeypatch):
         deleted, _ = self._patch(monkeypatch, created=False)

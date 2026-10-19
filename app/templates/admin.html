@@ -928,7 +928,8 @@
         <h3 style="margin-top: 0;">Google Meet &amp; email</h3>
         <p class="small" style="color: var(--muted); margin-bottom: 14px;">
           Checks the Google connection end to end: creates a Meet link (then deletes the test event)
-          and sends a test email to the connected account. Nothing is sent to applicants.
+          and sends a test email to the connected account, from the main sender and from the backup
+          sender. Nothing is sent to applicants.
         </p>
         <button class="btn primary" id="checkIntegrationsBtn" onclick="checkIntegrations()">Run check</button>
         <div id="integrationsResult" class="small" style="margin-top: 14px; line-height: 1.6;"></div>
@@ -960,7 +961,8 @@
         const d = await r.json();
         if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
         const line = (label, part) => `<div><strong style="color:${part.ok ? 'var(--green)' : 'var(--red)'}">${part.ok ? '✓' : '✗'} ${label}</strong> — ${esc(part.detail)}</div>`;
-        box.innerHTML = line('Google Meet', d.meet) + line('Email', d.email);
+        box.innerHTML = line('Google Meet', d.meet) + line('Email', d.email)
+          + (d.backup_email ? line('Backup email', d.backup_email) : '');
       } catch (err) {
         box.textContent = 'Check failed: ' + err.message;
       } finally {

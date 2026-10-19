@@ -267,8 +267,8 @@ class _GmailResp:
 
 
 class TestGmailRoute:
-    """Sending as oxfordalphafund@gmail.com through the Gmail API, with SMTP
-    as the fallback whenever that route isn't available."""
+    """Sending as admin@alphabook.uk through the Gmail API, with SMTP as the
+    fallback whenever that route isn't available (and no backup sender)."""
 
     def _patch(self, monkeypatch, status=200, smtp_ok=True):
         posts, smtp = [], []
@@ -289,11 +289,12 @@ class TestGmailRoute:
             return smtp_ok
 
         monkeypatch.setattr(gcal, "CONFIGURED", True)
-        monkeypatch.setattr(gcal, "ACCOUNT_EMAIL", "oxfordalphafund@gmail.com")
+        monkeypatch.setattr(gcal, "ACCOUNT_EMAIL", "admin@alphabook.uk")
+        monkeypatch.setattr(gcal, "BACKUP_CONFIGURED", False)
         monkeypatch.setattr(gcal, "access_token", fake_token)
         monkeypatch.setattr(mailer.httpx, "AsyncClient", _Client)
         monkeypatch.setattr(mailer, "CONFIGURED", True)
-        monkeypatch.setattr(mailer, "SMTP_FROM", "yansnow615@gmail.com")
+        monkeypatch.setattr(mailer, "SMTP_FROM", "relay@example.test")
         monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
         return posts, smtp
 
@@ -303,11 +304,11 @@ class TestGmailRoute:
     def test_sends_as_the_connected_account_when_allowed(self, monkeypatch):
         posts, smtp = self._patch(monkeypatch)
         sent_from = run(mailer.deliver("jo@ox.ac.uk", "Hello", "Title", "<p>hi</p>", cc="priya@ox.ac.uk"))
-        assert sent_from == "oxfordalphafund@gmail.com"
+        assert sent_from == "admin@alphabook.uk"
         assert smtp == []
         assert posts[0]["url"] == mailer.GMAIL_SEND_URL and posts[0]["auth"] == "Bearer tok"
         msg = self._decode(posts[0]["raw"])
-        assert "oxfordalphafund@gmail.com" in msg["From"]
+        assert "admin@alphabook.uk" in msg["From"]
         assert msg["To"] == "jo@ox.ac.uk" and msg["Cc"] == "priya@ox.ac.uk"
         assert msg["Subject"] == "Hello"
 
@@ -319,15 +320,15 @@ class TestGmailRoute:
 
     def test_no_email_permission_falls_back_to_smtp_and_stops_asking(self, monkeypatch):
         posts, smtp = self._patch(monkeypatch, status=403)
-        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
-        assert run(mailer.deliver("sam@ox.ac.uk", "B", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "relay@example.test"
+        assert run(mailer.deliver("sam@ox.ac.uk", "B", "T", "<p>hi</p>")) == "relay@example.test"
         assert len(posts) == 1          # Google refused once; the second went straight to SMTP
         assert smtp == ["jo@ox.ac.uk", "sam@ox.ac.uk"]
-        assert mailer.sender() == "yansnow615@gmail.com"
+        assert mailer.sender() == "relay@example.test"
 
     def test_a_one_off_google_error_falls_back_but_keeps_trying_gmail(self, monkeypatch):
         posts, smtp = self._patch(monkeypatch, status=500)
-        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "yansnow615@gmail.com"
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "relay@example.test"
         assert mailer.gmail_enabled() is True
         assert smtp == ["jo@ox.ac.uk"]
 
@@ -380,13 +381,114 @@ class TestSendingFromTheFundsOwnDomain:
 
     def test_reply_to_points_at_the_funds_inbox(self, monkeypatch):
         monkeypatch.setattr(mailer, "SMTP_FROM_NAME", "Alpha Fund")
-        monkeypatch.setattr(mailer, "SMTP_REPLY_TO", "oxfordalphafund@gmail.com")
+        monkeypatch.setattr(mailer, "SMTP_REPLY_TO", "admin@oxfordalphafund.com")
         msg = mailer._build_message("noreply@alphabook.uk", "jo@ox.ac.uk", "S", "<p>hi</p>", "hi")
         assert msg["From"] == "Alpha Fund <noreply@alphabook.uk>"
-        assert msg["Reply-To"] == "Alpha Fund <oxfordalphafund@gmail.com>"
+        assert msg["Reply-To"] == "Alpha Fund <admin@oxfordalphafund.com>"
 
     @pytest.mark.parametrize("reply_to", ["", "NoReply@alphabook.uk"])
     def test_no_reply_to_when_unset_or_the_same_address(self, monkeypatch, reply_to):
         monkeypatch.setattr(mailer, "SMTP_REPLY_TO", reply_to)
         msg = mailer._build_message("noreply@alphabook.uk", "jo@ox.ac.uk", "S", "<p>hi</p>", "hi")
         assert msg["Reply-To"] is None
+
+
+class TestBackupSender:
+    """admin@oxfordalphafund.com takes over, through its own Google
+    connection, whenever admin@alphabook.uk can't send a message."""
+
+    def _patch(self, monkeypatch, main_status=200, backup_status=200, smtp=False):
+        posts, smtp_sent = [], []
+        statuses = {"Bearer main": main_status, "Bearer backup": backup_status}
+
+        class _Client:
+            def __init__(self, *a, **k): pass
+            async def __aenter__(self): return self
+            async def __aexit__(self, *a): return False
+            async def post(self, url, headers=None, json=None):
+                auth = headers.get("Authorization")
+                posts.append({"auth": auth, "raw": json["raw"]})
+                return _GmailResp(statuses[auth])
+
+        async def main_token():
+            return "main"
+
+        async def backup_token():
+            return "backup"
+
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            smtp_sent.append(to)
+            return True
+
+        monkeypatch.setattr(gcal, "CONFIGURED", True)
+        monkeypatch.setattr(gcal, "BACKUP_CONFIGURED", True)
+        monkeypatch.setattr(gcal, "ACCOUNT_EMAIL", "admin@alphabook.uk")
+        monkeypatch.setattr(gcal, "BACKUP_ACCOUNT_EMAIL", "admin@oxfordalphafund.com")
+        monkeypatch.setattr(gcal, "access_token", main_token)
+        monkeypatch.setattr(gcal, "backup_access_token", backup_token)
+        monkeypatch.setattr(mailer.httpx, "AsyncClient", _Client)
+        monkeypatch.setattr(mailer, "_gmail_state", {"refused": False, "backup_refused": False})
+        monkeypatch.setattr(mailer, "CONFIGURED", smtp)
+        monkeypatch.setattr(mailer, "SMTP_FROM", "relay@example.test")
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+        return posts, smtp_sent
+
+    def _from(self, post):
+        return email.message_from_bytes(base64.urlsafe_b64decode(post["raw"]))["From"]
+
+    def test_the_main_sender_is_used_when_it_works(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "admin@alphabook.uk"
+        assert [p["auth"] for p in posts] == ["Bearer main"]
+
+    def test_a_failed_send_goes_out_from_the_backup(self, monkeypatch):
+        posts, smtp_sent = self._patch(monkeypatch, main_status=500)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "admin@oxfordalphafund.com"
+        assert [p["auth"] for p in posts] == ["Bearer main", "Bearer backup"]
+        assert "admin@oxfordalphafund.com" in self._from(posts[1]) and smtp_sent == []
+        assert mailer.gmail_enabled() is True            # a one-off error: the main one is tried again next time
+
+    def test_a_refused_main_sender_is_skipped_from_then_on(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch, main_status=403)
+        run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>"))
+        assert run(mailer.deliver("sam@ox.ac.uk", "B", "T", "<p>hi</p>")) == "admin@oxfordalphafund.com"
+        assert [p["auth"] for p in posts] == ["Bearer main", "Bearer backup", "Bearer backup"]
+        assert mailer.sender() == "admin@oxfordalphafund.com"
+
+    def test_both_failing_is_reported_not_raised(self, monkeypatch):
+        self._patch(monkeypatch, main_status=500, backup_status=500)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) is None
+        assert run(mailer.send_email("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) is False
+
+    def test_an_smtp_relay_still_comes_last_if_one_is_set(self, monkeypatch):
+        _, smtp_sent = self._patch(monkeypatch, main_status=500, backup_status=500, smtp=True)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "relay@example.test"
+        assert smtp_sent == ["jo@ox.ac.uk"]
+
+    def test_backup_only_skips_the_main_sender(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>", backup_only=True)) == "admin@oxfordalphafund.com"
+        assert [p["auth"] for p in posts] == ["Bearer backup"]
+
+    def test_backup_only_without_a_backup_sends_nothing(self, monkeypatch):
+        posts, smtp_sent = self._patch(monkeypatch, smtp=True)
+        monkeypatch.setattr(gcal, "BACKUP_CONFIGURED", False)
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>", backup_only=True)) is None
+        assert posts == [] and smtp_sent == []
+
+    def test_the_backup_alone_is_enough(self, monkeypatch):
+        posts, _ = self._patch(monkeypatch)
+        monkeypatch.setattr(gcal, "CONFIGURED", False)
+        assert mailer.sender() == "admin@oxfordalphafund.com"
+        assert run(mailer.deliver("jo@ox.ac.uk", "A", "T", "<p>hi</p>")) == "admin@oxfordalphafund.com"
+
+
+def test_no_personal_address_is_left_in_the_code():
+    """The site sends as the fund's own mailboxes, never anyone's personal one."""
+    from pathlib import Path
+    root = Path(mailer.__file__).resolve().parent.parent
+    files = [*root.joinpath("app").rglob("*.py"), *root.joinpath("app").rglob("*.html"),
+             *root.joinpath("app").rglob("*.js"), *root.joinpath("scripts").rglob("*.py"),
+             root / ".env.example"]
+    hits = [str(f.relative_to(root)) for f in files if "yansnow615" in f.read_text(errors="ignore")]
+    assert hits == []

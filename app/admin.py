@@ -1086,9 +1086,24 @@ async def check_integrations(admin: User = Depends(require_admin)):
     if sent_from:
         detail = f"Sent a test email to {to} from {sent_from}."
         if sent_from != gcal.ACCOUNT_EMAIL:
-            detail += (f" Emails are still going out from {sent_from}, not {gcal.ACCOUNT_EMAIL}: "
-                       "the Google connection doesn't have permission to send email yet.")
+            detail += (f" Emails are going out from {sent_from}, not {gcal.ACCOUNT_EMAIL}: "
+                       "the main Google connection can't send email at the moment.")
         email = {"ok": True, "sent_from": sent_from, "detail": detail}
     else:
         email = {"ok": False, "detail": "The test email didn't send — check the server logs for 'mailer:'."}
-    return {"meet": meet, "email": email}
+
+    # The backup sender, on its own, so it's known to work before it's needed.
+    if not gcal.BACKUP_CONFIGURED:
+        backup = {"ok": False, "detail": "No backup sender connected (GOOGLE_BACKUP_REFRESH_TOKEN isn't set)."}
+    else:
+        backup_from = await mailer.deliver(
+            to, "AlphaBook email check (backup sender)", "The backup sender is working",
+            "<p>This is a test of the backup sender, from the AlphaBook admin page. Nothing to do.</p>",
+            backup_only=True,
+        )
+        backup = ({"ok": True, "sent_from": backup_from,
+                   "detail": f"Sent a test email to {to} from the backup sender, {backup_from}."}
+                  if backup_from else
+                  {"ok": False, "detail": f"The backup sender ({gcal.BACKUP_ACCOUNT_EMAIL}) couldn't send — "
+                                          "check the server logs for 'mailer:'."})
+    return {"meet": meet, "email": email, "backup_email": backup}
