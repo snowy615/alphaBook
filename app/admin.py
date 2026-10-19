@@ -1041,6 +1041,61 @@ async def generate_cv_book(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
+class TestInvite(BaseModel):
+    to: str
+
+
+@router.post("/admin/integrations/test-invite")
+async def send_test_invite(req: TestInvite, admin: User = Depends(require_admin)):
+    """Send one real test email with a working Meet link and calendar invite
+    to an address the admin names (their own, to see what applicants get).
+
+    The Meet event is kept, tomorrow at noon UK time, so the link can be
+    tried; it's on the connected account's calendar and can be deleted there.
+    Google's own invite isn't sent; the email is the invite, as for interviews.
+    """
+    to = (req.to or "").strip().lower()
+    if "@" not in to or " " in to or len(to) > 254:
+        raise HTTPException(400, "Enter an email address")
+    london = dt.timezone(dt.timedelta(0))
+    try:
+        from zoneinfo import ZoneInfo
+        london = ZoneInfo("Europe/London")
+    except Exception:
+        pass
+    start = dt.datetime.combine(dt.datetime.now(london).date() + dt.timedelta(days=1), dt.time(12, 0), tzinfo=london)
+    end = start + dt.timedelta(minutes=30)
+    created = await gcal.create_meet_event(
+        summary="AlphaBook test meeting",
+        description="A test invite sent from the AlphaBook admin page. Safe to ignore or delete.",
+        start=start, end=end, attendee_emails=[to],
+    )
+    if not created:
+        raise HTTPException(502, "Google wouldn't create the Meet link. Run the connection check above for details.")
+    when = f"{start.strftime('%A')} {start.day} {start.strftime('%B')}, 12:00 UK time"
+    ics = mailer.build_ics_invite(
+        uid=created.get("ical_uid") or created["event_id"], uid_domain=None if created.get("ical_uid") else "alphabook.uk",
+        summary="AlphaBook test meeting",
+        description=f"Google Meet: {created['meet_link']}",
+        start=start, end=end, organizer_name="Alpha Fund",
+        organizer_email=created.get("organizer_email") or gcal.ACCOUNT_EMAIL,
+        attendee_name=to, attendee_email=to, location=created["meet_link"],
+        sequence=int(created.get("sequence") or 0),
+    )
+    sent_from = await mailer.deliver(
+        to, "AlphaBook test: email and Meet invite", "This is a test invite",
+        (f"<p>This is a test from the AlphaBook admin page, to check that our emails and meeting "
+         f"invites reach your inbox.</p>"
+         f"<p><strong>When:</strong> {when} (30 minutes)<br>"
+         f"<strong>Google Meet:</strong> <a href=\"{created['meet_link']}\">{created['meet_link']}</a></p>"
+         f"<p>Nothing to do: you can ignore it, or open the link to check it works.</p>"),
+        cta_label="Join Google Meet", cta_url=created["meet_link"], ics=ics,
+    )
+    if not sent_from:
+        raise HTTPException(502, "The Meet link was made but the email didn't send. Check the server logs for 'mailer:'.")
+    return {"ok": True, "sent_to": to, "sent_from": sent_from, "meet_link": created["meet_link"], "when": when}
+
+
 @router.post("/admin/integrations/check")
 async def check_integrations(admin: User = Depends(require_admin)):
     """Prove the Google connection and email actually work, end to end.

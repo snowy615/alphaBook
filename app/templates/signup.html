@@ -52,7 +52,7 @@
         getAuth, createUserWithEmailAndPassword,
         GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-      import { showVerificationNeeded } from "/static/verify_email.js?v=2";
+      import { showVerificationNeeded } from "/static/verify_email.js?v=3";
 
       async function init() {
         try {
@@ -119,7 +119,7 @@
               const { data } = await syncBackend(user, username);
 
               if (data.status === "unverified") {
-                await showVerificationNeeded({ user, email });
+                await showVerificationNeeded({ user, email, resendWait: data.resend_wait ?? 60 });
                 await syncBackend(user, username, true); // fresh token now carries email_verified
                 window.location.href = "/welcome";
                 return;

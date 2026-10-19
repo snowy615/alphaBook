@@ -1,5 +1,5 @@
 from __future__ import annotations
-import asyncio, os, datetime as dt, hashlib, html, logging, secrets
+import asyncio, os, datetime as dt, hashlib, html, logging, re, secrets
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, Request, Form, HTTPException, status
@@ -66,9 +66,15 @@ async def _send_branded_verification_email(email: str, username: str) -> None:
     except Exception:
         log.exception("auth: failed to generate a verification link for %s", email)
         return
+    # Firebase issues the link on <project>.firebaseapp.com, a domain phishing
+    # filters watch closely. Its action page is served on our own domain too
+    # (Firebase Hosting answers /__/auth/action on every hosted domain), so
+    # the link points there instead.
+    link = re.sub(r"^https://[a-z0-9-]+\.(?:firebaseapp\.com|web\.app)/__/auth/action",
+                  f"{BASE_URL}/__/auth/action", link)
     await mailer.send_email(
         to=email,
-        subject="Verify your email",
+        subject="Confirm your email address for AlphaBook",
         title="Welcome to AlphaBook",
         body_html=(
             f"<p>Hi {html.escape(username)},</p>"
@@ -312,6 +318,7 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
             # for a fresh email/password signup.
             if email and not email_verified:
                 await _send_branded_verification_email(email, username)
+                await _note_verification_sent(firebase_uid)
 
         # The account exists (and, for a fresh signup, its verification email
         # has just gone out) — but nobody gets a session until Firebase
@@ -319,9 +326,14 @@ async def auth_firebase(request: Request, id_token: str = Form(...), username: s
         # freshly-issued token (post-verification) picks up email_verified
         # true and sails through this check normally.
         if not email or not email_verified:
+            # How long until "Resend" may be pressed: a minute after the last
+            # verification email, and straight away if there's been none lately.
+            sent_doc = await db_module.db.collection("users").document(firebase_uid).get()
+            sent_at = (sent_doc.to_dict() or {}).get("verification_sent_at") if sent_doc.exists else None
             return JSONResponse({
                 "status": "unverified",
                 "message": "Check your inbox (and your spam/junk folder) to verify your email before continuing.",
+                "resend_wait": _verification_wait(sent_at),
             }, status_code=403)
 
         # Create session
@@ -364,6 +376,30 @@ async def resolve_username(username: str = Form(...)):
     return JSONResponse({"status": "ok", "email": email})
 
 
+# One verification email a minute: resending in a burst doesn't make the
+# first one arrive sooner, and a burst of identical emails is what gets a
+# sender filtered.
+VERIFICATION_RESEND_SECONDS = 60
+
+
+def _verification_wait(sent_at) -> int:
+    """Seconds left before another verification email may go out (0 = now)."""
+    if not sent_at:
+        return 0
+    if isinstance(sent_at, dt.datetime) and sent_at.tzinfo is None:
+        sent_at = sent_at.replace(tzinfo=dt.timezone.utc)
+    left = VERIFICATION_RESEND_SECONDS - (dt.datetime.now(dt.timezone.utc) - sent_at).total_seconds()
+    return int(left) + 1 if left > 0 else 0
+
+
+async def _note_verification_sent(uid: str) -> None:
+    try:
+        await db_module.db.collection("users").document(uid).update(
+            {"verification_sent_at": dt.datetime.now(dt.timezone.utc)})
+    except Exception:
+        log.warning("auth: couldn't record the verification email time for %s", uid)
+
+
 @router.post("/auth/resend-verification", include_in_schema=False)
 async def resend_verification(id_token: str = Form(...)):
     """Re-sends the branded verification email — the account itself proves
@@ -381,9 +417,15 @@ async def resend_verification(id_token: str = Form(...)):
         return JSONResponse({"status": "ok", "message": "Already verified"})
 
     doc = await db_module.db.collection("users").document(decoded_token["uid"]).get()
-    username = ((doc.to_dict() or {}).get("username") if doc.exists else "") or email.split("@")[0]
+    data = (doc.to_dict() or {}) if doc.exists else {}
+    wait = _verification_wait(data.get("verification_sent_at"))
+    if wait:
+        return JSONResponse({"status": "wait", "wait": wait,
+                             "message": f"Wait {wait}s before asking for another email"}, status_code=429)
+    username = data.get("username") or email.split("@")[0]
     await _send_branded_verification_email(email, username)
-    return JSONResponse({"status": "ok", "message": "Verification email sent"})
+    await _note_verification_sent(decoded_token["uid"])
+    return JSONResponse({"status": "ok", "message": "Verification email sent", "wait": VERIFICATION_RESEND_SECONDS})
 
 
 # ----- Direct admin login (no Firebase) -----

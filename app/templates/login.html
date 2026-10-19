@@ -66,7 +66,7 @@
       import {
         getAuth, signInWithEmailAndPassword, GoogleAuthProvider, signInWithPopup,
       } from "https://www.gstatic.com/firebasejs/9.22.0/firebase-auth.js";
-      import { showVerificationNeeded } from "/static/verify_email.js?v=2";
+      import { showVerificationNeeded } from "/static/verify_email.js?v=3";
 
       // Back to where they came from (the application page, from an email
       // button) rather than the home page. Same-site paths only.
@@ -226,7 +226,7 @@
               if (loginRes.ok && data.status === "ok") {
                 go();
               } else if (data.status === "unverified") {
-                await showVerificationNeeded({ user, email: identifier });
+                await showVerificationNeeded({ user, email: identifier, resendWait: data.resend_wait ?? 60 });
                 ({ res: loginRes } = await postToken(true)); // fresh token now carries email_verified
                 if (loginRes.ok) {
                   go();

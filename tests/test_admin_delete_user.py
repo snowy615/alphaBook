@@ -325,3 +325,50 @@ class TestIntegrationsCheck:
         monkeypatch.setattr(admin.gcal, "CONFIGURED", False)
         result = run(admin.check_integrations(admin=ADMIN))
         assert result["meet"]["ok"] is False and "Not configured" in result["meet"]["detail"]
+
+
+class TestSendTestInvite:
+    """Admin page: a real test email with a working Meet link and .ics invite,
+    sent to an address the admin names."""
+
+    def _patch(self, monkeypatch, created=True, sent_from="admin@alphabook.uk"):
+        calls = {}
+
+        async def fake_create(**kwargs):
+            calls["create"] = kwargs
+            return ({"event_id": "ev1", "meet_link": "https://meet.google.com/abc-defg-hij",
+                     "ical_uid": "ev1@google.com", "organizer_email": "admin@alphabook.uk", "sequence": 0}
+                    if created else None)
+
+        async def fake_deliver(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, **k):
+            calls["deliver"] = {"to": to, "subject": subject, "body": body_html, "cta_url": cta_url, "ics": ics}
+            return sent_from
+
+        monkeypatch.setattr(admin.gcal, "create_meet_event", fake_create)
+        monkeypatch.setattr(admin.mailer, "deliver", fake_deliver)
+        return calls
+
+    def test_it_sends_the_link_and_an_invite_and_keeps_the_event(self, monkeypatch):
+        calls = self._patch(monkeypatch)
+        out = run(admin.send_test_invite(admin.TestInvite(to=" Ball6911@ox.ac.uk "), admin=ADMIN))
+        assert out["ok"] and out["sent_to"] == "ball6911@ox.ac.uk" and out["sent_from"] == "admin@alphabook.uk"
+        assert calls["create"]["attendee_emails"] == ["ball6911@ox.ac.uk"]
+        start = calls["create"]["start"]
+        assert (start.hour, start.minute) == (12, 0) and str(start.tzinfo) == "Europe/London"
+        sent = calls["deliver"]
+        assert sent["to"] == "ball6911@ox.ac.uk" and sent["cta_url"] == "https://meet.google.com/abc-defg-hij"
+        assert "https://meet.google.com/abc-defg-hij" in sent["body"]
+        assert b"UID:ev1@google.com" in sent["ics"] and b"mailto:ball6911@ox.ac.uk" in sent["ics"]
+
+    def test_a_bad_address_is_refused(self, monkeypatch):
+        self._patch(monkeypatch)
+        with pytest.raises(admin.HTTPException) as exc:
+            run(admin.send_test_invite(admin.TestInvite(to="not an email"), admin=ADMIN))
+        assert exc.value.status_code == 400
+
+    @pytest.mark.parametrize("created,sent_from,words", [(False, "x", "Meet link"), (True, None, "didn't send")])
+    def test_failures_are_reported(self, monkeypatch, created, sent_from, words):
+        self._patch(monkeypatch, created=created, sent_from=sent_from)
+        with pytest.raises(admin.HTTPException) as exc:
+            run(admin.send_test_invite(admin.TestInvite(to="jo@ox.ac.uk"), admin=ADMIN))
+        assert exc.value.status_code == 502 and words in exc.value.detail

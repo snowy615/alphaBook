@@ -1048,6 +1048,10 @@ async def state(user: User = Depends(current_user)):
     out["programme"] = application.get("programme")
     out["oxford_email"] = application.get("oxford_email") or ""
     out["needs_email_code"] = _needs_email_code(application)
+    # Seconds until "Send a new code" may be pressed (a code was just sent).
+    code_sent = _as_utc((application.get("oxford_email_check") or {}).get("sent_at"))
+    out["email_code_resend_in"] = (max(0, int((EMAIL_CODE_RESEND_GAP - (_now() - code_sent)).total_seconds()) + 1)
+                                   if code_sent and _now() - code_sent < EMAIL_CODE_RESEND_GAP else 0)
     out["applied_at"] = application.get("created_at")
     # Carried at every status, not just "cv" — the submitted/shortlisted/
     # decided screens all need to know whether this was a Fast-Track

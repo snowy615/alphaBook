@@ -7,6 +7,9 @@ never re-sends one either.
 """
 
 import asyncio
+import datetime as dt
+import json
+from pathlib import Path
 
 from app import auth
 from app import db as db_module
@@ -118,7 +121,7 @@ class TestVerificationEmailOnSignup:
         assert result.status_code == 403
         assert len(sent) == 1
         assert sent[0]["to"] == "jo@example.com"
-        assert sent[0]["subject"] == "Verify your email"
+        assert sent[0]["subject"] == "Confirm your email address for AlphaBook"
         assert sent[0]["cta_url"] == "https://alphabook.uk/verify?for=jo@example.com"
         assert fake_db.collections["users"]["fb_uid_1"]["username"] == "jo"
 
@@ -695,3 +698,81 @@ class TestMergedAccounts:
         monkeypatch.setattr(auth.mailer, "send_email", fake_send)
         asyncio.run(auth.request_email_link(_req(forwarded_for="1.2.3.5"), email="sant7183@ox.ac.uk", next="/apply"))
         assert len(sent) == 1 and sent[0][0] is not None      # a single button, not a choice of accounts
+
+
+def test_the_verification_link_points_at_our_own_domain(monkeypatch):
+    """Firebase issues it on <project>.firebaseapp.com, which phishing filters
+    watch; the same action page is served on alphabook.uk, so it goes there."""
+    sent = []
+
+    async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
+        sent.append(cta_url)
+        return True
+
+    monkeypatch.setattr(mailer, "send_email", fake_send)
+    monkeypatch.setattr(auth.fb_auth, "generate_email_verification_link", lambda email, action_code_settings=None: (
+        "https://alphabook-5ef4e.firebaseapp.com/__/auth/action?mode=verifyEmail&oobCode=abc&apiKey=k"
+        "&continueUrl=https%3A%2F%2Falphabook.uk%2Flogin%3Fverified%3D1&lang=en"))
+    asyncio.run(auth._send_branded_verification_email("jo@ox.ac.uk", "jo"))
+    assert sent == ["https://alphabook.uk/__/auth/action?mode=verifyEmail&oobCode=abc&apiKey=k"
+                    "&continueUrl=https%3A%2F%2Falphabook.uk%2Flogin%3Fverified%3D1&lang=en"]
+
+
+
+class TestVerificationResendCooldown:
+    """One verification email a minute: the server refuses a quicker resend
+    and says how long to wait; the sign-up panel counts down from there."""
+
+    def _setup(self, monkeypatch, sent_ago=None):
+        fake_db = _FakeDB()
+        user = {"username": "jo", "email": "jo@example.com"}
+        if sent_ago is not None:
+            user["verification_sent_at"] = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=sent_ago)
+        fake_db.collections["users"] = {"fb_uid_30": user}
+        monkeypatch.setattr(db_module, "db", fake_db)
+        monkeypatch.setattr(auth.fb_auth, "verify_id_token",
+                            lambda token: _decoded(uid="fb_uid_30", email="jo@example.com", email_verified=False))
+        sent = []
+
+        async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None):
+            sent.append(to)
+            return True
+
+        monkeypatch.setattr(mailer, "send_email", fake_send)
+        monkeypatch.setattr(auth.fb_auth, "generate_email_verification_link",
+                            lambda email, action_code_settings=None: "https://alphabook.uk/v")
+        return fake_db, sent
+
+    def test_a_resend_within_a_minute_is_refused_with_the_wait(self, monkeypatch):
+        _, sent = self._setup(monkeypatch, sent_ago=20)
+        result = asyncio.run(auth.resend_verification(id_token="tok"))
+        body = json.loads(result.body)
+        assert result.status_code == 429 and sent == []
+        assert 39 <= body["wait"] <= 41 and "Wait" in body["message"]
+
+    def test_after_a_minute_it_sends_and_restarts_the_clock(self, monkeypatch):
+        fake_db, sent = self._setup(monkeypatch, sent_ago=61)
+        result = asyncio.run(auth.resend_verification(id_token="tok"))
+        assert result.status_code == 200 and sent == ["jo@example.com"]
+        assert json.loads(result.body)["wait"] == 60
+        stamp = fake_db.collections["users"]["fb_uid_30"]["verification_sent_at"]
+        assert (dt.datetime.now(dt.timezone.utc) - stamp).total_seconds() < 5
+        again = asyncio.run(auth.resend_verification(id_token="tok"))
+        assert again.status_code == 429 and sent == ["jo@example.com"]
+
+    def test_the_unverified_sign_in_says_how_long_until_resend(self, monkeypatch):
+        self._setup(monkeypatch, sent_ago=50)
+        result = asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo"))
+        body = json.loads(result.body)
+        assert result.status_code == 403 and body["status"] == "unverified" and 9 <= body["resend_wait"] <= 11
+        self._setup(monkeypatch)                                  # nothing sent lately: resend straight away
+        body = json.loads(asyncio.run(auth.auth_firebase(_FakeRequest(), id_token="tok", username="jo")).body)
+        assert body["resend_wait"] == 0
+
+    def test_the_panel_counts_down(self):
+        js = Path(auth.__file__).parent.joinpath("static", "verify_email.js").read_text()
+        assert "resendWait = 60" in js and "if (resendWait > 0) cooldown(resendWait);" in js
+        assert "res.status === 429" in js
+        for page in ("login.html", "signup.html"):
+            html = Path(auth.__file__).parent.joinpath("templates", page).read_text()
+            assert "verify_email.js?v=3" in html and "resendWait: data.resend_wait ?? 60" in html

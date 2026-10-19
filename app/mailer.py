@@ -53,7 +53,8 @@ SMTP_USER = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
 SMTP_FROM = os.getenv("SMTP_FROM") or SMTP_USER
 SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "AlphaBook")
-SMTP_REPLY_TO = os.getenv("SMTP_REPLY_TO", "")
+# Replies (and the footer's "Questions?") go to the fund's own inbox.
+SMTP_REPLY_TO = os.getenv("SMTP_REPLY_TO", "admin@oxfordalphafund.com")
 # STARTTLS is right for the common case (port 587); an implicit-TLS relay on
 # 465 sets this to false and connects over SSL from the start instead.
 SMTP_USE_STARTTLS = os.getenv("SMTP_USE_STARTTLS", "true").lower() not in ("0", "false", "no")
@@ -69,6 +70,10 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
     There's deliberately no logo header. The image is remote, so most clients
     block it by default and show an empty bordered box with alt text in its
     place, which looked broken; the sender name already says who it's from.
+
+    It is a whole HTML document, not a fragment, and ends with a footer that
+    says who sent it and why: mail filters (Oxford's included) score a bare
+    fragment with a button and no sender identity as likely phishing.
     """
     cta = ""
     if cta_label and cta_url:
@@ -79,13 +84,29 @@ def _wrap(title: str, body_html: str, cta_label: Optional[str] = None, cta_url: 
             {cta_label}
           </a>
         </p>'''
-    return f"""
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{title}</title></head>
+<body style="margin:0;padding:24px 16px;background:#ffffff;">
     <div style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;
                 max-width:520px;margin:0 auto;color:#1a1a1a;">
       <h2 style="margin:0 0 16px;font-size:20px;">{title}</h2>
       <div style="font-size:15px;line-height:1.6;">{body_html}</div>
       {cta}
-    </div>"""
+      <p style="margin:36px 0 0;padding-top:14px;border-top:1px solid #e5e5e5;font-size:12px;line-height:1.5;color:#6b6b6b;">
+        {FOOTER_HTML}
+      </p>
+    </div>
+</body>
+</html>"""
+
+
+# Who sent it and why, at the foot of every email (HTML and plain text).
+FOOTER_TEXT = ("Sent by AlphaBook (alphabook.uk), run by Oxford Alpha Fund, a student society at the "
+               "University of Oxford. Questions? Reply to admin@oxfordalphafund.com.")
+FOOTER_HTML = ('Sent by <a href="https://alphabook.uk" style="color:#6b6b6b;">AlphaBook</a>, run by Oxford Alpha '
+               'Fund, a student society at the University of Oxford. Questions? Reply to '
+               '<a href="mailto:admin@oxfordalphafund.com" style="color:#6b6b6b;">admin@oxfordalphafund.com</a>.')
 
 
 def _ics_stamp(when: dt.datetime) -> str:
@@ -319,6 +340,7 @@ async def deliver(to: str, subject: str, title: str, body_html: str,
     text = unescape(re.sub(r"\s+", " ", text).strip())
     if cta_label and cta_url:
         text += f"\n\n{cta_label}: {cta_url}"
+    text += f"\n\n--\n{FOOTER_TEXT}"
 
     if not backup_only and await _send_via_gmail(to, subject, html, text, ics, cc):
         return gcal.ACCOUNT_EMAIL

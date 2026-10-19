@@ -492,3 +492,37 @@ def test_no_personal_address_is_left_in_the_code():
              root / ".env.example"]
     hits = [str(f.relative_to(root)) for f in files if "yansnow615" in f.read_text(errors="ignore")]
     assert hits == []
+
+
+class TestLooksLikeARealSender:
+    """A whole HTML document with a footer saying who sent it and why, in
+    both parts, rather than a bare fragment with a button."""
+
+    def test_the_html_part_is_a_whole_document_with_a_footer(self):
+        html = mailer._wrap("Welcome", "<p>Hi Jo,</p>", "Go", "https://alphabook.uk/x")
+        assert html.startswith("<!DOCTYPE html>") and "<html lang=\"en\">" in html and "</body>" in html
+        assert "<title>Welcome</title>" in html
+        assert "run by Oxford Alpha Fund, a student society at the University of Oxford" in html
+        assert 'Questions? Reply to <a href="mailto:admin@oxfordalphafund.com"' in html
+        assert "receiving this because" not in html
+        assert mailer.FOOTER_TEXT.endswith("Questions? Reply to admin@oxfordalphafund.com.")
+
+    def test_replies_go_to_the_funds_inbox_by_default(self):
+        msg = mailer._build_message("admin@alphabook.uk", "jo@ox.ac.uk", "S", "<p>hi</p>", "hi")
+        assert msg["Reply-To"].endswith("<admin@oxfordalphafund.com>")
+
+    def test_the_plain_text_part_ends_with_the_footer(self, monkeypatch):
+        sent = []
+
+        def fake_send_sync(to, subject, html, text, ics=None, cc=None):
+            sent.append(text)
+            return True
+
+        monkeypatch.setattr(gcal, "CONFIGURED", False)
+        monkeypatch.setattr(gcal, "BACKUP_CONFIGURED", False)
+        monkeypatch.setattr(mailer, "CONFIGURED", True)
+        monkeypatch.setattr(mailer, "SMTP_FROM", "relay@example.test")
+        monkeypatch.setattr(mailer, "_send_sync", fake_send_sync)
+        run(mailer.deliver("jo@ox.ac.uk", "S", "T", "<p>Hi</p>", "Go", "https://alphabook.uk/x"))
+        assert sent[0].endswith("\n\n--\n" + mailer.FOOTER_TEXT)
+        assert "Go: https://alphabook.uk/x" in sent[0]

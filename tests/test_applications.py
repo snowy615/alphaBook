@@ -2619,7 +2619,7 @@ class TestEmailEscaping:
         monkeypatch.setattr(mailer, "gmail_enabled", lambda: True)
         monkeypatch.setattr(mailer, "_send_via_gmail", fake_gmail)
         asyncio.run(mailer.deliver("z@ox.ac.uk", "s", "t", "<p>Hi Zed&lt;b&gt;</p>"))
-        assert captured["text"] == "Hi Zed<b>"
+        assert captured["text"] == "Hi Zed<b>\n\n--\n" + mailer.FOOTER_TEXT
 
 
 class TestExportNoneScores:
@@ -4886,7 +4886,7 @@ class TestConfirmEmailByHand:
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "Any code we've sent you in the last 30 minutes works" in js
         assert "/Wait (\\d+)s/" in js
-        assert 'apply.js?v=11' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
+        assert 'apply.js?v=12' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
 
 
 class TestReopenForOnePerson:
@@ -4989,3 +4989,25 @@ class TestReopenForOnePerson:
         assert "Reopened: anqi.zu@stcatz.ox.ac.uk until midnight on Sunday 18 October" in html
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "Your application has been reopened until" in js
+
+
+
+class TestEmailCodeCooldownOnScreen:
+    """The "Send a new code" button starts counting down as soon as the code
+    screen shows, since a code has only just gone out."""
+
+    def test_the_state_says_how_long_until_a_resend(self, monkeypatch):
+        now = dt.datetime(2026, 10, 19, 10, 0, tzinfo=dt.timezone.utc)
+        monkeypatch.setattr(ap, "_now", lambda: now)
+        app = {"user_id": "u1", "status": ap.S_CV, "programme": mb.M_QUANT_BOOTCAMP, "oxford_email": "jo@keble.ox.ac.uk",
+               "oxford_email_verified": False, "oxford_email_check": {"sent_at": now - dt.timedelta(seconds=15)}}
+        _flow_db(monkeypatch, applications={"u1": app},
+                 users={"u1": {"username": "jo", "email": "jo@gmail.com", "membership": mb.M_PUBLIC}})
+        st = asyncio.run(ap.state(User(id="u1", username="jo")))
+        assert st["needs_email_code"] is True and st["email_code_resend_in"] == 46
+        app["oxford_email_check"]["sent_at"] = now - dt.timedelta(seconds=90)
+        assert asyncio.run(ap.state(User(id="u1", username="jo")))["email_code_resend_in"] == 0
+
+    def test_the_page_uses_it(self):
+        js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
+        assert "if (state.email_code_resend_in > 0) cooldown(state.email_code_resend_in);" in js

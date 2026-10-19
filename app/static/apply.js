@@ -350,6 +350,8 @@
       };
       tick();
     };
+    // A code has only just gone out when this screen first shows.
+    if (state.email_code_resend_in > 0) cooldown(state.email_code_resend_in);
     resendBtn.addEventListener("click", async () => {
       resendBtn.disabled = true;
       try {

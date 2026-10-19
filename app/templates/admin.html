@@ -933,6 +933,14 @@
         </p>
         <button class="btn primary" id="checkIntegrationsBtn" onclick="checkIntegrations()">Run check</button>
         <div id="integrationsResult" class="small" style="margin-top: 14px; line-height: 1.6;"></div>
+        <form onsubmit="sendTestInvite(this); return false;"
+              style="margin-top: 18px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
+          <span class="small">Send a real test email with a Meet link and calendar invite to:</span>
+          <input type="email" name="to" required placeholder="you@college.ox.ac.uk"
+                 style="padding: 6px 10px; min-width: 240px;">
+          <button type="submit" class="btn" id="testInviteBtn">Send test</button>
+        </form>
+        <div id="testInviteResult" class="small" style="margin-top: 10px; line-height: 1.6;"></div>
       </div>
       <div class="danger-zone">
         <h3>Danger Zone</h3>
@@ -965,6 +973,28 @@
           + (d.backup_email ? line('Backup email', d.backup_email) : '');
       } catch (err) {
         box.textContent = 'Check failed: ' + err.message;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    async function sendTestInvite(form) {
+      const btn = document.getElementById('testInviteBtn');
+      const box = document.getElementById('testInviteResult');
+      const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+      btn.disabled = true;
+      box.textContent = 'Sending…';
+      try {
+        const r = await fetch('/admin/integrations/test-invite', {
+          method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ to: form.to.value.trim() }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || ('HTTP ' + r.status));
+        box.innerHTML = `<strong style="color:var(--green)">✓ Sent</strong> to ${esc(d.sent_to)} from ${esc(d.sent_from)}, `
+          + `for ${esc(d.when)}. Meet link: <a href="${esc(d.meet_link)}" target="_blank" rel="noopener">${esc(d.meet_link)}</a>`;
+      } catch (err) {
+        box.innerHTML = `<strong style="color:var(--red)">✗</strong> ${esc(err.message)}`;
       } finally {
         btn.disabled = false;
       }
