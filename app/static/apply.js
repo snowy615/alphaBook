@@ -306,7 +306,7 @@
       <p class="msp-muted" style="font-size:13px;">
         Oxford's mail filter can hold our emails for a few minutes: check your junk folder and any
         quarantine digest. Any code we've sent you in the last 30 minutes works. If nothing has arrived
-        after ten minutes, email <a href="mailto:oxfordalphafund@gmail.com">oxfordalphafund@gmail.com</a>
+        after ten minutes, email <a href="mailto:admin@oxfordalphafund.com">admin@oxfordalphafund.com</a>
         from your Oxford address and we'll confirm it for you.
       </p>
       <div class="field-group">
