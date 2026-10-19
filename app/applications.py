@@ -393,7 +393,7 @@ INTERVIEW_MINUTES = 30   # default slot length for the calendar invite
 # real calendar date, which advances the same way for everyone. Update the
 # two dates below for the next admissions cycle.
 AVAILABILITY_WINDOW_START = dt.date(2026, 10, 1)
-AVAILABILITY_WINDOW_END = dt.date(2026, 10, 23)     # inclusive
+AVAILABILITY_WINDOW_END = dt.date(2026, 10, 25)     # inclusive
 AVAILABILITY_START_HOUR = 7     # London wall-clock, first slot 07:00
 AVAILABILITY_END_HOUR = 18      # London wall-clock, last slot 18:30 (ends 19:00)
 AVAILABILITY_SLOT_MINUTES = INTERVIEW_MINUTES   # 30: a slot is exactly one interview
@@ -2653,6 +2653,73 @@ async def reopen_for(req: ReopenRequest, admin: User = Depends(require_admin)):
     await db_module.db.collection(EXTENSIONS).document(email).set(
         {"email": email, "until": until, "by": admin.username, "created_at": _now()})
     return {"ok": True, "email": email, "until_label": _until_label(until)}
+
+
+# Re-sending the shortlist email to everyone still to give availability:
+# many first copies were held by Oxford's mail filter. Not anyone with an
+# interview booked or held, or the committee has marked reject later or
+# interviewed + waitlist.
+_AVAILABILITY_REMINDER = {
+    "subject": "Alpha Fund: you've been shortlisted for interview",
+    "title": "Shortlisted for interview",
+    "body": ("<p>Your <strong>{programme}</strong> application has been shortlisted for interview.</p>"
+             "<p>We're sending this again because some of our earlier emails were held by university mail "
+             "filters. Apologies if this is the first you've heard from us.</p>"
+             "<p>Please enter your availability on the portal, for any time up to and including "
+             "{last_day}, so the committee can schedule your interview.</p>"),
+    "cta_label": "Enter your availability",
+}
+
+
+def _needs_availability_reminder(application: dict) -> bool:
+    return (application.get("status") == S_SHORTLISTED and not application.get("availability")
+            and not application.get("interview") and not application.get("reject_later")
+            and not application.get("waitlist"))
+
+
+@router.post("/admin/availability-reminder")
+async def availability_reminder(dry_run: bool = False, admin: User = Depends(require_admin)):
+    """Re-send the shortlist email, with an apology, to every shortlisted
+    applicant who hasn't given availability. ``dry_run`` lists who would get
+    it, sending nothing, for the confirmation before the real send."""
+    due: List[Tuple[str, dict]] = []
+    for d in await db_module.db.collection(COLLECTION).get():
+        application = d.to_dict() or {}
+        if _needs_availability_reminder(application):
+            await _with_name(d.id, application)
+            due.append((d.id, application))
+    due.sort(key=lambda x: (x[1].get("full_name") or x[1].get("username") or "").lower())
+    people = [{"user_id": uid, "name": a.get("full_name") or a.get("username") or uid,
+               "programme": a.get("programme") or ""} for uid, a in due]
+    if dry_run:
+        return {"ok": True, "dry_run": True, "count": len(people), "people": people}
+
+    last_day = AVAILABILITY_WINDOW_END
+    last_day_label = f"{last_day.strftime('%A')} {last_day.day} {last_day.strftime('%B')}"
+    gate = asyncio.Semaphore(BULK_EMAIL_CONCURRENCY)
+
+    async def send_one(uid: str, application: dict) -> bool:
+        to = await _applicant_to(application)
+        if not to:
+            return False
+        name = html.escape(application.get("full_name") or application.get("username") or "there")
+        body = f"<p>Hi {name},</p>" + _AVAILABILITY_REMINDER["body"].format(
+            programme=html.escape(application.get("programme") or "the programme"), last_day=last_day_label)
+        async with gate:
+            ok = await mailer.send_email(
+                to=to, subject=_AVAILABILITY_REMINDER["subject"], title=_AVAILABILITY_REMINDER["title"],
+                body_html=body, cta_label=_AVAILABILITY_REMINDER["cta_label"],
+                cta_url=await _apply_button_url(uid, application),
+            )
+        if ok:
+            await db_module.db.collection(COLLECTION).document(uid).update({
+                "availability_reminded_at": _now(), "availability_reminded_by": admin.username})
+        return ok
+
+    results = await asyncio.gather(*(send_one(uid, a) for uid, a in due))
+    sent = [p["name"] for p, ok in zip(people, results) if ok]
+    failed = [p["name"] for p, ok in zip(people, results) if not ok]
+    return {"ok": True, "sent": sent, "failed": failed}
 
 
 # ── Emailing applicants in bulk ────────────────────────────────────────────

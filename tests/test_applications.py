@@ -1542,10 +1542,10 @@ class TestAvailabilityWindow:
         ])
         assert out == []
 
-    def test_drops_a_slot_before_october_1_or_after_october_23(self, monkeypatch):
+    def test_drops_a_slot_before_october_1_or_after_october_25(self, monkeypatch):
         self._freeze(monkeypatch, dt.datetime(2026, 9, 20, 12, 0, tzinfo=dt.timezone.utc))
         too_early = "2026-09-30T08:00:00+00:00"
-        too_late = "2026-10-24T08:00:00+00:00"
+        too_late = "2026-10-26T08:00:00+00:00"
         in_window = "2026-10-05T08:00:00+00:00"
         out = ap._valid_availability_slots([too_early, too_late, in_window])
         assert out == [in_window]
@@ -5011,3 +5011,67 @@ class TestEmailCodeCooldownOnScreen:
     def test_the_page_uses_it(self):
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "if (state.email_code_resend_in > 0) cooldown(state.email_code_resend_in);" in js
+
+
+class TestAvailabilityReminder:
+    """Re-sending the shortlist email, with an apology, to shortlisted
+    applicants who haven't given availability."""
+
+    ADMIN = User(id="a1", username="snow", is_admin=True)
+
+    def _db(self, monkeypatch):
+        base = {"programme": mb.M_QUANT_BOOTCAMP, "oxford_email_verified": True}
+        apps = {
+            "due":      {**base, "user_id": "due", "full_name": "Ada Due", "status": ap.S_SHORTLISTED, "oxford_email": "ada@keble.ox.ac.uk"},
+            "given":    {**base, "user_id": "given", "full_name": "Gil Given", "status": ap.S_SHORTLISTED,
+                         "oxford_email": "gil@keble.ox.ac.uk", "availability": ["2026-10-20T09:00:00+00:00"]},
+            "booked":   {**base, "user_id": "booked", "full_name": "Bo Booked", "status": ap.S_SHORTLISTED,
+                         "oxford_email": "bo@keble.ox.ac.uk", "interview": {"status": "confirmed", "when": ago(-86400), "interviewer_name": "Snow Yan", "interviewer_id": "a1"}},
+            "later":    {**base, "user_id": "later", "full_name": "Lee Later", "status": ap.S_SHORTLISTED,
+                         "oxford_email": "lee@keble.ox.ac.uk", "reject_later": {"by": "snow", "at": ago(60)}},
+            "waitlist": {**base, "user_id": "waitlist", "full_name": "Wyn Wait", "status": ap.S_SHORTLISTED,
+                         "oxford_email": "wyn@keble.ox.ac.uk", "waitlist": {"by": "snow", "at": ago(60)}},
+            "submitted": {**base, "user_id": "submitted", "full_name": "Sam Sub", "status": ap.S_SUBMITTED,
+                          "oxford_email": "sam@keble.ox.ac.uk"},
+            "analyst":  {"programme": mb.M_QUANT_ANALYST, "user_id": "analyst", "full_name": "Ann Analyst",
+                         "status": ap.S_SHORTLISTED, "oxford_email": "ann@keble.ox.ac.uk"},
+        }
+        users = {uid: {"username": uid, "email": f"{uid}@gmail.com"} for uid in apps}
+        return _flow_db(monkeypatch, applications=apps, users=users)
+
+    def test_the_dry_run_lists_only_those_still_to_give_availability(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        out = asyncio.run(ap.availability_reminder(dry_run=True, admin=self.ADMIN))
+        assert out["count"] == 2 and [p["name"] for p in out["people"]] == ["Ada Due", "Ann Analyst"]
+        assert sent == []
+
+    def test_it_sends_the_apology_and_records_it(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        out = asyncio.run(ap.availability_reminder(admin=self.ADMIN))
+        assert out == {"ok": True, "sent": ["Ada Due", "Ann Analyst"], "failed": []}
+        assert len(sent) == 2
+        mail = next(m for m in sent if "ada@keble.ox.ac.uk" in m["to"])
+        assert mail["subject"] == "Alpha Fund: you've been shortlisted for interview"
+        assert "Hi Ada Due," in mail["body_html"] and "Quant Bootcamp" in mail["body_html"]
+        assert "held by university mail filters" in mail["body_html"] and "Apologies" in mail["body_html"]
+        assert "up to and including Sunday 25 October" in mail["body_html"]
+        stored = fake_db.collections[ap.COLLECTION]["due"]
+        assert stored["availability_reminded_by"] == "snow" and stored["availability_reminded_at"]
+        assert "availability_reminded_at" not in fake_db.collections[ap.COLLECTION]["given"]
+
+    def test_the_review_page_has_the_button_and_confirms_first(self, monkeypatch):
+        self._db(monkeypatch)
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, self.ADMIN)).body.decode()
+        assert 'onclick="remindAvailability(this)"' in html
+        assert "availability-reminder${dry ? \"?dry_run=true\" : \"\"}" in html
+        assert "const preview = await call(true);" in html and "if (!confirm(" in html
+
+    def test_the_window_now_runs_to_sunday_25_october_on_both_sides(self):
+        assert ap.AVAILABILITY_WINDOW_END == dt.date(2026, 10, 25)
+        js = Path(ap.__file__).parent.joinpath("static", "availability.js").read_text()
+        assert "const WINDOW_END = { y: 2026, m: 10, d: 25 };" in js
+        for page in ("apply.html", "applications_admin.html"):
+            assert "availability.js?v=2" in Path(ap.__file__).parent.joinpath("templates", page).read_text()

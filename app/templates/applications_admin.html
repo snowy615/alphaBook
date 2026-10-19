@@ -23,7 +23,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/katex.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.11/contrib/auto-render.min.js"></script>
   <script src="/static/theme.js"></script>
-  <script src="/static/availability.js"></script>
+  <script src="/static/availability.js?v=2"></script>
   <style>
     .apa-summary { margin-bottom: 28px; }
     .apa-rank {
@@ -585,7 +585,9 @@
         <a class="btn ghost" href="/guide">Analyst guide</a>
         <a class="btn ghost" href="/apply/admin/interview-guide">Scoring guide</a>
         <a class="btn ghost" href="/apply/admin/export.xlsx">Export to Excel ↓</a>
-        {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>{% endif %}
+        {% if is_admin %}<button type="button" class="btn primary" onclick="openMailer()">Email applicants</button>
+        <button type="button" class="btn" id="apaAvailRemind" onclick="remindAvailability(this)"
+                title="Re-send the shortlist email, with an apology, to shortlisted applicants who haven't given availability">Remind for availability</button>{% endif %}
       </div>
       {% if is_admin %}
       <form class="apa-reopen" onsubmit="reopenFor(this); return false;"
@@ -1255,6 +1257,32 @@
       box.className = "msp-msg msp-msg-" + (bad ? "error" : "ok");
       box.classList.remove("hidden");
       box.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    // Re-send the shortlist email to everyone shortlisted who hasn't given
+    // availability (not anyone booked, interviewed, reject later or waitlisted).
+    // Lists exactly who first; nothing goes out until that's confirmed.
+    async function remindAvailability(btn) {
+      btn.disabled = true;
+      try {
+        const call = async (dry) => {
+          const r = await fetch(`/apply/admin/availability-reminder${dry ? "?dry_run=true" : ""}`,
+                                { method: "POST", credentials: "include" });
+          const d = await r.json().catch(() => ({}));
+          if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+          return d;
+        };
+        const preview = await call(true);
+        if (!preview.count) { flash("Everyone shortlisted has given availability or been booked: nobody to remind.", false); return; }
+        const list = preview.people.map((p) => `• ${p.name} (${p.programme})`).join("\n");
+        if (!confirm(`Re-send the shortlist email, with an apology, to these ${preview.count} people?\n\n${list}`)) return;
+        const d = await call(false);
+        flash(`Sent to ${d.sent.length}` + (d.failed.length ? `; couldn't send to: ${d.failed.join(", ")}` : "."), !!d.failed.length);
+      } catch (err) {
+        flash("Could not send the reminders: " + err.message, true);
+      } finally {
+        btn.disabled = false;
+      }
     }
 
     // Let one person back in after the closing date. Nothing is emailed.

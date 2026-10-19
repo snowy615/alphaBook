@@ -12,7 +12,7 @@ window.AlphaAvailability = (function () {
 
   const TZ = "Europe/London";
   const WINDOW_START = { y: 2026, m: 10, d: 1 };    // October 1, 2026
-  const WINDOW_END = { y: 2026, m: 10, d: 23 };      // October 23, 2026 (inclusive)
+  const WINDOW_END = { y: 2026, m: 10, d: 25 };      // October 25, 2026 (inclusive)
   const START_HOUR = 7;    // London wall-clock, first slot 07:00
   const END_HOUR = 18;     // London wall-clock, last slot 18:30 (ends 7pm)
   const SLOT_MINUTES = 30; // one slot is one interview; keep in step with AVAILABILITY_SLOT_MINUTES
