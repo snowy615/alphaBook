@@ -620,6 +620,7 @@
                 data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
                 data-uid="{{ r.user_id }}" data-ver="{{ r.v }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
+                data-submitted="{{ r.submitted_at.timestamp() | int if r.submitted_at else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
@@ -721,6 +722,7 @@
          data-mine="{{ '1' if r.is_my_pending_interview else '0' }}"
          data-uid="{{ r.user_id }}" data-ver="{{ r.v }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
+                data-submitted="{{ r.submitted_at.timestamp() | int if r.submitted_at else '' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
@@ -2148,13 +2150,18 @@
 
       // The shortlist is ranked by the average of the CV and interview
       // rounds; everything else by the CV round alone. Both scores are on
-      // a 10-point scale already. Unscored sorts last, then by name.
+      // a 10-point scale already. Unscored sorts last. Level scores, and
+      // everyone unscored, go in the order they submitted (earliest first),
+      // then by name.
       function rankKey() { return stage === "shortlist" || stage === "interview" ? "combined" : "cv"; }
+      const submittedAt = (el) => el.dataset.submitted === "" ? Infinity : Number(el.dataset.submitted);
       function order(els, key) {
         return els.slice().sort((a, b) => {
           const x = a.dataset[key], y = b.dataset[key];
           if ((x === "") !== (y === "")) return x === "" ? 1 : -1;
           if (x !== "" && Number(x) !== Number(y)) return Number(y) - Number(x);
+          const sa = submittedAt(a), sb = submittedAt(b);
+          if (sa !== sb) return sa < sb ? -1 : 1;
           return a.dataset.name.localeCompare(b.dataset.name);
         });
       }

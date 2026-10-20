@@ -2046,9 +2046,13 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
         parts = [v for v in (cv, interview) if v is not None]
         r["cv_rank_score"] = cv
         r["combined_score"] = round(sum(parts) / len(parts), 2) if parts else None
+    # Highest CV score first; level scores (and everyone unscored) in the
+    # order they submitted, earliest first; never-submitted last.
+    far_future = dt.datetime.max.replace(tzinfo=dt.timezone.utc)
     rows.sort(key=lambda r: (
         r["cv_rank_score"] is None,
         -(r["cv_rank_score"] or 0),
+        r["submitted_at"] or far_future,
         (r["username"] or "").lower(),
     ))
     for i, r in enumerate(rows, start=1):

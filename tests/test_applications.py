@@ -597,6 +597,31 @@ class TestRankedRows:
         assert rows[0]["combined_score"] == 10.0   # full marks on the onsite CV; nothing else scored yet
 
 
+    def test_highest_score_first_then_earliest_submission(self, monkeypatch):
+        """CV screen order: by CV score, then by when they submitted (earliest
+        first), not by name; never-submitted last."""
+        at = lambda day: dt.datetime(2026, 10, day, 12, 0, tzinfo=dt.timezone.utc)
+        scored = lambda n: {"r1": {"cv_rubric": rubric(n), "cv_score": n}}
+        fake_db = _FakeDB()
+        fake_db.collections[ap.COLLECTION] = {
+            "late_low":    {"user_id": "late_low", "username": "aa", "status": ap.S_SUBMITTED, "submitted_at": at(12), "reviews": scored(9)},
+            "early_low":   {"user_id": "early_low", "username": "zz", "status": ap.S_SUBMITTED, "submitted_at": at(5), "reviews": scored(9)},
+            "high":        {"user_id": "high", "username": "mm", "status": ap.S_SUBMITTED, "submitted_at": at(14), "reviews": scored(15)},
+            "unscored_new": {"user_id": "unscored_new", "username": "ab", "status": ap.S_SUBMITTED, "submitted_at": at(13)},
+            "unscored_old": {"user_id": "unscored_old", "username": "zy", "status": ap.S_SUBMITTED, "submitted_at": at(2)},
+            "not_submitted": {"user_id": "not_submitted", "username": "aaa", "status": ap.S_CV},
+        }
+        monkeypatch.setattr(ap.db_module, "db", fake_db)
+        rows = asyncio.run(ap._ranked_rows(viewer_id="r1"))
+        assert [r["user_id"] for r in rows] == ["high", "early_low", "late_low", "unscored_old", "unscored_new", "not_submitted"]
+
+    def test_the_page_orders_the_same_way(self):
+        html = Path(ap.__file__).parent.joinpath("templates", "applications_admin.html").read_text()
+        assert html.count('data-submitted="{{ r.submitted_at.timestamp() | int if r.submitted_at else \'\' }}"') == 2
+        assert "const sa = submittedAt(a), sb = submittedAt(b);" in html
+        assert html.index("Number(y) - Number(x)") < html.index("const sa = submittedAt(a)") < html.index("a.dataset.name.localeCompare(b.dataset.name)")
+
+
 class TestDecideFlow:
     def _patch(self, monkeypatch, application):
         store = {"u1": application}
