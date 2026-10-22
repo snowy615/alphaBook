@@ -59,6 +59,7 @@ import logging
 import os
 import re
 import secrets
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
@@ -1988,11 +1989,45 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
     }
 
 
+# ── Read-mostly collections, cached briefly ──────────────────────────────────
+# The review page needs every user's name (three times over: the cards, the
+# outreach roster and the interviewer list) and every event sign-up, on every
+# load and after every action. Read in full each time, that was ~1,300 of the
+# ~1,700 document reads a page load cost, and the bulk of the Firestore bill.
+# Names, roles and sign-ups change rarely, so one read a minute is plenty.
+# Keyed by the database object too, so a different database (a test's fake
+# one) never sees another's cached copy. One instance only (max-instances 1),
+# so the cache is never split across servers.
+_CACHE_SECONDS = 60.0
+_collection_cache: Dict[Tuple[int, str], Tuple[float, List[Tuple[str, dict]]]] = {}
+
+
+async def _cached_collection(name: str) -> List[Tuple[str, dict]]:
+    """Every document in ``name`` as (id, data), at most a minute old."""
+    key = (id(db_module.db), name)
+    hit = _collection_cache.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < _CACHE_SECONDS:
+        return hit[1]
+    docs = [(d.id, d.to_dict() or {}) for d in await db_module.db.collection(name).get()]
+    _collection_cache[key] = (now, docs)
+    return docs
+
+
+class _CachedDoc:
+    """Just enough of a Firestore snapshot for the loops below."""
+    def __init__(self, doc_id: str, data: dict):
+        self.id, self._data = doc_id, data
+
+    def to_dict(self) -> dict:
+        return self._data
+
+
 async def _list_reviewers() -> List[Dict[str, str]]:
     """Everyone who could plausibly be assigned to interview a candidate:
     admins and Analyst members (Fundamental or Quant), provided they have an
     email on file — without one there's nothing to put in the invite."""
-    docs = await db_module.db.collection("users").get()
+    docs = [_CachedDoc(i, d) for i, d in await _cached_collection("users")]
     out: List[Dict[str, str]] = []
     for d in docs:
         data = d.to_dict() or {}
@@ -2009,7 +2044,7 @@ async def _list_reviewers() -> List[Dict[str, str]]:
     return out
 
 
-async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
+async def _ranked_rows(viewer_id: str, only: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Every applicant, ranked by CV round score (the CV screen's ranking) —
     shared by the admin page and the Excel export so the two never disagree.
 
@@ -2024,8 +2059,13 @@ async def _ranked_rows(viewer_id: str) -> List[Dict[str, Any]]:
     Someone nobody has finished scoring sorts to the bottom rather than
     reading as a zero, since they haven't had their turn.
     """
-    docs = await db_module.db.collection(COLLECTION).get()
-    applications = [(d.id, d.to_dict() or {}) for d in docs]
+    if only is not None:
+        # Just these applicants (the page refreshing the cards it acted on):
+        # a read each, rather than every application.
+        applications = [(uid, a) for uid in only if (a := await _load(uid)) is not None]
+    else:
+        docs = await db_module.db.collection(COLLECTION).get()
+        applications = [(d.id, d.to_dict() or {}) for d in docs]
     # An assessment only closes itself when the candidate's own page checks
     # in after the clock runs out, so someone who walked away mid-sitting
     # would read "sitting now" here forever. Close those out on the way past
@@ -2079,8 +2119,8 @@ async def _people() -> Tuple[Dict[str, str], Dict[str, str], set]:
     by_id: Dict[str, str] = {}
     by_username: Dict[str, str] = {}
     with_cv: set = set()
-    for d in await db_module.db.collection("users").get():
-        data = d.to_dict() or {}
+    for doc_id, data in await _cached_collection("users"):
+        d = _CachedDoc(doc_id, data)
         name = (data.get("full_name") or "").strip() or data.get("username") or ""
         by_id[d.id] = name
         if data.get("username"):
@@ -2128,7 +2168,11 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
     by_uid = {r["user_id"]: r for r in rows}
     names, _, _ = await _people()
     entries: Dict[str, Dict[str, Any]] = {}
-    for s in await outreach.confirmed_signups():
+    # Cached like the names: this is only the page's roster. The Fast-Track
+    # capacity check reads the sign-ups fresh (outreach.confirmed_signups).
+    confirmed = [s for _, s in await _cached_collection(outreach.SIGNUPS)
+                 if s.get("event_id") == outreach.OUTREACH_EVENT_ID and s.get("status") == "confirmed"]
+    for s in confirmed:
         uid = s.get("user_id")
         entries[uid] = {"ticket": s.get("ticket"), "at": s.get("created_at"), "signup": s}
     for r in rows:
@@ -2152,15 +2196,37 @@ async def _outreach_roster(rows: List[Dict[str, Any]]) -> tuple:
     return fast, general
 
 
-@router.get("/admin", include_in_schema=False)
-async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer)):
+def _card_version(row: Dict[str, Any]) -> str:
+    """A fingerprint of everything on a card, so the page can tell which
+    cards someone else has changed since it loaded and bring just those in.
+    Not the rank: that moves whenever anyone else is scored, and the page
+    works it out itself."""
+    return hashlib.sha1(json.dumps({k: v for k, v in row.items() if k != "rank"},
+                                   sort_keys=True, default=str).encode()).hexdigest()[:12]
+
+
+_ONLY_MAX = 25
+
+
+@router.get("/admin/versions")
+async def admin_card_versions(reviewer: User = Depends(require_reviewer)):
+    """Every card's fingerprint: what the page compares, when it's been left
+    open a while, to fetch only the cards that changed (not the whole page)."""
     rows = await _ranked_rows(str(reviewer.id))
+    return {"versions": {r["user_id"]: _card_version(r) for r in rows}}
+
+
+@router.get("/admin", include_in_schema=False)
+async def admin_applications(request: Request, reviewer: User = Depends(require_reviewer),
+                             only: Optional[str] = None):
+    """The review page. ``only=uid,uid`` renders just those applicants' cards,
+    for the page to swap in after an action, instead of everything again."""
+    wanted = [u for u in (only or "").split(",") if u][:_ONLY_MAX] if only is not None else None
+    rows = await _ranked_rows(str(reviewer.id), only=wanted)
     for r in rows:
-        # A fingerprint of everything on the card, so the page can tell which
-        # cards someone else has changed since it loaded and bring just those in.
-        r["v"] = hashlib.sha1(json.dumps(r, sort_keys=True, default=str).encode()).hexdigest()[:12]
+        r["v"] = _card_version(r)
     scored = [r for r in rows if r["review"]["count"] > 0]
-    fast_track_rows, general_rows = await _outreach_roster(rows)
+    fast_track_rows, general_rows = await _outreach_roster(rows) if wanted is None else ([], [])
     # Who's been let back in after the close, by address, for the cards.
     reopened: Dict[str, Dict[str, str]] = {}
     for d in await db_module.db.collection(EXTENSIONS).get():
@@ -2342,7 +2408,9 @@ async def applicant_cv(user_id: str, reviewer: User = Depends(require_reviewer))
     return StreamingResponse(
         io.BytesIO(pdf),
         media_type="application/pdf",
-        headers={"Content-Disposition": 'inline; filename="cv.pdf"'},
+        # Kept by this reviewer's browser for ten minutes, so stepping back
+        # and forth in the scoring view doesn't download the same CV again.
+        headers={"Content-Disposition": 'inline; filename="cv.pdf"', "Cache-Control": "private, max-age=600"},
     )
 
 

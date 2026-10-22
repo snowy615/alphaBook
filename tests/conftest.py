@@ -64,3 +64,13 @@ def _applications_open_and_no_dns(monkeypatch):
     async def takes_mail(domain):
         return True
     monkeypatch.setattr(ap, "_domain_takes_mail", takes_mail)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_collection_cache():
+    """The review page caches users and sign-ups for a minute; each test
+    starts with none, so one test's data never shows up in another."""
+    from app import applications as ap
+    ap._collection_cache.clear()
+    yield
+    ap._collection_cache.clear()

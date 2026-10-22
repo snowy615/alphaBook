@@ -2328,7 +2328,7 @@ class TestStalePageFixes:
 
     def test_cards_carry_a_fingerprint_and_returning_to_the_tab_catches_up(self):
         assert self.ADMIN.count('data-ver="{{ r.v }}"') == 2
-        assert "visibilitychange" in self.ADMIN and "next.dataset.ver !== card.dataset.ver" in self.ADMIN
+        assert "visibilitychange" in self.ADMIN and "versions[card.dataset.uid] !== card.dataset.ver" in self.ADMIN
 
 
 class TestApplyJsClientFixes:
@@ -5100,3 +5100,87 @@ class TestAvailabilityReminder:
         assert "const WINDOW_END = { y: 2026, m: 10, d: 25 };" in js
         for page in ("apply.html", "applications_admin.html"):
             assert "availability.js?v=2" in Path(ap.__file__).parent.joinpath("templates", page).read_text()
+
+
+
+class TestReviewPageCost:
+    """The review page used to read every user three times, every sign-up and
+    every application on each load, and reload all of it (3.5 MB) after
+    every action. Users and sign-ups are cached for a minute, and an action
+    re-fetches only its own card."""
+
+    def _db(self, monkeypatch):
+        apps = {f"u{i}": {"user_id": f"u{i}", "username": f"cand{i}", "full_name": f"Cand {i}",
+                          "status": ap.S_SUBMITTED, "programme": mb.M_QUANT_BOOTCAMP,
+                          "oxford_email": f"c{i}@ox.ac.uk", "submitted_at": ago(3600 * i)} for i in range(1, 6)}
+        users = {f"u{i}": {"username": f"cand{i}"} for i in range(1, 6)}
+        users["r1"] = {"username": "snow", "full_name": "Snow Yan", "is_admin": True, "email": "s@x.com"}
+        fake_db, _, _ = _flow_db(monkeypatch, applications=apps, users=users)
+        reads = {"users": 0, "event_signups": 0, ap.COLLECTION: 0}
+        real = fake_db.collection
+
+        def counting(name):
+            # Every read of these goes through collection(name).get(), and the
+            # single-document ones (.document(id).get()) aren't scans; count
+            # the whole-collection reads only.
+            coll = real(name)
+            if name in reads:
+                orig_get = coll.get
+                state = {"done": False}
+
+                async def get(*a, **k):
+                    if not state["done"]:
+                        state["done"] = True
+                        reads[name] += 1
+                    return await orig_get(*a, **k)
+                coll.get = get
+            return coll
+        monkeypatch.setattr(fake_db, "collection", counting)
+        return fake_db, reads
+
+    def _page(self, only=None):
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        return asyncio.run(ap.admin_applications(request, User(id="r1", username="snow", is_admin=True), only=only)).body.decode()
+
+    def test_users_and_signups_are_read_once_a_minute_not_three_times_a_load(self, monkeypatch):
+        fake_db, reads = self._db(monkeypatch)
+        self._page()
+        assert reads["users"] == 1 and reads["event_signups"] == 1
+        self._page()
+        assert reads["users"] == 1 and reads["event_signups"] == 1      # cached
+        assert reads[ap.COLLECTION] == 2                                 # applications always fresh
+        # A minute later: read once more for that load, then cached again.
+        for key, (at, docs) in list(ap._collection_cache.items()):
+            ap._collection_cache[key] = (at - ap._CACHE_SECONDS - 1, docs)
+        self._page()
+        assert reads["users"] == 2 and reads["event_signups"] == 2
+
+    def test_only_renders_just_those_cards_from_just_those_applications(self, monkeypatch):
+        fake_db, reads = self._db(monkeypatch)
+        html = self._page(only="u2,u4")
+        assert 'id="a-u2"' in html and 'id="a-u4"' in html
+        assert 'id="a-u1"' not in html and 'id="a-u3"' not in html
+        assert reads[ap.COLLECTION] == 0                                 # loaded one by one, not the collection
+
+    def test_a_card_has_the_same_fingerprint_alone_or_with_everyone(self, monkeypatch):
+        self._db(monkeypatch)
+        full = re.search(r'id="a-u3"[^>]*', self._page()).group(0)
+        alone = re.search(r'id="a-u3"[^>]*', self._page(only="u3")).group(0)
+        ver = lambda tag: re.search(r'data-ver="([0-9a-f]+)"', tag).group(1)
+        assert ver(full) == ver(alone)
+        out = asyncio.run(ap.admin_card_versions(User(id="r1", username="snow", is_admin=True)))
+        assert out["versions"]["u3"] == ver(full) and set(out["versions"]) == {f"u{i}" for i in range(1, 6)}
+
+    def test_the_page_fetches_only_the_cards_it_needs(self):
+        html = Path(ap.__file__).parent.joinpath("templates", "applications_admin.html").read_text()
+        fn = html[html.index("async function refreshCards"):html.index("// Coming back to a tab left open")]
+        assert "?only=${batch.map(encodeURIComponent).join(\",\")}" in fn
+        assert 'fetch("/apply/admin/versions"' in fn
+        assert "location.pathname + location.search" not in fn          # no more whole-page refetch
+        assert 'data-scored="{{' in html and "of ${rows.length} scored" in fn
+
+    def test_an_opened_cv_is_kept_by_the_browser_for_a_while(self):
+        src = Path(ap.__file__).read_text()
+        assert '"Cache-Control": "private, max-age=600"' in src

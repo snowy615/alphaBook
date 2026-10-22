@@ -621,6 +621,7 @@
                 data-uid="{{ r.user_id }}" data-ver="{{ r.v }}"
                 data-cv="{{ r.cv_rank_score if r.cv_rank_score is not none else '' }}"
                 data-submitted="{{ r.submitted_at.timestamp() | int if r.submitted_at else '' }}"
+                data-scored="{{ '1' if r.review.count > 0 else '0' }}"
                 data-combined="{{ r.combined_score if r.combined_score is not none else '' }}"
                 data-unreviewed="{{ '1' if r.status in ('submitted', 'shortlisted', 'accepted', 'rejected') and not r.review.cv_n and not r.auto_shortlist else '0' }}"
                 data-name="{{ (r.full_name or r.username) | lower }}"
@@ -1174,12 +1175,25 @@
       (card.contains(document.activeElement) && document.activeElement.matches("input, textarea, select"))
       || [...card.querySelectorAll("textarea, input:not([type=hidden])")].some((f) =>
         f.type === "checkbox" || f.type === "radio" ? f.checked !== f.defaultChecked : f.value !== f.defaultValue));
+    // Brings in fresh copies of the given cards (the ones just acted on) by
+    // asking for those cards alone, not the whole page. With no cards given
+    // (coming back to a tab left open), it first asks for every card's
+    // fingerprint, a small list, and fetches only the ones that changed.
     async function refreshCards(uids, { quiet = false } = {}) {
       lastRefresh = Date.now();
       try {
-        const r = await fetch(location.pathname + location.search, { credentials: "include", cache: "no-store" });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        const fresh = new DOMParser().parseFromString(await r.text(), "text/html");
+        const asked = new Set(uids);
+        const changed = new Set(uids);
+        if (!uids.length) {
+          const vr = await fetch("/apply/admin/versions", { credentials: "include", cache: "no-store" });
+          if (!vr.ok) throw new Error(`HTTP ${vr.status}`);
+          const { versions } = await vr.json();
+          for (const card of document.querySelectorAll(".apa-card[data-uid]")) {
+            if (versions[card.dataset.uid] !== card.dataset.ver) changed.add(card.dataset.uid);
+          }
+        }
+        // Someone mid-way through typing on a card keeps it, unless they acted on it.
+        const want = [...changed].filter((uid) => asked.has(uid) || !busy(document.getElementById("a-" + uid)));
         const swap = (now, next) => {
           if (!now) return;
           if (!next) { now.remove(); return; }            // e.g. a deleted application
@@ -1187,22 +1201,24 @@
           for (const a of next.attributes) now.setAttribute(a.name, a.value);
           now.innerHTML = next.innerHTML;
         };
-        const asked = new Set(uids);
-        const changed = new Set(uids);
-        for (const card of document.querySelectorAll(".apa-card[data-uid]")) {
-          const next = fresh.getElementById("a-" + card.dataset.uid);
-          if (!next || next.dataset.ver !== card.dataset.ver) changed.add(card.dataset.uid);
+        for (let i = 0; i < want.length; i += 25) {
+          const batch = want.slice(i, i + 25);
+          const r = await fetch(`${location.pathname}?only=${batch.map(encodeURIComponent).join(",")}`,
+                                { credentials: "include", cache: "no-store" });
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const fresh = new DOMParser().parseFromString(await r.text(), "text/html");
+          for (const uid of batch) {
+            const card = document.getElementById("a-" + uid);
+            const q = (doc, sel) => doc.querySelector(sel);
+            swap(q(document, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`), q(fresh, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`));
+            swap(card, fresh.getElementById("a-" + uid));
+            if (card && card.isConnected) { renderMath(card); renderAvailabilityIn(card); }
+            delete sc.seen[uid];                              // the scoring view re-reads it next time
+          }
         }
-        for (const uid of changed) {
-          const card = document.getElementById("a-" + uid);
-          if (!asked.has(uid) && busy(card)) continue;
-          const q = (doc, sel) => doc.querySelector(sel);
-          swap(q(document, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`), q(fresh, `tr.apa-item[data-uid="${CSS.escape(uid)}"]`));
-          swap(card, fresh.getElementById("a-" + uid));
-          if (card && card.isConnected) { renderMath(card); renderAvailabilityIn(card); }
-          delete sc.seen[uid];                              // the scoring view re-reads it next time
-        }
-        for (const id of ["apaScoredCount", "apaOutreach"]) swap(document.getElementById(id), fresh.getElementById(id));
+        const rows = [...document.querySelectorAll("tr.apa-item[data-uid]")];
+        const scoredEl = document.getElementById("apaScoredCount");
+        if (scoredEl) scoredEl.textContent = `${rows.filter((tr) => tr.dataset.scored === "1").length} of ${rows.length} scored`;
         if (window.apaApply) window.apaApply();             // tabs, ordering, ranks and counts
       } catch (err) {
         if (!quiet) location.reload();
