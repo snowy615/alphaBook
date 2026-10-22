@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Approx game - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/approx.css?v=2">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/approx" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Approx</div>
+        </div>
+      </a>
+    </div>
+  </div>
+
+  <div class="container ax">
+    <div id="axBar" class="ax-bar hidden"></div>
+    <div id="axMsg" class="ax-msg"></div>
+    <div id="axMain">Loading…</div>
+  </div>
+
+  <div class="footer"><p>{{ app_name }} • Approx</p></div>
+  <script>window.APPROX_GAME_ID = {{ game_id | tojson }};</script>
+  <script src="/static/approx.js?v=2"></script>
+  <script>Approx.game(window.APPROX_GAME_ID);</script>
+</body>
+
+</html>

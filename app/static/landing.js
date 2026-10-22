@@ -33,6 +33,8 @@
     // two cards, one behind the other
     cards: svg('<rect x="3" y="7" width="11" height="14" rx="1"/><path d="M8.5 4h9.5a2 2 0 0 1 2 2v11"/><path d="M8.5 14h1"/>'),
     // calculator
+    // an approximately-equals sign
+    approx: svg('<path d="M4 9.5c2.5-2.5 5.5 2.5 8 0s5.5-2.5 8 0M4 15.5c2.5-2.5 5.5 2.5 8 0s5.5-2.5 8 0"/>'),
     calc: svg('<rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 7.5h8M8 12h.01M12 12h.01M16 12h.01M8 16h.01M12 16h.01M16 16h.01"/>'),
     // a line breaking down through a floor, with the rebound after it
     risk: svg('<path d="M3 6l4 5 3-2 4 9 3-4 4 2"/><path d="M3 20h18"/><path d="M14 18l3-4"/>'),
@@ -127,6 +129,14 @@
         chips: ["Solo or group", "Timed", "Adjustable"],
         href: "/mental-math",
         mode: "mental_math",
+      },
+      {
+        icon: ICON.approx,
+        name: "Approx",
+        blurb: "An estimation race. Put an interval around answers nobody knows exactly: tight is good, but every miss doubles your score.",
+        chips: ["Teams", "Host with a code", "Lowest score wins"],
+        href: "/approx",
+        mode: "approx",
       },
       {
         icon: ICON.crash,

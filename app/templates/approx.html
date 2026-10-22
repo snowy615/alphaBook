@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Approx - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/approx.css?v=2">
+  <script src="/static/theme.js"></script>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">← Back to Games</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <div id="loginBox" class="hidden"><a href="/login?next=/approx" class="btn">Login</a><a href="/signup" class="btn">Sign up</a></div>
+      <div id="userBox" class="hidden"><a href="/profile" class="btn ghost">Profile</a> <span id="userName"></span></div>
+    </div>
+  </div>
+
+  <div class="container ax">
+    <h2 class="ax-title">Approx</h2>
+    <p class="ax-lede">An estimation race. Put an interval around answers nobody knows exactly: the tighter the
+      interval the better, but miss and your score doubles.</p>
+
+    <div class="ax-grid">
+      <section class="card ax-panel">
+        <h3>Join a game</h3>
+        <p class="ax-muted">Get the code from whoever's hosting.</p>
+        <form id="joinForm" class="ax-join">
+          <input id="joinCode" class="ax-input ax-code" placeholder="CODE" maxlength="6" autocomplete="off" required>
+          <input id="teamName" class="ax-input" placeholder="Team name (optional)" maxlength="40">
+          <button class="btn primary" id="joinBtn">Join</button>
+        </form>
+        <p id="joinMsg" class="ax-msg"></p>
+
+        <h3 style="margin-top:28px;">How it works</h3>
+        <ul class="ax-rules">
+          <li>Every question's answer is a positive number. For each, submit an interval: a <strong>low</strong>
+            and a <strong>high</strong>. It's <strong>good</strong> if the true answer is inside it.</li>
+          <li>Your score is <span class="ax-formula">(10 + Σ ⌊high ÷ low⌋ over good intervals) × 2<sup>missed</sup></span>.
+            Every question you miss or leave blank doubles it.</li>
+          <li><strong>Lowest score wins.</strong></li>
+          <li>You get a few more submissions than questions (13 questions, 18 submissions). Re-submit to fix one;
+            only your last interval for a question counts.</li>
+          <li>Scientific notation is fine: <code>3e6</code>, <code>3x10^6</code>, <code>10^7</code>.</li>
+          <li>The game ends when the clock runs out or every team has finished.</li>
+        </ul>
+      </section>
+
+      <section class="card ax-panel">
+        <h3>Host a game</h3>
+        <p class="ax-muted">Pick questions from the bank or write your own, with the answer. You run the game and see
+          the leaderboard; you don't play.</p>
+
+        <div id="hostRows" class="ax-rows"></div>
+        <div class="ax-row-actions">
+          <button type="button" class="btn" id="addOwn">+ Write a question</button>
+          <button type="button" class="btn" id="openBank">+ From the question bank</button>
+          <button type="button" class="btn ghost" id="random13">Random 13 from the bank</button>
+        </div>
+
+        <div id="bank" class="ax-bank hidden">
+          <input id="bankSearch" class="ax-input" placeholder="Search the bank…">
+          <div id="bankList" class="ax-bank-list"></div>
+        </div>
+
+        <div class="ax-settings">
+          <label>Time limit <input type="number" id="minutes" class="ax-input ax-num" value="30" min="1" max="120"> minutes</label>
+          <label>Submissions per team <input type="number" id="attempts" class="ax-input ax-num" min="1"></label>
+          <span class="ax-muted" id="attemptsHint"></span>
+        </div>
+
+        <button class="btn primary ax-start" id="startHosting">Start hosting</button>
+        <p id="hostMsg" class="ax-msg"></p>
+      </section>
+    </div>
+  </div>
+
+  <div class="footer"><p>{{ app_name }} • Approx</p></div>
+  <script src="/static/approx.js?v=2"></script>
+  <script>Approx.landing();</script>
+</body>
+
+</html>
