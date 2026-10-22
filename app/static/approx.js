@@ -78,19 +78,23 @@
 
     function draw() {
       const box = $("#hostRows");
-      if (!rows.length) {
-        box.innerHTML = '<p class="ax-muted ax-empty">No questions yet. Add some from the bank or write your own.</p>';
+      const n = rows.length;
+      $("#qCount").textContent = `${n} question${n === 1 ? "" : "s"}`;
+      $("#qCount").classList.toggle("is-set", n > 0);
+      box.classList.toggle("ax-rows", n > 0);
+      if (!n) {
+        box.innerHTML = '<div class="ax-empty">No questions yet. Browse the bank, write your own, or take a random 13.</div>';
       } else {
         box.innerHTML = rows.map((r, i) => `
           <div class="ax-row" data-i="${i}">
             <span class="ax-num-badge">${i + 1}</span>
             ${r.bank_id
-              ? `<div class="ax-row-text">${esc(r.text)}<div class="ax-muted ax-from-bank">From the bank: answer filled in for you</div></div>`
+              ? `<div class="ax-row-text">${esc(r.text)}<div class="ax-muted ax-row-meta">${esc(r.category || "Question bank")} · answer filled in for you</div></div>`
               : `<div class="ax-row-fields">
-                   <input class="ax-input ax-q" placeholder="Question, e.g. Number of piano keys in Oxford" value="${esc(r.text)}" maxlength="300">
-                   <input class="ax-input ax-a" placeholder="Answer, e.g. 1500 or 1.5e3" value="${esc(r.answer)}">
+                   <input class="ax-input ax-q" placeholder="Your question" value="${esc(r.text)}" maxlength="300" aria-label="Question ${i + 1}">
+                   <input class="ax-input ax-a" placeholder="Answer, e.g. 1.5e3" value="${esc(r.answer)}" aria-label="Answer to question ${i + 1}">
                  </div>`}
-            <button type="button" class="btn ghost ax-remove" title="Remove">✕</button>
+            <button type="button" class="btn ghost ax-remove" title="Remove" aria-label="Remove question ${i + 1}">✕</button>
           </div>`).join("");
       }
       box.querySelectorAll(".ax-row").forEach((el) => {
@@ -100,28 +104,44 @@
         if (q) q.addEventListener("input", () => { rows[i].text = q.value; });
         if (a) a.addEventListener("input", () => { rows[i].answer = a.value; });
       });
-      if (!attemptsTouched) attemptsEl.value = rows.length ? rows.length + 5 : "";
-      $("#attemptsHint").textContent = rows.length ? `${rows.length} question${rows.length === 1 ? "" : "s"}` : "";
+      if (!attemptsTouched) attemptsEl.value = n ? n + 5 : "";
+      $("#attemptsHint").textContent = n ? "questions + 5" : "";
     }
 
+    let category = "";
     function drawBank() {
+      const cats = $("#bankCats");
+      if (cats && !cats.dataset.drawn && categories.length) {
+        cats.dataset.drawn = "1";
+        cats.innerHTML = ["", ...categories].map((c) =>
+          `<button type="button" class="ax-cat${c === category ? " is-on" : ""}" data-cat="${esc(c)}">${esc(c || "All")}</button>`).join("");
+        cats.querySelectorAll(".ax-cat").forEach((b) => b.addEventListener("click", () => {
+          category = b.dataset.cat;
+          cats.querySelectorAll(".ax-cat").forEach((x) => x.classList.toggle("is-on", x === b));
+          drawBank();
+        }));
+      }
       const q = ($("#bankSearch").value || "").toLowerCase();
       const taken = new Set(rows.map((r) => r.bank_id).filter(Boolean));
-      $("#bankList").innerHTML = bank.filter((b) => !q || b.text.toLowerCase().includes(q)).map((b) => `
+      $("#bankList").innerHTML = bank
+        .filter((b) => (!category || b.category === category) && (!q || b.text.toLowerCase().includes(q)))
+        .map((b) => `
         <div class="ax-bank-item">
-          <span>${esc(b.text)}</span>
+          <span>${esc(b.text)}<span class="ax-bank-cat">${esc(b.category)}</span></span>
           <button type="button" class="btn ${taken.has(b.id) ? "ghost" : ""}" data-id="${esc(b.id)}" ${taken.has(b.id) ? "disabled" : ""}>
             ${taken.has(b.id) ? "Added" : "Add"}</button>
-        </div>`).join("") || '<p class="ax-muted">Nothing matches.</p>';
+        </div>`).join("") || '<p class="ax-muted" style="padding:12px;">Nothing matches.</p>';
       $("#bankList").querySelectorAll("button[data-id]").forEach((btn) => btn.addEventListener("click", () => {
         const b = bank.find((x) => x.id === btn.dataset.id);
-        rows.push({ bank_id: b.id, text: b.text }); draw(); drawBank();
+        rows.push({ bank_id: b.id, text: b.text, category: b.category }); draw(); drawBank();
       }));
     }
 
+    let categories = [];
     async function loadBank() {
       if (bank.length) return;
-      bank = (await api("/approx/bank")).questions;
+      const d = await api("/approx/bank");
+      bank = d.questions; categories = d.categories || [];
     }
 
     $("#addOwn").addEventListener("click", () => {
@@ -131,6 +151,7 @@
     $("#openBank").addEventListener("click", async () => {
       try { await loadBank(); } catch (err) { $("#hostMsg").textContent = err.message; return; }
       $("#bank").classList.toggle("hidden"); drawBank();
+      $("#openBank").textContent = $("#bank").classList.contains("hidden") ? "Browse the question bank" : "Hide the question bank";
     });
     $("#bankSearch").addEventListener("input", drawBank);
     $("#random13").addEventListener("click", async () => {
@@ -138,7 +159,7 @@
       if (rows.length && !confirm("Replace your current questions with 13 random ones from the bank?")) return;
       const pool = bank.slice();
       for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
-      rows = pool.slice(0, 13).map((b) => ({ bank_id: b.id, text: b.text }));
+      rows = pool.slice(0, 13).map((b) => ({ bank_id: b.id, text: b.text, category: b.category }));
       draw(); drawBank();
     });
 
@@ -180,7 +201,7 @@
         render();
       } catch (err) {
         if (err.status === 403 || err.status === 404) {
-          main.innerHTML = `<div class="card ax-panel"><p>${esc(err.message)}</p><a class="btn primary" href="/approx">Go to Approx</a></div>`;
+          main.innerHTML = `<section class="ax-card ax-lobby ax-center"><p>${esc(err.message)}</p><a class="btn primary" href="/approx">Go to Approx</a></section>`;
           bar.classList.add("hidden");
           return;                       // stop polling
         }
@@ -194,6 +215,11 @@
       const left = Math.max(0, secondsLeft - Math.floor((Date.now() - tickAt) / 1000));
       el.textContent = clock(left);
       el.classList.toggle("is-low", left <= 60);
+      const meter = $("#axTimeMeter");
+      if (meter && st && st.duration_s) {
+        meter.firstElementChild.style.width = `${Math.max(0, Math.min(100, 100 * left / st.duration_s))}%`;
+        meter.classList.toggle("is-low", left <= 60);
+      }
     }, 250);
 
     function render() {
@@ -203,20 +229,26 @@
     }
 
     // Host ───────────────────────────────────────────────────────────────────
-    function drawHost() {
-      const qs = (st.questions || []).map((q, i) => `
+    const qList = () => (st.questions || []).map((q, i) => `
         <li><span class="ax-num-badge">${i + 1}</span><span class="ax-q-text">${esc(q.text)}</span>
-            <span class="ax-answer">${fmt(q.answer)}</span></li>`).join("");
+            <span class="ax-answer">${fmt(q.answer)}</span>${q.note ? `<span class="ax-note">${esc(q.note)}</span>` : ""}</li>`).join("");
+
+    function drawHost() {
       if (st.status === "lobby") {
         main.innerHTML = `
-          <div class="card ax-panel ax-center">
-            <div class="ax-muted">Join at <strong>alphabook.uk/approx</strong> with code</div>
+          <section class="ax-card ax-lobby ax-center">
+            <div class="ax-card-label">Players join at alphabook.uk/approx with code</div>
             <div class="ax-bigcode">${esc(st.join_code)}</div>
+            <div class="ax-lobby-meta">
+              <div><strong>${st.n_questions}</strong><span>questions</span></div>
+              <div><strong>${Math.round(st.duration_s / 60)} min</strong><span>time limit</span></div>
+              <div><strong>${st.attempts}</strong><span>submissions each</span></div>
+            </div>
             <div id="axTeams" class="ax-teams"></div>
             <button class="btn primary ax-start" id="axStart">Start the game</button>
-            <p class="ax-muted">${st.n_questions} questions · ${Math.round(st.duration_s / 60)} minutes · ${st.attempts} submissions per team</p>
-          </div>
-          <details class="card ax-panel"><summary>Questions and answers (only you can see these)</summary><ol class="ax-qlist">${qs}</ol></details>`;
+          </section>
+          <details class="ax-card" style="margin-top:14px;"><summary>Questions and answers (only you can see these)</summary>
+            <ol class="ax-qlist">${qList()}</ol></details>`;
         $("#axStart").addEventListener("click", async (e) => {
           e.target.disabled = true;
           try { await api(`/approx/game/${gameId}/start`, {}); poll(); } catch (err) { flash(err.message, true); e.target.disabled = false; }
@@ -224,12 +256,13 @@
         return;
       }
       main.innerHTML = `
-        <div class="card ax-panel">
-          <div class="ax-lb-head"><h3>${st.status === "finished" ? "Final leaderboard" : "Leaderboard"}</h3>
+        <section class="ax-card">
+          <div class="ax-section-head"><h3>${st.status === "finished" ? "Final leaderboard" : "Leaderboard"}</h3>
             ${st.status === "playing" ? '<button class="btn" id="axEnd">End the game now</button>' : ""}</div>
-          <div id="axBoard"></div>
-        </div>
-        <details class="card ax-panel" ${st.status === "finished" ? "open" : ""}><summary>Questions and answers</summary><ol class="ax-qlist">${qs}</ol></details>`;
+          <div id="axBoard" class="ax-board-wrap"></div>
+        </section>
+        <details class="ax-card" style="margin-top:14px;" ${st.status === "finished" ? "open" : ""}><summary>Questions and answers</summary>
+          <ol class="ax-qlist">${qList()}</ol></details>`;
       const end = $("#axEnd");
       if (end) end.addEventListener("click", async () => {
         if (!confirm("End the game now for everyone?")) return;
@@ -240,12 +273,13 @@
     function boardHtml(rows, mine) {
       if (!rows || !rows.length) return '<p class="ax-muted">No teams yet.</p>';
       const fair = st.is_host;          // only the host sees each team's fair-play record
-      return `<table class="ax-board"><thead><tr><th>#</th><th>Team</th><th>Score</th><th>Good</th><th>Submissions</th><th></th>
+      return `<table class="ax-board"><thead><tr><th>Rank</th><th>Team</th><th>Score</th><th>Good</th><th>Used</th><th></th>
         ${fair ? "<th>Fair play</th>" : ""}</tr></thead><tbody>
         ${rows.map((r) => `<tr class="${r.name === mine ? "is-mine" : ""}">
-          <td>${r.rank}</td><td>${esc(r.name)}</td><td class="ax-score-cell">${esc(r.score_label)}</td>
+          <td><span class="ax-rank${r.rank <= 3 ? ` is-${r.rank}` : ""}">${r.rank}</span></td>
+          <td>${esc(r.name)}</td><td class="ax-score-cell">${esc(r.score_label)}</td>
           <td>${r.good}/${st.n_questions}</td><td>${r.attempts_used}/${st.attempts}</td>
-          <td>${r.finished ? '<span class="ax-tag">done</span>' : ""}</td>
+          <td>${r.finished ? '<span class="ax-tag is-done">done</span>' : ""}</td>
           ${fair ? `<td>${(r.flags_text || []).length
             ? r.flags_text.map((t) => `<span class="ax-tag is-warn">${esc(t)}</span>`).join(" ")
             : '<span class="ax-muted">clean</span>'}</td>` : ""}</tr>`).join("")}</tbody></table>`;
@@ -255,8 +289,9 @@
       const teams = st.teams_joined || [];
       if (st.status === "lobby") {
         $("#axTeams").innerHTML = teams.length
-          ? `<div class="ax-muted">${teams.length} team${teams.length === 1 ? "" : "s"} joined</div>` + teams.map((t) => `<span class="ax-chip">${esc(t)}</span>`).join("")
-          : '<div class="ax-muted">Waiting for teams to join…</div>';
+          ? `<div class="ax-muted" style="margin-bottom:6px;">${teams.length} team${teams.length === 1 ? "" : "s"} in</div>` +
+            teams.map((t) => `<span class="ax-chip">${esc(t)}</span>`).join("")
+          : '<span class="ax-waiting">Waiting for teams to join</span>';
         $("#axStart").disabled = !teams.length;
         bar.classList.add("hidden");
         return;
@@ -265,12 +300,20 @@
       const done = lb.filter((r) => r.finished).length;
       bar.classList.remove("hidden");
       bar.innerHTML = st.status === "playing"
-        ? `<div class="ax-stat"><span>Time left</span><strong id="axClock">${clock(secondsLeft)}</strong></div>
+        ? `<div class="ax-stat ax-hero-stat"><span>Time left</span><strong id="axClock">${clock(secondsLeft)}</strong>
+             <div class="ax-meter" id="axTimeMeter"><i style="width:${timePct()}%"></i></div></div>
            <div class="ax-stat"><span>Teams</span><strong>${lb.length}</strong></div>
            <div class="ax-stat"><span>Finished</span><strong>${done}/${lb.length}</strong></div>
            <div class="ax-stat"><span>Code</span><strong>${esc(st.join_code)}</strong></div>`
-        : `<div class="ax-stat ax-wide"><span>Game over</span><strong>${endWords(st.end_reason)}</strong></div>`;
+        : `<div class="ax-stat ax-hero-stat" style="grid-column:1/-1;"><span>Game over</span><strong>${endWords(st.end_reason)}</strong></div>`;
       $("#axBoard").innerHTML = boardHtml(lb);
+    }
+
+    // Share of the time limit left, for the meter under the clock.
+    function timePct() {
+      if (secondsLeft == null || !st.duration_s) return 0;
+      const left = Math.max(0, secondsLeft - Math.floor((Date.now() - tickAt) / 1000));
+      return Math.max(0, Math.min(100, 100 * left / st.duration_s));
     }
 
     const endWords = (r) => r === "time" ? "Time's up" : r === "all_finished" ? "Every team finished" : r === "host" ? "Ended by the host" : "Finished";
@@ -278,17 +321,24 @@
     // Team ───────────────────────────────────────────────────────────────────
     function drawTeam() {
       if (st.status === "lobby") {
-        main.innerHTML = `<div class="card ax-panel ax-center">
-          <h3>You're in as ${esc(st.team_name)}</h3>
-          <p class="ax-muted">Waiting for ${esc(st.host_name || "the host")} to start. The questions appear here when it does.</p>
-          <div id="axTeams" class="ax-teams"></div></div>`;
+        main.innerHTML = `<section class="ax-card ax-lobby ax-center">
+          <div class="ax-card-label">You're in as</div>
+          <h3 style="font-size:28px;margin:6px 0 14px;">${esc(st.team_name)}</h3>
+          <span class="ax-waiting">Waiting for ${esc(st.host_name || "the host")} to start</span>
+          <div class="ax-lobby-meta">
+            <div><strong>${st.n_questions}</strong><span>questions</span></div>
+            <div><strong>${Math.round(st.duration_s / 60)} min</strong><span>time limit</span></div>
+            <div><strong>${st.attempts}</strong><span>submissions</span></div>
+          </div>
+          <p class="ax-muted">It runs in full screen with copy and paste off. Only your last interval for a question counts.</p>
+          <div id="axTeams" class="ax-teams"></div></section>`;
         return;
       }
       const playing = st.status === "playing";
       main.innerHTML = `
-        ${st.status === "finished" ? '<div class="card ax-panel"><h3>Final leaderboard</h3><div id="axBoard"></div></div>' : ""}
+        ${st.status === "finished" ? '<section class="ax-card" style="margin-bottom:14px;"><h3>Final leaderboard</h3><div id="axBoard" class="ax-board-wrap"></div></section>' : ""}
         <div class="ax-qs">${(st.questions || []).map((q, i) => `
-          <div class="card ax-qcard" data-q="${i}">
+          <div class="ax-qcard" data-q="${i}" id="axCard${i}">
             <div class="ax-qhead"><span class="ax-num-badge">${i + 1}</span><span class="ax-q-text">${esc(q.text)}</span></div>
             <div class="ax-current" id="axCur${i}"></div>
             ${playing ? `<form class="ax-submit" data-q="${i}">
@@ -297,7 +347,8 @@
               <input class="ax-input ax-hi" placeholder="High" inputmode="decimal" autocomplete="off" required>
               <button class="btn primary">Submit</button>
             </form>
-            <div class="ax-preview" id="axPrev${i}"></div>` : `<div class="ax-reveal">Answer: <strong>${fmt(q.answer)}</strong></div>`}
+            <div class="ax-preview" id="axPrev${i}"></div>` : `<div class="ax-reveal">Answer: <strong>${fmt(q.answer)}</strong>
+              ${q.note ? `<span class="ax-note">${esc(q.note)}</span>` : ""}</div>`}
           </div>`).join("")}</div>
         ${playing ? '<div class="ax-done"><button class="btn" id="axFinish">We\'re done: lock in our answers</button></div>' : ""}`;
       main.querySelectorAll(".ax-submit").forEach((form) => {
@@ -360,18 +411,22 @@
       }
       const s = st.standing || {};
       bar.classList.remove("hidden");
+      const usedPct = st.attempts ? 100 * (st.attempts - s.attempts_left) / st.attempts : 0;
       bar.innerHTML = `
-        <div class="ax-stat ax-wide"><span>Score (lowest wins)</span><strong>${esc(s.score_label)}</strong></div>
+        <div class="ax-stat ax-hero-stat"><span>Your score · lowest wins</span><strong>${esc(s.score_label)}</strong></div>
         <div class="ax-stat"><span>Good</span><strong>${s.good}/${st.n_questions}</strong></div>
-        <div class="ax-stat"><span>Submissions left</span><strong>${s.attempts_left}</strong></div>
-        ${st.status === "playing" ? `<div class="ax-stat"><span>Time left</span><strong id="axClock">${clock(secondsLeft)}</strong></div>`
+        <div class="ax-stat"><span>Submissions left</span><strong>${s.attempts_left}</strong>
+          <div class="ax-meter${s.attempts_left <= 2 ? " is-low" : ""}"><i style="width:${100 - usedPct}%"></i></div></div>
+        ${st.status === "playing" ? `<div class="ax-stat"><span>Time left</span><strong id="axClock">${clock(secondsLeft)}</strong>
+             <div class="ax-meter" id="axTimeMeter"><i style="width:${timePct()}%"></i></div></div>`
           : `<div class="ax-stat"><span>Game over</span><strong>${endWords(st.end_reason)}</strong></div>`}`;
       (s.per_question || []).forEach((pq, i) => {
-        const el = $(`#axCur${i}`);
+        const el = $(`#axCur${i}`), card = $(`#axCard${i}`);
         if (!el) return;
+        if (card) { card.classList.toggle("is-good", !!(pq && pq.good)); card.classList.toggle("is-bad", !!(pq && !pq.good)); }
         el.innerHTML = pq
-          ? `<span class="ax-tag ${pq.good ? "is-good" : "is-bad"}">${pq.good ? "✓ good" : "✗ missed"}</span>
-             Your interval: <strong>${fmt(pq.low)}</strong> to <strong>${fmt(pq.high)}</strong>${pq.good ? ` <span class="ax-muted">(+${pq.points})</span>` : ""}`
+          ? `<span class="ax-tag ${pq.good ? "is-good" : "is-bad"}">${pq.good ? `✓ good · +${pq.points}` : "✗ missed"}</span>
+             <span>${fmt(pq.low)} to ${fmt(pq.high)}</span>`
           : '<span class="ax-muted">No interval yet</span>';
       });
       const playing = st.status === "playing";

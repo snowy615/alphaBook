@@ -37,7 +37,7 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
 from app import db as db_module
-from app.approx_questions import BANK, BY_ID
+from app.approx_questions import BANK, BY_ID, CATEGORIES
 from app.auth import current_user
 from app.models import User
 
@@ -61,7 +61,7 @@ SCORE_WORDS = [(1e17, "∞ squared"), (1e15, "∞ + 1"), (1e13, "∞?"), (1e11, 
 # full screen, and counts every attempt to do otherwise.
 FLAG_KINDS = {
     "fullscreen_exit": "left full screen",
-    "no_fullscreen": "played without full screen (browser wouldn't allow it)",
+    "no_fullscreen": "no full screen",
     "left_page": "switched tab or window",
     "odd_keys": "irregular keys",
     "shortcut": "copy/paste shortcuts",
@@ -237,7 +237,8 @@ async def approx_game_page(game_id: str, request: Request):
 async def question_bank(user: User = Depends(current_user)):
     """The question bank, without answers: a host picks questions by id and
     the server fills the answer in, so the bank can't be read for answers."""
-    return {"questions": [{"id": q["id"], "text": q["text"]} for q in BANK]}
+    return {"questions": [{"id": q["id"], "text": q["text"], "category": q.get("category", "")} for q in BANK],
+            "categories": list(CATEGORIES)}
 
 
 class QuestionIn(BaseModel):
@@ -263,7 +264,8 @@ async def create_game(req: CreateGame, user: User = Depends(current_user)):
             banked = BY_ID.get(q.bank_id)
             if not banked:
                 raise HTTPException(400, f"Question {i}: not in the question bank")
-            questions.append({"text": banked["text"], "answer": float(banked["answer"]), "bank_id": banked["id"]})
+            questions.append({"text": banked["text"], "answer": float(banked["answer"]), "bank_id": banked["id"],
+                              "note": banked.get("note") or ""})
             continue
         text = " ".join((q.text or "").split())
         if not text:
@@ -475,7 +477,8 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
         # The host isn't playing, so they see the answers throughout; teams
         # only once the game is over.
         reveal = status == FINISHED or is_host
-        out["questions"] = [{"text": q["text"], **({"answer": q["answer"]} if reveal else {})} for q in questions]
+        out["questions"] = [{"text": q["text"], **({"answer": q["answer"], "note": q.get("note") or ""} if reveal else {})}
+                            for q in questions]
     if is_host or status == FINISHED:
         out["leaderboard"] = leaderboard(game)
     if team is not None:

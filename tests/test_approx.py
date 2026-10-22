@@ -140,17 +140,44 @@ class TestBank:
     def test_the_bank_endpoint_never_shows_answers(self):
         out = run(ax.question_bank(AMY))
         assert len(out["questions"]) == 50
-        assert all(set(q) == {"id", "text"} for q in out["questions"])
+        assert all(set(q) == {"id", "text", "category"} for q in out["questions"])
+        assert out["categories"] == ["Built world", "People & places", "Body & books", "Physics", "Maths", "Probability"]
+        assert all(q["category"] in out["categories"] for q in out["questions"])
+
+    def test_every_bank_question_explains_its_answer(self):
+        assert all(q.get("note") and q.get("category") for q in BANK)
+
+    def test_the_maths_answers_are_right(self):
+        import math
+        assert BY_ID["lattice-paths"]["answer"] == math.comb(40, 20)
+        assert BY_ID["mississippi"]["answer"] == math.factorial(11) // (24 * 24 * 2)
+        assert BY_ID["chess-rectangles"]["answer"] == math.comb(9, 2) ** 2
+        assert BY_ID["digits-2-1000"]["answer"] == len(str(2 ** 1000))
+        assert BY_ID["digit-sum-2-1000"]["answer"] == sum(map(int, str(2 ** 1000)))
+        ways = [1] + [0] * 100
+        for c in (1, 2, 5, 10, 20, 50, 100):
+            for v in range(c, 101):
+                ways[v] += ways[v - c]
+        assert BY_ID["change-pound"]["answer"] == ways[100]
+        assert 2 ** (BY_ID["paper-moon"]["answer"] - 1) * 0.1e-6 < 384_400 <= 2 ** BY_ID["paper-moon"]["answer"] * 0.1e-6
+        assert BY_ID["dice-all-six"]["answer"] == pytest.approx(6 * sum(1 / k for k in range(1, 7)), abs=0.01)
+
+    def test_a_revealed_bank_question_carries_its_note(self, db):
+        out = _create([ax.QuestionIn(bank_id="paper-moon")])
+        run(ax.join_game(ax.JoinGame(join_code=out["join_code"]), AMY))
+        st = run(ax.game_state(out["game_id"], HOST))
+        assert st["questions"][0]["note"].startswith("Each fold doubles it")
 
 
 # ── Hosting and joining ─────────────────────────────────────────────────────
 
 class TestHostAndJoin:
     def test_create_with_own_and_bank_questions(self, db):
-        out = _create([ax.QuestionIn(bank_id="piano-keys"), ax.QuestionIn(text="Height of Radcliffe Camera, m", answer="40")])
+        out = _create([ax.QuestionIn(bank_id="eiffel-steps"), ax.QuestionIn(text="Height of Radcliffe Camera, m", answer="40")])
         game = _game(db, out["game_id"])
         assert game["status"] == ax.LOBBY and len(out["join_code"]) == 6
-        assert game["questions"][0] == {"text": BY_ID["piano-keys"]["text"], "answer": 88.0, "bank_id": "piano-keys"}
+        assert game["questions"][0] == {"text": BY_ID["eiffel-steps"]["text"], "answer": 1665.0, "bank_id": "eiffel-steps",
+                                        "note": BY_ID["eiffel-steps"]["note"]}
         assert game["questions"][1]["answer"] == 40.0
         assert game["attempts"] == 2 + ax.EXTRA_ATTEMPTS and game["duration_s"] == 30 * 60
         assert game["created_by"] == "h1"
@@ -316,7 +343,7 @@ class TestFairPlay:
         assert team["flags"] == {"fullscreen_exit": 2, "odd_keys": 3, "paste": 2}
         self._report(gid, BEN, {"no_fullscreen": 1})
         ben = next(r for r in run(ax.game_state(gid, HOST))["leaderboard"] if r["name"] == "ben")
-        assert ben["flags_text"] == ["played without full screen (browser wouldn't allow it): 1"]
+        assert ben["flags_text"] == ["no full screen: 1"]
         self._report(gid, BEN, {"no_fullscreen": -1})
         lb = {r["name"]: r for r in run(ax.game_state(gid, HOST))["leaderboard"]}
         assert lb["amy"]["flags"] == {"fullscreen_exit": 2, "odd_keys": 3, "paste": 2}
