@@ -947,11 +947,21 @@
       body = `<p>You declined your offer for <strong>${esc(state.programme || "")}</strong>. Thank you
              for letting us know, and we hope to see you again. If that was a mistake, please contact us.</p>`;
     } else if (state.status === "accepted" && state.offer_response === "accepted") {
+      const sched = state.bootcamp_schedule || [];
       body = `<p class="apl-offer-head">You're in! &#127881;</p>
              <p>You've accepted your place on <strong>${esc(state.programme || "")}</strong>, and your membership
              is now active (see your <a href="/profile">profile</a>).
-             ${isBootcamp ? "We look forward to seeing you at the first session in Week 2. " : ""}More information
-             will follow soon.</p>`;
+             ${sched.length ? "Here are the Sunday sessions; please come to all six." : "More information will follow soon."}</p>
+             ${sched.length ? `<div class="apl-sched">${sched.map((x) => `
+               <div class="apl-sched-row is-${x.status}">
+                 <span class="apl-sched-n">${x.number}</span>
+                 <div class="apl-sched-main">
+                   <div class="apl-sched-date">${esc(x.date_label)}${x.status === "next" ? ' <span class="apl-sched-tag">Next</span>' : ""}
+                     ${x.status === "done" ? ' <span class="apl-sched-tag is-done">Done</span>' : ""}</div>
+                   <div class="apl-sched-meta">${esc(x.time_label)} · ${esc(x.venue)}${x.title ? ` · <strong>${esc(x.title)}</strong>` : ""}</div>
+                 </div>
+               </div>`).join("")}</div>
+               <p class="apl-hint" style="margin-top:10px;">Bring a laptop and something to take notes with.</p>` : ""}`;
     } else if (state.status === "accepted") {
       body = `<p class="apl-offer-head">Congratulations! &#127881;</p>
              <p>We'd love to have you on <strong>${esc(state.programme || "")}</strong>, and we've emailed you
@@ -1364,7 +1374,9 @@
     const el = $("#deadlineNote");
     if (!el) return;
     let html = "";
-    const newApp = state.status === "none" || ((state.status === "accepted" || state.status === "rejected") && state.can_apply_again);
+    // Not for anyone accepted: a closing-date notice above "You're in!" only
+    // confuses someone who has just joined.
+    const newApp = state.status === "none" || (state.status === "rejected" && state.can_apply_again);
     if (state.status === "analyst" || (!state.eligible && state.status === "none")) html = "";
     else if (state.reopened_until_label && (newApp || state.status === "cv" || state.status === "oa_ready"))
       html = `<strong>Your application has been reopened until ${esc(state.reopened_until_label)}.</strong>

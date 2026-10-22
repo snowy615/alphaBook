@@ -4911,7 +4911,7 @@ class TestConfirmEmailByHand:
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "Any code we've sent you in the last 30 minutes works" in js
         assert "/Wait (\\d+)s/" in js
-        assert 'apply.js?v=13' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
+        assert 'apply.js?v=15' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
 
 
 class TestReopenForOnePerson:
@@ -5184,3 +5184,42 @@ class TestReviewPageCost:
     def test_an_opened_cv_is_kept_by_the_browser_for_a_while(self):
         src = Path(ap.__file__).read_text()
         assert '"Cache-Control": "private, max-age=600"' in src
+
+
+class TestBootcampSchedule:
+    """Everyone who has accepted a Bootcamp place sees the six Sunday sessions:
+    the first 1:15-4 pm, the rest 2-4 pm, each marked done / next / upcoming."""
+
+    def _state(self, monkeypatch, now, programme=mb.M_QUANT_BOOTCAMP, response="accepted"):
+        monkeypatch.setattr(ap, "_now", lambda: now)
+        app = {"user_id": "u1", "status": ap.S_ACCEPTED, "programme": programme, "oxford_email": "jo@ox.ac.uk",
+               "oxford_email_verified": True, **({"offer_response": {"response": response}} if response else {})}
+        _flow_db(monkeypatch, applications={"u1": app}, users={"u1": {"username": "jo", "email": "jo@ox.ac.uk"}})
+        return asyncio.run(ap.state(User(id="u1", username="jo")))
+
+    def test_the_six_sessions_with_the_first_starting_early(self, monkeypatch):
+        st = self._state(monkeypatch, dt.datetime(2026, 10, 22, 12, tzinfo=dt.timezone.utc))
+        sched = st["bootcamp_schedule"]
+        assert [s["date"] for s in sched] == ["2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"]
+        assert sched[0]["time_label"] == "1:15–4 pm" and sched[0]["title"] == "Game + Introduction to Machine Learning"
+        assert {s["time_label"] for s in sched[1:]} == {"2–4 pm"}
+        assert sched[0]["date_label"] == "Sunday 25 October" and sched[0]["venue"] == "Gillis Lecture Theatre, Balliol College"
+        assert [s["status"] for s in sched] == ["next"] + ["upcoming"] * 5
+
+    def test_done_once_a_session_has_ended(self, monkeypatch):
+        # The clocks go back that morning, so London is on GMT: 15:30 UTC is
+        # 15:30 there (session 1 still on), 16:30 UTC is after it.
+        st = self._state(monkeypatch, dt.datetime(2026, 10, 25, 15, 30, tzinfo=dt.timezone.utc))
+        assert [s["status"] for s in st["bootcamp_schedule"]][:2] == ["next", "upcoming"]
+        st = self._state(monkeypatch, dt.datetime(2026, 10, 25, 16, 30, tzinfo=dt.timezone.utc))
+        assert [s["status"] for s in st["bootcamp_schedule"]][:3] == ["done", "next", "upcoming"]
+
+    @pytest.mark.parametrize("programme,response", [(mb.M_QUANT_ANALYST, "accepted"), (mb.M_QUANT_BOOTCAMP, None),
+                                                    (mb.M_QUANT_BOOTCAMP, "declined")])
+    def test_only_for_accepted_bootcamp_places(self, monkeypatch, programme, response):
+        st = self._state(monkeypatch, dt.datetime(2026, 10, 22, 12, tzinfo=dt.timezone.utc), programme, response)
+        assert "bootcamp_schedule" not in st
+
+    def test_the_page_shows_it(self):
+        js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
+        assert "state.bootcamp_schedule" in js and "apl-sched-row is-${x.status}" in js

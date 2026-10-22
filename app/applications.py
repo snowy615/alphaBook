@@ -1101,6 +1101,44 @@ async def state(user: User = Depends(current_user)):
             out["offer_response"] = (application.get("offer_response") or {}).get("response")
             if not out["offer_response"]:
                 out["can_apply_again"] = False      # the offer comes first
+            if out["offer_response"] == "accepted" and application.get("programme") in mb.BOOTCAMP_MEMBERSHIPS:
+                out["bootcamp_schedule"] = bootcamp_schedule()
+    return out
+
+
+# The Quant Bootcamp's Sunday sessions, shown to everyone who has accepted a
+# place. The first starts earlier (a game before the lecture).
+BOOTCAMP_VENUE = "Gillis Lecture Theatre, Balliol College"
+BOOTCAMP_SCHEDULE: List[Dict[str, Any]] = [
+    {"date": dt.date(2026, 10, 25), "start": "13:15", "end": "16:00", "title": "Game + Introduction to Machine Learning"},
+    {"date": dt.date(2026, 11, 1), "start": "14:00", "end": "16:00", "title": ""},
+    {"date": dt.date(2026, 11, 8), "start": "14:00", "end": "16:00", "title": ""},
+    {"date": dt.date(2026, 11, 15), "start": "14:00", "end": "16:00", "title": ""},
+    {"date": dt.date(2026, 11, 22), "start": "14:00", "end": "16:00", "title": ""},
+    {"date": dt.date(2026, 11, 29), "start": "14:00", "end": "16:00", "title": ""},
+]
+
+
+def _clock_12h(hhmm: str) -> str:
+    h, m = (int(x) for x in hhmm.split(":"))
+    return f"{h % 12 or 12}{':%02d' % m if m else ''}"
+
+
+def bootcamp_schedule() -> List[Dict[str, Any]]:
+    """The sessions as the page shows them: each marked done, next or
+    upcoming by London time (a session is done once it has ended)."""
+    now = _now().astimezone(LONDON_TZ)
+    out, next_marked = [], False
+    for i, sess in enumerate(BOOTCAMP_SCHEDULE, start=1):
+        h, m = (int(x) for x in sess["end"].split(":"))
+        ended = now >= dt.datetime.combine(sess["date"], dt.time(h, m), tzinfo=LONDON_TZ)
+        status = "done" if ended else ("upcoming" if next_marked else "next")
+        next_marked = next_marked or not ended
+        d = sess["date"]
+        pm = "pm" if int(sess["end"][:2]) >= 12 else "am"
+        out.append({"number": i, "date": d.isoformat(), "date_label": f"{d.strftime('%A')} {d.day} {d.strftime('%B')}",
+                    "time_label": f"{_clock_12h(sess['start'])}–{_clock_12h(sess['end'])} {pm}",
+                    "title": sess["title"], "venue": BOOTCAMP_VENUE, "status": status})
     return out
 
 

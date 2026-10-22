@@ -199,6 +199,21 @@
       font-size: 34px; color: var(--green); line-height: 1; margin-bottom: 10px;
     }
     .apl-offer-head { font-size: 22px; font-weight: 700; margin: 0 0 8px; }
+    /* Bootcamp session schedule, once a place is accepted */
+    .apl-sched { border: 1px solid var(--border); margin-top: 14px; }
+    .apl-sched-row { display: flex; gap: 12px; align-items: flex-start; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+    .apl-sched-row:last-child { border-bottom: 0; }
+    .apl-sched-row.is-next { background: var(--brand-wash); box-shadow: inset 3px 0 0 var(--brand); }
+    .apl-sched-row.is-done { opacity: .55; }
+    .apl-sched-n { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px;
+                   background: var(--brand-wash); color: var(--brand); font-weight: 700; font-size: 13px; flex: none; }
+    .apl-sched-main { flex: 1; min-width: 0; }
+    .apl-sched-date { font-weight: 600; }
+    .apl-sched-meta { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+    .apl-sched-meta strong { color: var(--text); font-weight: 600; }
+    .apl-sched-tag { display: inline-block; font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase;
+                     padding: 1px 7px; margin-left: 6px; border: 1px solid var(--brand); color: var(--brand); vertical-align: 1px; }
+    .apl-sched-tag.is-done { border-color: var(--border-strong); color: var(--muted); }
     .apl-deadline { border: 1px solid #ef7d22; background: rgba(239,125,34,0.10); padding: 10px 14px;
                     margin: 0 0 14px; font-size: 14px; line-height: 1.5; }
 
@@ -268,7 +283,7 @@
     };
   </script>
   <script src="/static/availability.js?v=2"></script>
-  <script src="/static/apply.js?v=13"></script>
+  <script src="/static/apply.js?v=15"></script>
 </body>
 
 </html>
