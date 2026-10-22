@@ -56,6 +56,21 @@ QUESTION_MAX = 300
 SCORE_WORDS = [(1e17, "∞ squared"), (1e15, "∞ + 1"), (1e13, "∞?"), (1e11, "almost ∞"),
                (1e9, "a TON"), (1e7, "a lot")]
 
+# What a team's page reports while the game runs, for the host to see. The
+# page blocks copy, cut, paste and the copy/paste shortcuts, keeps the game in
+# full screen, and counts every attempt to do otherwise.
+FLAG_KINDS = {
+    "fullscreen_exit": "left full screen",
+    "no_fullscreen": "played without full screen (browser wouldn't allow it)",
+    "left_page": "switched tab or window",
+    "odd_keys": "irregular keys",
+    "shortcut": "copy/paste shortcuts",
+    "copy": "copy attempts",
+    "paste": "paste attempts",
+    "right_click": "right-clicks",
+}
+FLAG_MAX_PER_REPORT = 100
+
 _locks: Dict[str, asyncio.Lock] = {}
 
 
@@ -144,8 +159,10 @@ def leaderboard(game: dict) -> List[dict]:
         st = standing(game, team)
         last = max((_as_utc(s.get("at")) for s in team.get("submissions") or [] if _as_utc(s.get("at"))),
                    default=None)
+        flags = {k: int(v) for k, v in (team.get("flags") or {}).items() if k in FLAG_KINDS and v}
         rows.append({"user_id": uid, "name": team.get("name") or "Team", **{k: st[k] for k in (
             "score", "score_label", "good", "attempts_used", "attempts_left", "finished")},
+            "flags": flags, "flags_text": [f"{FLAG_KINDS[k]}: {n}" for k, n in flags.items()],
             "_last": last or _as_utc(team.get("joined_at")) or _now()})
     # Lowest score wins; then more good intervals; then whoever got there first.
     rows.sort(key=lambda r: (r["score"], -r["good"], r["_last"]))
@@ -404,6 +421,31 @@ async def finish_team(game_id: str, user: User = Depends(current_user)):
         game["teams"] = teams
         await _close_if_over(ref, game)
     return {"ok": True, "status": game["status"]}
+
+
+class FlagReport(BaseModel):
+    counts: Dict[str, int]
+
+
+@router.post("/game/{game_id}/flags")
+async def report_flags(game_id: str, req: FlagReport, user: User = Depends(current_user)):
+    """A team's page reporting what it blocked or saw since its last report
+    (left full screen, switched tab, irregular keys, copy/paste attempts),
+    added to the team's running counts for the host. Only while playing."""
+    async with _lock(game_id):
+        ref, game = await _load(game_id)
+        team = _team_or_403(game, user)
+        if game["status"] != PLAYING:
+            return {"ok": True, "ignored": True}
+        flags = dict(team.get("flags") or {})
+        for kind, n in (req.counts or {}).items():
+            if kind in FLAG_KINDS and isinstance(n, int) and n > 0:
+                flags[kind] = int(flags.get(kind, 0)) + min(n, FLAG_MAX_PER_REPORT)
+        team["flags"], team["flags_at"] = flags, _now()
+        teams = game["teams"]
+        teams[str(user.id)] = team
+        await ref.update({"teams": teams})
+    return {"ok": True}
 
 
 @router.get("/game/{game_id}/state")

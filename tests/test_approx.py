@@ -300,3 +300,50 @@ class TestState:
         with pytest.raises(HTTPException) as exc:
             run(ax.game_state(gid, BEN))
         assert exc.value.status_code == 403
+
+
+# ── Fair play ───────────────────────────────────────────────────────────────
+
+class TestFairPlay:
+    def _report(self, gid, user, counts):
+        return run(ax.report_flags(gid, ax.FlagReport(counts=counts), user))
+
+    def test_reports_add_up_and_the_host_sees_them(self, db):
+        gid = _playing(db, teams=(AMY, BEN))
+        self._report(gid, AMY, {"fullscreen_exit": 1, "odd_keys": 3})
+        self._report(gid, AMY, {"fullscreen_exit": 1, "paste": 2, "made_up": 9})
+        team = _game(db, gid)["teams"]["a1"]
+        assert team["flags"] == {"fullscreen_exit": 2, "odd_keys": 3, "paste": 2}
+        self._report(gid, BEN, {"no_fullscreen": 1})
+        ben = next(r for r in run(ax.game_state(gid, HOST))["leaderboard"] if r["name"] == "ben")
+        assert ben["flags_text"] == ["played without full screen (browser wouldn't allow it): 1"]
+        self._report(gid, BEN, {"no_fullscreen": -1})
+        lb = {r["name"]: r for r in run(ax.game_state(gid, HOST))["leaderboard"]}
+        assert lb["amy"]["flags"] == {"fullscreen_exit": 2, "odd_keys": 3, "paste": 2}
+        assert "left full screen: 2" in lb["amy"]["flags_text"] and "irregular keys: 3" in lb["amy"]["flags_text"]
+        assert lb["ben"]["flags"] == {"no_fullscreen": 1}
+
+    def test_a_report_is_capped_and_only_counts_while_playing(self, db):
+        out = _create()
+        run(ax.join_game(ax.JoinGame(join_code=out["join_code"]), AMY))
+        assert self._report(out["game_id"], AMY, {"odd_keys": 5})["ignored"] is True      # lobby
+        run(ax.start_game(out["game_id"], HOST))
+        self._report(out["game_id"], AMY, {"odd_keys": 10_000, "copy": -4})
+        assert _game(db, out["game_id"])["teams"]["a1"]["flags"] == {"odd_keys": ax.FLAG_MAX_PER_REPORT}
+
+    def test_outsiders_cannot_report(self, db):
+        gid = _playing(db)
+        with pytest.raises(HTTPException) as exc:
+            self._report(gid, BEN, {"odd_keys": 1})
+        assert exc.value.status_code == 403
+
+    def test_the_page_guards_play_and_previews_scores(self):
+        from pathlib import Path
+        js = (Path(ax.__file__).parent / "static" / "approx.js").read_text()
+        for needle in ('document.addEventListener("paste", block("paste"))', 'document.addEventListener("copy", block("copy"))',
+                       '["c", "v", "x"].includes', 'requestFullscreen', 'note("fullscreen_exit")', 'note("left_page")',
+                       'note("odd_keys")', '/flags`, { counts }', "If it's in:", "if not:"):
+            assert needle in js, needle
+        assert "confirm(\"Lock in" not in js           # no browser pop-up while in full screen
+        assert 'document.addEventListener("beforeinput"' in js and '"Unidentified"' in js   # phone keyboards
+        assert "if (guarding && !away)" in js                                               # one trip away, one count

@@ -76,3 +76,18 @@
 .ax-done { margin: 18px 0; text-align: center; }
 #axBoard { overflow-x: auto; }
 @media (max-width: 480px) { .ax-board th, .ax-board td { padding: 6px 5px; font-size: 13px; } }
+
+/* Score preview under each question */
+.ax-preview { font-size: 13px; margin-top: 8px; min-height: 18px; }
+.ax-good-text { color: var(--green); }
+.ax-bad-text { color: var(--red); }
+.ax-tag.is-warn { background: rgba(239, 125, 34, 0.15); color: #c25e0c; margin: 1px 0; }
+
+/* Fair play: full screen required while playing; no selecting question text */
+body.ax-guarded .ax-q-text, body.ax-guarded .ax-qhead { -webkit-user-select: none; user-select: none; }
+.ax-cover { position: fixed; inset: 0; z-index: 100; background: var(--bg); display: flex; align-items: center;
+            justify-content: center; padding: 16px; }
+.ax-cover-box { max-width: 420px; text-align: center; border: 1px solid var(--border); border-radius: 12px;
+                padding: 28px 24px; background: var(--panel); }
+.ax-cover-box h3 { margin: 0 0 8px; }
+.ax-cover-box .btn { margin-top: 14px; padding: 12px 22px; font-size: 16px; }

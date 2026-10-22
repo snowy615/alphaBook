@@ -32,6 +32,19 @@
   }
   const clock = (s) => s == null ? "—" : `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
+  // The same reading of a number as the server's parse_quantity: plain,
+  // 1,234, 1.5e6, 3x10^6 (x, ×, *, ·), 10^7. null if it isn't one.
+  function parseQ(raw) {
+    let t = String(raw || "").trim().toLowerCase().replace(/[,_\s]/g, "").replace(/[×·*]/g, "x");
+    const m = /^(?:(\d+(?:\.\d*)?|\.\d+)x)?10\^([+-]?\d+)$/.exec(t);
+    const v = m ? parseFloat(m[1] || "1") * Math.pow(10, parseInt(m[2], 10)) : (t === "" ? NaN : Number(t));
+    return isFinite(v) && v > 0 ? v : null;
+  }
+  // (10 + sum of points over good intervals) * 2^(questions - good), as the server scores.
+  const scoreOf = (n, points) => (10 + points.reduce((a, b) => a + b, 0)) * Math.pow(2, n - points.length);
+  const WORDS = [[1e17, "∞ squared"], [1e15, "∞ + 1"], [1e13, "∞?"], [1e11, "almost ∞"], [1e9, "a TON"], [1e7, "a lot"]];
+  const scoreLabel = (x) => { for (const [t, w] of WORDS) if (x >= t) return w; return Math.round(x).toLocaleString(); };
+
   // ── Landing: host a game or join one ───────────────────────────────────────
   async function landing() {
     try {
@@ -226,11 +239,16 @@
 
     function boardHtml(rows, mine) {
       if (!rows || !rows.length) return '<p class="ax-muted">No teams yet.</p>';
-      return `<table class="ax-board"><thead><tr><th>#</th><th>Team</th><th>Score</th><th>Good</th><th>Submissions</th><th></th></tr></thead><tbody>
+      const fair = st.is_host;          // only the host sees each team's fair-play record
+      return `<table class="ax-board"><thead><tr><th>#</th><th>Team</th><th>Score</th><th>Good</th><th>Submissions</th><th></th>
+        ${fair ? "<th>Fair play</th>" : ""}</tr></thead><tbody>
         ${rows.map((r) => `<tr class="${r.name === mine ? "is-mine" : ""}">
           <td>${r.rank}</td><td>${esc(r.name)}</td><td class="ax-score-cell">${esc(r.score_label)}</td>
           <td>${r.good}/${st.n_questions}</td><td>${r.attempts_used}/${st.attempts}</td>
-          <td>${r.finished ? '<span class="ax-tag">done</span>' : ""}</td></tr>`).join("")}</tbody></table>`;
+          <td>${r.finished ? '<span class="ax-tag">done</span>' : ""}</td>
+          ${fair ? `<td>${(r.flags_text || []).length
+            ? r.flags_text.map((t) => `<span class="ax-tag is-warn">${esc(t)}</span>`).join(" ")
+            : '<span class="ax-muted">clean</span>'}</td>` : ""}</tr>`).join("")}</tbody></table>`;
     }
 
     function updateHost() {
@@ -278,9 +296,14 @@
               <span class="ax-to">to</span>
               <input class="ax-input ax-hi" placeholder="High" inputmode="decimal" autocomplete="off" required>
               <button class="btn primary">Submit</button>
-            </form>` : `<div class="ax-reveal">Answer: <strong>${fmt(q.answer)}</strong></div>`}
+            </form>
+            <div class="ax-preview" id="axPrev${i}"></div>` : `<div class="ax-reveal">Answer: <strong>${fmt(q.answer)}</strong></div>`}
           </div>`).join("")}</div>
         ${playing ? '<div class="ax-done"><button class="btn" id="axFinish">We\'re done: lock in our answers</button></div>' : ""}`;
+      main.querySelectorAll(".ax-submit").forEach((form) => {
+        const i = +form.dataset.q;
+        form.querySelectorAll("input").forEach((inp) => inp.addEventListener("input", () => preview(i)));
+      });
       main.querySelectorAll(".ax-submit").forEach((form) => form.addEventListener("submit", async (e) => {
         e.preventDefault();
         const btn = form.querySelector("button");
@@ -294,14 +317,38 @@
           const pq = d.standing.per_question[+form.dataset.q];
           flash(pq && pq.good ? `Question ${+form.dataset.q + 1}: good interval ✓` : `Question ${+form.dataset.q + 1}: not in that interval ✗`, !(pq && pq.good));
           form.reset();
+          preview(+form.dataset.q);
         } catch (err) { flash(err.message, true); }
         btn.disabled = false;
       }));
+      // Click twice to lock in, rather than a browser pop-up: a pop-up can take
+      // the page out of full screen, which would wrongly count against them.
       const fin = $("#axFinish");
       if (fin) fin.addEventListener("click", async () => {
-        if (!confirm("Lock in your answers? You won't be able to submit any more.")) return;
+        if (!fin.dataset.sure) {
+          fin.dataset.sure = "1";
+          fin.textContent = "Sure? Click again to lock in (no more submissions after this)";
+          setTimeout(() => { if (fin.isConnected && !fin.disabled) { delete fin.dataset.sure; fin.textContent = "We're done: lock in our answers"; } }, 4000);
+          return;
+        }
         try { await api(`/approx/game/${gameId}/finish`, {}); poll(); } catch (err) { flash(err.message, true); }
       });
+    }
+
+    // What the score would be if this interval turns out good, and if not,
+    // before it's submitted. Replaces whatever interval the question has now.
+    function preview(i) {
+      const el = $(`#axPrev${i}`), form = main.querySelector(`.ax-submit[data-q="${i}"]`);
+      if (!el || !form || !st.standing) return;
+      const loRaw = form.querySelector(".ax-lo").value, hiRaw = form.querySelector(".ax-hi").value;
+      if (!loRaw.trim() && !hiRaw.trim()) { el.innerHTML = ""; return; }
+      const lo = parseQ(loRaw), hi = parseQ(hiRaw);
+      if (lo == null || hi == null) { el.innerHTML = '<span class="ax-muted">Enter two positive numbers (e.g. 1500, 1.5e3, 3x10^6)</span>'; return; }
+      if (lo > hi) { el.innerHTML = '<span class="ax-bad-text">Low is above high</span>'; return; }
+      const others = (st.standing.per_question || []).filter((pq, j) => j !== i && pq && pq.good).map((pq) => pq.points);
+      const n = st.n_questions, pts = Math.floor(hi / lo * (1 + 1e-12));
+      el.innerHTML = `If it's in: <strong class="ax-good-text">${scoreLabel(scoreOf(n, others.concat([pts])))}</strong>
+        <span class="ax-muted">(+${pts})</span> · if not: <strong class="ax-bad-text">${scoreLabel(scoreOf(n, others))}</strong>`;
     }
 
     function updateTeam() {
@@ -334,6 +381,106 @@
       if (fin) { fin.disabled = !!s.finished; if (s.finished) fin.textContent = "Answers locked in: waiting for the other teams"; }
       const board = $("#axBoard");
       if (board) board.innerHTML = boardHtml(st.leaderboard, st.team_name);
+      (st.questions || []).forEach((_, i) => preview(i));
+      guard(playing && !s.finished);
+    }
+
+    // ── Fair play, while a team is playing ────────────────────────────────
+    // Full screen is required (the questions are covered until it's on);
+    // copy, cut, paste, the copy/paste shortcuts and right-click are blocked;
+    // any key that isn't part of typing a number counts as irregular; leaving
+    // full screen or switching tab is noted. All of it is counted and sent
+    // to the server in batches for the host to see.
+    const ALLOWED_KEYS = new Set(["Backspace", "Delete", "Tab", "Enter", "ArrowLeft", "ArrowRight", "ArrowUp",
+      "ArrowDown", "Home", "End", "Shift", "CapsLock", "Escape"]);
+    const NUMBER_CHARS = /^[0-9.,eExX*^+\-×· ]$/;
+    let guarding = false, pending = {}, sendTimer = null, fsWaived = false;
+    const note = (kind) => {
+      pending[kind] = (pending[kind] || 0) + 1;
+      if (!sendTimer) sendTimer = setTimeout(sendFlags, 1500);
+    };
+    async function sendFlags() {
+      sendTimer = null;
+      const counts = pending; pending = {};
+      if (!Object.keys(counts).length) return;
+      try { await api(`/approx/game/${gameId}/flags`, { counts }); }
+      catch (e) { for (const [k, v] of Object.entries(counts)) pending[k] = (pending[k] || 0) + v; }
+    }
+    const fsSupported = () => !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+    const inFullscreen = () => !!(document.fullscreenElement || document.webkitFullscreenElement);
+    function cover() {
+      let el = $("#axCover");
+      const need = guarding && fsSupported() && !inFullscreen() && !fsWaived;
+      if (!need) { if (el) el.remove(); return; }
+      if (el) return;
+      el = document.createElement("div");
+      el.id = "axCover";
+      el.className = "ax-cover";
+      el.innerHTML = `<div class="ax-cover-box"><h3>Approx runs in full screen</h3>
+        <p class="ax-muted">The questions stay hidden until it's on. Leaving full screen during the game is shown to the host.</p>
+        <button class="btn primary" id="axGoFull">Enter full screen</button></div>`;
+      document.body.appendChild(el);
+      $("#axGoFull").addEventListener("click", () => {
+        const root = document.documentElement;
+        try { Promise.resolve((root.requestFullscreen || root.webkitRequestFullscreen).call(root)).catch(() => {}); } catch (e) { /* below */ }
+        // Some browsers (embedded ones, some phones) won't go full screen at
+        // all. Rather than lock the team out, let them play on; the host sees it.
+        setTimeout(() => {
+          if (inFullscreen() || !$("#axCover")) return;
+          const box = $("#axCover .ax-cover-box");
+          if (!box || $("#axPlayAnyway")) return;
+          box.insertAdjacentHTML("beforeend", `<p class="ax-bad-text" style="margin-top:14px;">This browser didn't switch to full screen.</p>
+            <button class="btn" id="axPlayAnyway">Play anyway (the host will see this)</button>`);
+          $("#axPlayAnyway").addEventListener("click", () => { fsWaived = true; note("no_fullscreen"); cover(); });
+        }, 1000);
+      });
+    }
+    const block = (kind) => (e) => { if (!guarding) return; e.preventDefault(); note(kind); flash("That's turned off during the game.", true); };
+    document.addEventListener("copy", block("copy"));
+    document.addEventListener("cut", block("copy"));
+    document.addEventListener("paste", block("paste"));
+    document.addEventListener("contextmenu", block("right_click"));
+    document.addEventListener("keydown", (e) => {
+      if (!guarding) return;
+      const k = e.key || "";
+      // Phone keyboards report most keys as "Unidentified"; what they type is
+      // checked as it goes in (beforeinput, below) instead.
+      if (k === "Unidentified" || k === "Process" || k === "Dead") return;
+      if ((e.ctrlKey || e.metaKey) && ["c", "v", "x"].includes(k.toLowerCase())) {
+        e.preventDefault(); note("shortcut"); flash("Copy and paste are turned off during the game.", true); return;
+      }
+      // Other shortcuts (select all, undo are fine while typing a number).
+      if ((e.ctrlKey || e.metaKey || e.altKey) && k.length === 1 && !["a", "z", "y"].includes(k.toLowerCase())) {
+        note("odd_keys"); return;
+      }
+      if (k.length === 1 && !e.ctrlKey && !e.metaKey && !NUMBER_CHARS.test(k)) { e.preventDefault(); note("odd_keys"); }
+    }, true);
+    // Whatever is about to go into a box, however it was typed (any keyboard,
+    // autofill, drag and drop): anything that isn't part of a number is
+    // refused and counted.
+    const NOT_NUMBER = /[^0-9.,eExX*^+\-×· ]/;
+    document.addEventListener("beforeinput", (e) => {
+      if (!guarding || !e.data || !NOT_NUMBER.test(e.data)) return;
+      e.preventDefault();
+      note(/paste|drop/i.test(e.inputType || "") ? "paste" : "odd_keys");
+    }, true);
+    const fsChange = () => { if (guarding && !inFullscreen()) note("fullscreen_exit"); cover(); };
+    document.addEventListener("fullscreenchange", fsChange);
+    document.addEventListener("webkitfullscreenchange", fsChange);
+    // Leaving the page (another tab, another app) fires both "blur" and a
+    // hidden visibilitychange: count each trip away once, not twice.
+    let away = false;
+    const leave = () => { if (guarding && !away) { away = true; note("left_page"); } };
+    const back = () => { away = false; };
+    document.addEventListener("visibilitychange", () => (document.visibilityState === "hidden" ? leave() : back()));
+    window.addEventListener("blur", leave);
+    window.addEventListener("focus", back);
+    function guard(on) {
+      guarding = on;
+      document.body.classList.toggle("ax-guarded", on);
+      cover();
+      if (!on && Object.keys(pending).length) sendFlags();
+      if (!on && inFullscreen() && document.exitFullscreen) document.exitFullscreen().catch(() => {});
     }
 
     poll();
