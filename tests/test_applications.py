@@ -4911,7 +4911,7 @@ class TestConfirmEmailByHand:
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "Any code we've sent you in the last 30 minutes works" in js
         assert "/Wait (\\d+)s/" in js
-        assert 'apply.js?v=15' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
+        assert 'apply.js?v=16' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
 
 
 class TestReopenForOnePerson:
@@ -5223,3 +5223,69 @@ class TestBootcampSchedule:
     def test_the_page_shows_it(self):
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "state.bootcamp_schedule" in js and "apl-sched-row is-${x.status}" in js
+        assert "function renderBootcamp(state)" in js and "Next session" in js
+
+
+class TestReviewerMessages:
+    """Any reviewer can email one applicant a message of their own, and add a
+    personal note to the email a shortlist / accept / reject sends."""
+
+    def _db(self, monkeypatch, status=ap.S_SUBMITTED):
+        return _flow_db(monkeypatch,
+                        applications={"u1": {"user_id": "u1", "username": "jo", "full_name": "Jo Bloggs", "status": status,
+                                             "programme": mb.M_QUANT_BOOTCAMP, "email": "jo@gmail.com",
+                                             "oxford_email": "jo@keble.ox.ac.uk", "oxford_email_verified": True}},
+                        users={"u1": {"username": "jo", "email": "jo@gmail.com"},
+                               "r1": {"username": "haole", "full_name": "Hao Le", "membership": mb.M_QUANT_ANALYST}})
+
+    REVIEWER = User(id="r1", username="haole")
+
+    def test_a_reviewer_messages_an_applicant(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        out = asyncio.run(ap.message_applicant("u1", ap.ApplicantMessage(
+            message="Could you bring your CV on Sunday?\n\nThanks <3", subject="  About Sunday "), self.REVIEWER))
+        mail = sent[-1]
+        assert "jo@keble.ox.ac.uk" in mail["to"] and "jo@gmail.com" in mail["to"] and out["sent_to"] == mail["to"]
+        assert mail["subject"] == "About Sunday"
+        assert "<p>Hi Jo,</p>" in mail["body_html"] and "<p>Could you bring your CV on Sunday?</p>" in mail["body_html"]
+        assert "Thanks &lt;3" in mail["body_html"] and "<p>Hao Le<br>Oxford Alpha Fund</p>" in mail["body_html"]
+        logged = fake_db.collections[ap.COLLECTION]["u1"]["messages"]
+        assert logged[-1]["by_name"] == "Hao Le" and logged[-1]["subject"] == "About Sunday"
+
+    def test_default_subject_and_empty_or_long_messages(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        asyncio.run(ap.message_applicant("u1", ap.ApplicantMessage(message="Hello"), self.REVIEWER))
+        assert sent[-1]["subject"] == ap.MESSAGE_SUBJECT_DEFAULT
+        for bad in ("   ", "x" * (ap.APPLICANT_MESSAGE_MAX + 1)):
+            with pytest.raises(HTTPException):
+                asyncio.run(ap.message_applicant("u1", ap.ApplicantMessage(message=bad), self.REVIEWER))
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(ap.message_applicant("nobody", ap.ApplicantMessage(message="Hi"), self.REVIEWER))
+        assert exc.value.status_code == 404
+
+    @pytest.mark.parametrize("status,decision", [(ap.S_SUBMITTED, "shortlist"), (ap.S_SUBMITTED, "reject"),
+                                                 (ap.S_SHORTLISTED, "accept")])
+    def test_a_decision_email_carries_the_reviewers_note(self, monkeypatch, status, decision):
+        fake_db, sent, _ = self._db(monkeypatch, status=status)
+        asyncio.run(ap.decide("u1", ap.Decision(decision=decision, message="Great interview!\nSee you Sunday."), self.REVIEWER))
+        body = sent[-1]["body_html"]
+        assert "A note from Hao Le" in body and "<p>Great interview!<br>See you Sunday.</p>" in body
+        assert fake_db.collections[ap.COLLECTION]["u1"]["decision_message"]["text"] == "Great interview!\nSee you Sunday."
+
+    def test_no_note_means_the_usual_email(self, monkeypatch):
+        fake_db, sent, _ = self._db(monkeypatch)
+        asyncio.run(ap.decide("u1", ap.Decision(decision="shortlist"), self.REVIEWER))
+        assert "A note from" not in sent[-1]["body_html"]
+        assert "decision_message" not in fake_db.collections[ap.COLLECTION]["u1"]
+
+    def test_the_card_has_the_note_box_the_email_form_and_the_history(self, monkeypatch):
+        self._db(monkeypatch)
+        asyncio.run(ap.message_applicant("u1", ap.ApplicantMessage(message="Hello there", subject="Hi"), self.REVIEWER))
+        from starlette.requests import Request
+        request = Request({"type": "http", "method": "GET", "path": "/apply/admin", "headers": [],
+                           "query_string": b"", "server": ("t", 80), "scheme": "http", "root_path": ""})
+        html = asyncio.run(ap.admin_applications(request, User(id="r1", username="haole"))).body.decode()
+        assert 'id="dnote-u1"' in html and "sendMessage('u1', this)" in html
+        assert "Email Jo · 1 sent" in html and "Hello there" in html
+        assert "body: JSON.stringify({ decision, message: note || null })" in html
+        assert "Anything typed and not yet sent" in html and "if (el && !el.value) el.value = value;" in html

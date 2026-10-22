@@ -933,6 +933,37 @@
     })(start);
   }
 
+  // A confirmed Bootcamp member's page: the next session up top (when,
+  // where, what), then all six, each marked done / next as the term goes on.
+  function renderBootcamp(state) {
+    stopTicking();
+    const sched = state.bootcamp_schedule || [];
+    const next = sched.find((x) => x.status === "next");
+    const row = (x) => `
+      <div class="apl-sched-row is-${x.status}">
+        <span class="apl-sched-n">${x.number}</span>
+        <div class="apl-sched-main">
+          <div class="apl-sched-date">${esc(x.date_label)}${x.status === "next" ? ' <span class="apl-sched-tag">Next</span>' : ""}${
+            x.status === "done" ? ' <span class="apl-sched-tag is-done">Done</span>' : ""}</div>
+          <div class="apl-sched-meta">${esc(x.time_label)} · ${esc(x.venue)}${x.title ? ` · <strong>${esc(x.title)}</strong>` : ""}</div>
+        </div>
+      </div>`;
+    $("#app").innerHTML = panel(`${esc(state.programme || "Quant Bootcamp")}`, `
+      <p class="apl-offer-head" style="margin-top:16px;">You're in! &#127881;</p>
+      ${next ? `
+      <div class="apl-next">
+        <div class="apl-next-label">Next session</div>
+        <div class="apl-next-when">${esc(next.date_label)}, ${esc(next.time_label)}</div>
+        <div class="apl-next-where">${esc(next.venue)}</div>
+        ${next.title ? `<div class="apl-next-what">${esc(next.title)}</div>` : ""}
+        <div class="apl-next-bring">Bring a laptop and something to take notes with.</div>
+      </div>` : `<p>That's all six sessions done. Thank you for taking part!</p>`}
+      <h4 class="apl-sched-title">All sessions · Sundays, please come to all six</h4>
+      <div class="apl-sched">${sched.map(row).join("")}</div>
+      <p class="apl-hint" style="margin-top:14px;">Your membership is active (see your <a href="/profile">profile</a>).</p>
+      <a class="btn" href="/" style="margin-top:8px;">Back to the trading floor</a>`);
+  }
+
   function renderDone(state) {
     stopTicking();
     const decided = state.status === "accepted" || state.status === "rejected";
@@ -947,21 +978,9 @@
       body = `<p>You declined your offer for <strong>${esc(state.programme || "")}</strong>. Thank you
              for letting us know, and we hope to see you again. If that was a mistake, please contact us.</p>`;
     } else if (state.status === "accepted" && state.offer_response === "accepted") {
-      const sched = state.bootcamp_schedule || [];
       body = `<p class="apl-offer-head">You're in! &#127881;</p>
              <p>You've accepted your place on <strong>${esc(state.programme || "")}</strong>, and your membership
-             is now active (see your <a href="/profile">profile</a>).
-             ${sched.length ? "Here are the Sunday sessions; please come to all six." : "More information will follow soon."}</p>
-             ${sched.length ? `<div class="apl-sched">${sched.map((x) => `
-               <div class="apl-sched-row is-${x.status}">
-                 <span class="apl-sched-n">${x.number}</span>
-                 <div class="apl-sched-main">
-                   <div class="apl-sched-date">${esc(x.date_label)}${x.status === "next" ? ' <span class="apl-sched-tag">Next</span>' : ""}
-                     ${x.status === "done" ? ' <span class="apl-sched-tag is-done">Done</span>' : ""}</div>
-                   <div class="apl-sched-meta">${esc(x.time_label)} · ${esc(x.venue)}${x.title ? ` · <strong>${esc(x.title)}</strong>` : ""}</div>
-                 </div>
-               </div>`).join("")}</div>
-               <p class="apl-hint" style="margin-top:10px;">Bring a laptop and something to take notes with.</p>` : ""}`;
+             is now active (see your <a href="/profile">profile</a>). More information will follow soon.</p>`;
     } else if (state.status === "accepted") {
       body = `<p class="apl-offer-head">Congratulations! &#127881;</p>
              <p>We'd love to have you on <strong>${esc(state.programme || "")}</strong>, and we've emailed you
@@ -1421,6 +1440,8 @@
     // assessment/submitted stepper above would just be clutter.
     if (key === "analyst") { $("#steps").innerHTML = ""; renderAnalyst(state); return; }
     if (key === "ineligible") { $("#steps").innerHTML = ""; renderIneligible(state); return; }
+    // A confirmed Bootcamp member: their page is the sessions, nothing else.
+    if ((state.bootcamp_schedule || []).length) { $("#steps").innerHTML = ""; renderBootcamp(state); return; }
 
     renderSteps(state);
     switch (state.status) {

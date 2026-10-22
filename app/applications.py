@@ -572,6 +572,30 @@ class Decision(BaseModel):
     decision: str      # "shortlist" | "auto_shortlist" | "accept" | "reject"
     note: Optional[str] = None     # auto_shortlist only: the details that back up the criterion
     reason: Optional[str] = None   # auto_shortlist only: a key of AUTO_SHORTLIST_REASONS
+    message: Optional[str] = None  # a personal note from the reviewer, added to the decision email
+
+
+class ApplicantMessage(BaseModel):
+    message: str
+    subject: Optional[str] = None
+
+
+PERSONAL_NOTE_MAX = 2000
+APPLICANT_MESSAGE_MAX = 5000
+MESSAGE_SUBJECT_DEFAULT = "Alpha Fund: a message about your application"
+MESSAGES_KEPT = 30
+
+
+def _paragraphs_html(text: str) -> str:
+    """Plain text from a reviewer as email HTML: escaped, a paragraph per
+    blank-line-separated block, line breaks kept."""
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", html.escape(text.strip())) if b.strip()]
+    return "".join(f"<p>{b.replace(chr(10), '<br>')}</p>" for b in blocks)
+
+
+async def _reviewer_name(reviewer: User) -> str:
+    by_id, by_username, _ = await _people()
+    return by_id.get(str(reviewer.id)) or by_username.get(reviewer.username) or reviewer.username
 
 
 class ScheduleInterview(BaseModel):
@@ -2007,6 +2031,9 @@ def _review_row(uid: str, application: Dict[str, Any], viewer_id: Optional[str] 
                                 and application.get("status") in (S_SUBMITTED, S_SHORTLISTED)),
         "last_availability_request": (application.get("availability_requests") or [None])[-1],
         "waitlist": application.get("waitlist") if application.get("status") == S_SHORTLISTED else None,
+        "messages": [{**m, "at": _as_utc(m.get("at"))} for m in (application.get("messages") or [])][::-1],
+        "decision_message": ({**application["decision_message"], "at": _as_utc(application["decision_message"].get("at"))}
+                             if application.get("decision_message") else None),
         "reject_later": (application.get("reject_later")
                          if application.get("status") in (S_SUBMITTED, S_SHORTLISTED) else None),
         "offer_response": (application.get("offer_response") or {}).get("response"),
@@ -3054,7 +3081,8 @@ _REJECTED_BODY_ANALYST = (
 )
 
 
-async def _send_decision_email(application: dict, status: str, uid: Optional[str] = None) -> None:
+async def _send_decision_email(application: dict, status: str, uid: Optional[str] = None,
+                               note: Optional[str] = None, note_by: str = "") -> None:
     to = await _applicant_to(application)
     copy = _DECISION_COPY.get(status)
     if not to or not copy:
@@ -3069,6 +3097,10 @@ async def _send_decision_email(application: dict, status: str, uid: Optional[str
     if status == S_REJECTED and programme in mb.ANALYST_MEMBERSHIPS:
         body_template = _REJECTED_BODY_ANALYST
     body = f"<p>Hi {name},</p>" + body_template.format(programme=html.escape(programme))
+    if note and note.strip():
+        body += ('<div style="border-left:3px solid #1B75BC;background:#f3f7fb;padding:10px 14px;margin:18px 0;">'
+                 f'<div style="font-size:12px;color:#555;margin-bottom:4px;">A note from {html.escape(note_by or "the committee")}</div>'
+                 f'{_paragraphs_html(note)}</div>')
     cta_url = copy.get("cta_url")
     await mailer.send_email(
         to=to, subject=copy["subject"], title=copy["title"], body_html=body,
@@ -3273,14 +3305,53 @@ async def decide(user_id: str, payload: Decision, reviewer: User = Depends(requi
         application["decided_at"] = _now()
         application["decided_by"] = reviewer.username
 
+    note = (payload.message or "").strip()
+    if len(note) > PERSONAL_NOTE_MAX:
+        raise HTTPException(400, f"Keep the note under {PERSONAL_NOTE_MAX} characters")
+    note_by = await _reviewer_name(reviewer) if note else ""
+    if note:
+        application["decision_message"] = {"decision": application["status"], "text": note,
+                                           "by": reviewer.username, "by_name": note_by, "at": _now()}
     await _save(user_id, application)
-    await _send_decision_email(application, application["status"], user_id)
+    await _send_decision_email(application, application["status"], user_id, note=note, note_by=note_by)
     if application["status"] == S_REJECTED:
         await _cancel_interview_event(application)
 
     # Accepting makes the offer; the membership itself comes when they
     # confirm their place with the button on the platform (respond_to_offer).
     return {"ok": True, "status": application["status"]}
+
+
+@router.post("/admin/{user_id}/message")
+async def message_applicant(user_id: str, req: ApplicantMessage, reviewer: User = Depends(require_reviewer)):
+    """Email one applicant a message a reviewer has written, from the fund's
+    address, signed with the reviewer's name. Every message is kept on the
+    application so the other reviewers can see what was said."""
+    text = (req.message or "").strip()
+    if not text:
+        raise HTTPException(400, "Write a message")
+    if len(text) > APPLICANT_MESSAGE_MAX:
+        raise HTTPException(400, f"Keep the message under {APPLICANT_MESSAGE_MAX} characters")
+    subject = " ".join((req.subject or "").split())[:200] or MESSAGE_SUBJECT_DEFAULT
+    application = await _load(user_id)
+    if application is None:
+        raise HTTPException(404, "No such application")
+    await _with_name(user_id, application)
+    to = await _applicant_to(application)
+    if not to:
+        raise HTTPException(400, "This applicant has no email address on file")
+    by_name = await _reviewer_name(reviewer)
+    first = ((application.get("full_name") or "").split() or [application.get("username") or "there"])[0]
+    body = (f"<p>Hi {html.escape(first)},</p>{_paragraphs_html(text)}"
+            f"<p>{html.escape(by_name)}<br>Oxford Alpha Fund</p>")
+    sent = await mailer.send_email(to=to, subject=subject, title=subject, body_html=body)
+    if not sent:
+        raise HTTPException(502, "The email didn't send. Try again in a minute.")
+    messages = list(application.get("messages") or [])
+    messages.append({"subject": subject, "text": text, "by": reviewer.username, "by_name": by_name, "at": _now()})
+    application["messages"] = messages[-MESSAGES_KEPT:]
+    await _save(user_id, application)
+    return {"ok": True, "sent_to": to}
 
 
 async def _by_on(username: Optional[str], at) -> str:

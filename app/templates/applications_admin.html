@@ -390,6 +390,19 @@
     .apa-mail p { margin-bottom: 14px; }
     .apa-mail-row { display: flex; gap: 12px; align-items: baseline; margin: 0 0 10px; }
     .apa-mail-label { flex: 0 0 78px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .apa-dnote { width: 100%; box-sizing: border-box; font: inherit; font-size: 13.5px; padding: 8px 10px; margin: 12px 0 8px;
+                 border: 1px solid var(--border); background: var(--bg); color: var(--text); resize: vertical; }
+    .apa-note-sent { font-size: 13px; color: var(--muted); margin: 8px 0 0; }
+    .apa-note-sent span { color: var(--text); white-space: pre-wrap; }
+    .apa-msg { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+    .apa-msg summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--brand); }
+    .apa-msg-form { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .apa-msg-form input, .apa-msg-form textarea { font: inherit; font-size: 13.5px; padding: 8px 10px; border: 1px solid var(--border);
+                                                  background: var(--bg); color: var(--text); resize: vertical; }
+    .apa-msg-form .btn { align-self: flex-start; }
+    .apa-msg-log { list-style: none; padding: 0; margin: 12px 0 0; border-top: 1px solid var(--border); }
+    .apa-msg-log li { padding: 8px 0; border-bottom: 1px solid var(--border); font-size: 13px; display: flex; flex-direction: column; gap: 2px; }
+    .apa-msg-body { white-space: pre-wrap; color: var(--muted); }
     .apa-reopen { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 18px 0; font-size: 13px; }
     .apa-reopen input { font: inherit; padding: 4px 8px; }
     .apa-mail-seg { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -1052,6 +1065,8 @@
                   onclick="moveProgramme('{{ r.user_id }}', this)">Move to {{ r.programme | replace('Bootcamp', 'Analyst') }}</button>
         {% endif %}{% endmacro %}
         {% if r.status == "submitted" %}
+        <textarea class="apa-dnote" id="dnote-{{ r.user_id }}" rows="2" maxlength="2000"
+                  placeholder="Optional: a personal note to add to the email they get when you shortlist, accept or reject"></textarea>
         <div class="apa-decide">
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'shortlist')">Shortlist for interview</button>
           <button class="btn" onclick="autoShortlist('{{ r.user_id }}')">Automatic shortlist</button>
@@ -1066,6 +1081,8 @@
         {% elif r.shortlisted_by %}
         <p class="apa-decided-note">Shortlisted by {{ r.shortlisted_by }}</p>
         {% endif %}
+        <textarea class="apa-dnote" id="dnote-{{ r.user_id }}" rows="2" maxlength="2000"
+                  placeholder="Optional: a personal note to add to the email they get when you shortlist, accept or reject"></textarea>
         <div class="apa-decide">
           <button class="btn primary" onclick="decide('{{ r.user_id }}', 'accept')">Accept</button>
           <button class="btn ghost" onclick="decide('{{ r.user_id }}', 'reject')">Reject</button>
@@ -1080,6 +1097,28 @@
           {{ r.status | capitalize }}{% if r.decided_by %} by {{ r.decided_by }}{% endif %}
         </p>
         {% endif %}
+        {% if r.decision_message %}
+        <p class="apa-note-sent">Note added to the {{ r.decision_message.decision }} email by {{ r.decision_message.by_name or r.decision_message.by }}:
+          <span>{{ r.decision_message.text }}</span></p>
+        {% endif %}
+
+        <details class="apa-msg">
+          <summary>Email {{ (r.full_name or r.username).split(' ')[0] }}{% if r.messages %} · {{ r.messages | length }} sent{% endif %}</summary>
+          <div class="apa-msg-form">
+            <input class="apa-msg-subject" id="msubj-{{ r.user_id }}" maxlength="200" placeholder="Subject (optional): Alpha Fund: a message about your application">
+            <textarea class="apa-msg-text" id="mtext-{{ r.user_id }}" rows="4" maxlength="5000"
+                      placeholder="Write your message. It's sent from Alpha Fund, signed with your name, to their Oxford and personal addresses."></textarea>
+            <button class="btn primary" onclick="sendMessage('{{ r.user_id }}', this)">Send email</button>
+          </div>
+          {% if r.messages %}
+          <ul class="apa-msg-log">
+            {% for m in r.messages %}
+            <li><span class="msp-muted">{{ m.at.strftime("%d %b, %H:%M") if m.at else "" }} · {{ m.by_name or m.by }}</span>
+              <strong>{{ m.subject }}</strong><span class="apa-msg-body">{{ m.text }}</span></li>
+            {% endfor %}
+          </ul>
+          {% endif %}
+        </details>
 
         {% if is_admin %}
           <!-- Record-keeping, not a decision: redo resets the assessment,
@@ -1197,9 +1236,20 @@
         const swap = (now, next) => {
           if (!now) return;
           if (!next) { now.remove(); return; }            // e.g. a deleted application
+          // Anything typed and not yet sent (a decision note, a message, a
+          // comment) survives the card being redrawn.
+          const drafts = [...now.querySelectorAll("textarea[id], input[id]")]
+            .filter((el) => el.type !== "hidden" && el.type !== "checkbox" && el.value)
+            .map((el) => [el.id, el.value]);
+          const open = [...now.querySelectorAll("details")].map((d) => d.open);
           for (const a of [...now.attributes]) if (!next.hasAttribute(a.name)) now.removeAttribute(a.name);
           for (const a of next.attributes) now.setAttribute(a.name, a.value);
           now.innerHTML = next.innerHTML;
+          for (const [id, value] of drafts) {
+            const el = now.querySelector(`#${CSS.escape(id)}`);
+            if (el && !el.value) el.value = value;
+          }
+          now.querySelectorAll("details").forEach((d, i) => { if (open[i]) d.open = true; });
         };
         for (let i = 0; i < want.length; i += 25) {
           const batch = want.slice(i, i + 25);
@@ -1984,7 +2034,10 @@
 
     async function decide(userId, decision) {
       const verbs = { shortlist: "Shortlist", accept: "Accept", reject: "Reject" };
-      const extra = decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "";
+      const noteEl = document.getElementById("dnote-" + userId);
+      const note = noteEl ? noteEl.value.trim() : "";
+      const extra = (decision === "shortlist" ? " They'll get an email that they've been shortlisted for interview." : "")
+        + (note ? " Your note will be added to the email." : "");
       const confirmed = decision === "reject" ? await askRejectConfirm()
         : decision === "accept" ? await askAcceptConfirm()
         : confirm(verbs[decision] + " this application?" + extra);
@@ -1994,17 +2047,42 @@
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ decision }),
+          body: JSON.stringify({ decision, message: note || null }),
         });
         const d = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
-        flash({ shortlist: "Shortlisted. They've been emailed.", accept: "Accepted. Their offer has been emailed.",
-                reject: "Rejected. They've been emailed." }[decision] || "Done.", false);
+        if (noteEl) noteEl.value = "";
+        flash(({ shortlist: "Shortlisted. They've been emailed", accept: "Accepted. Their offer has been emailed",
+                reject: "Rejected. They've been emailed" }[decision] || "Done") + (note ? ", with your note." : "."), false);
         await refreshCards([userId]);
       } catch (err) {
         flash(err.message, true);
         refreshCards([userId], { quiet: true });   // the page may be out of date
       }
+    }
+
+    // Email one applicant a message, from Alpha Fund, signed with your name.
+    async function sendMessage(userId, btn) {
+      const textEl = document.getElementById("mtext-" + userId), subjEl = document.getElementById("msubj-" + userId);
+      const message = textEl.value.trim();
+      if (!message) { flash("Write a message first.", true); textEl.focus(); return; }
+      if (!confirm("Send this email now? It goes out from Alpha Fund, signed with your name.")) return;
+      btn.disabled = true;
+      try {
+        const r = await fetch(`/apply/admin/${encodeURIComponent(userId)}/message`, {
+          method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, subject: subjEl.value.trim() || null }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.detail || `HTTP ${r.status}`);
+        textEl.value = ""; subjEl.value = "";
+        flash(`Sent to ${d.sent_to}.`, false);
+        await refreshCards([userId]);
+      } catch (err) {
+        flash(err.message, true);
+        refreshCards([userId], { quiet: true });   // the page may be out of date
+      }
+      btn.disabled = false;
     }
 
     async function moveProgramme(userId, btn) {
