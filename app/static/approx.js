@@ -198,8 +198,10 @@
 
     // Normal or modified: the host's list, the rules shown, the settings.
     async function setMode(m) {
+      // The rules switch whoever is looking; only the host's builder needs the
+      // bank (and so a login) for the modified question kinds.
       if (m === "modified") {
-        try { await loadBank(); } catch (err) { $("#hostMsg").textContent = err.message; return; }
+        try { await loadBank(); } catch (err) { $("#hostMsg").textContent = err.message; }
       }
       mode = m;
       document.querySelectorAll(".ax-mode-btn").forEach((b) => {
