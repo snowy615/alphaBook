@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Approx - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css">
-  <link rel="stylesheet" href="/static/approx.css?v=4">
+  <link rel="stylesheet" href="/static/approx.css?v=6">
   <script src="/static/theme.js"></script>
 </head>
 
@@ -50,7 +50,14 @@
         </section>
 
         <section class="ax-card">
-          <div class="ax-card-label">Scoring</div>
+          <div class="ax-host-head">
+            <div class="ax-card-label">Scoring</div>
+            <div class="ax-mode ax-mode-small" role="group" aria-label="Game mode">
+              <button type="button" class="ax-mode-btn is-on" data-mode="normal" aria-pressed="true">Normal</button>
+              <button type="button" class="ax-mode-btn" data-mode="modified" aria-pressed="false">Modified</button>
+            </div>
+          </div>
+          <div id="rulesNormal">
           <div class="ax-formula-big">( 10 + Σ ⌊high ÷ low⌋ ) × 2<sup>missed</sup></div>
           <p class="ax-muted ax-formula-sub">Σ over your good intervals · <strong>lowest score wins</strong></p>
           <div class="ax-example">
@@ -64,6 +71,22 @@
             <li>Scientific notation works: <code>3e6</code>, <code>3x10^6</code>, <code>10^7</code>.</li>
             <li>The game runs in full screen with copy and paste turned off. It ends when the clock runs out or every team is done.</li>
           </ol>
+          </div>
+          <div id="rulesModified" class="hidden">
+            <div class="ax-formula-big">place on normal + place on closest</div>
+            <p class="ax-muted ax-formula-sub">N teams: best on a part gets N, the next N − 1, and so on · <strong>highest total wins</strong></p>
+            <div class="ax-example">
+              <div class="ax-example-row"><span>Closest number: 5 teams, answer 50</span><span>guesses 48, 55, 40, 70, 48</span></div>
+              <div class="ax-example-row"><span>48 (first in), 48, 55, 40, 70</span><span>5, 4, 3, 2, 1 pts</span></div>
+              <div class="ax-example-row ax-example-total"><span>2nd on normal, 1st on closest</span><span>4 + 5 = 9</span></div>
+            </div>
+            <ol class="ax-steps">
+              <li><strong>Normal questions</strong> play as usual: intervals, your score on them shown as you go, lowest best.</li>
+              <li><strong>Closest-number questions</strong>: one answer each, final once you lock it in. Closest gets N points, then N − 1…; equally close goes to whoever answered first.</li>
+              <li>Their answers come from the game itself: a number the system drew, or one worked out from every team's answers (two-thirds of the average, the most common answer, how often a digit appears…). So they're only shown at the end.</li>
+              <li>The game runs in full screen with copy and paste turned off. It ends when the clock runs out or every team is done.</li>
+            </ol>
+          </div>
         </section>
       </div>
 
@@ -75,8 +98,12 @@
           </div>
           <span class="ax-count" id="qCount">0 questions</span>
         </div>
-        <p class="ax-muted">Pick from the question bank or write your own with the answer. You run the game and watch the
-          leaderboard; you don't play.</p>
+        <div class="ax-mode" role="group" aria-label="Game mode">
+          <button type="button" class="ax-mode-btn is-on" data-mode="normal" aria-pressed="true">Normal</button>
+          <button type="button" class="ax-mode-btn" data-mode="modified" aria-pressed="false">Modified</button>
+        </div>
+        <p class="ax-muted" id="modeLede">Pick from the question bank or write your own with the answer. You run the game and
+          watch the leaderboard; you don't play.</p>
 
         <div id="hostRows" class="ax-rows"></div>
         <div class="ax-row-actions">
@@ -96,7 +123,7 @@
         <div class="ax-settings">
           <label class="ax-field"><span>Time limit</span>
             <span class="ax-field-input"><input type="number" id="minutes" class="ax-input ax-num" value="30" min="1" max="120"> min</span></label>
-          <label class="ax-field"><span>Submissions per team</span>
+          <label class="ax-field" id="attemptsField"><span>Submissions per team</span>
             <span class="ax-field-input"><input type="number" id="attempts" class="ax-input ax-num" min="1"> <span class="ax-muted" id="attemptsHint"></span></span></label>
         </div>
 
@@ -107,7 +134,7 @@
   </div>
 
   <div class="footer"><p>{{ app_name }} • Approx</p></div>
-  <script src="/static/approx.js?v=7"></script>
+  <script src="/static/approx.js?v=9"></script>
   <script>Approx.landing();</script>
 </body>
 

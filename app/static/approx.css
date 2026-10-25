@@ -83,8 +83,28 @@
 .ax-field-input { display: flex; align-items: center; gap: 8px; color: var(--text); }
 .ax-num { width: 80px; padding: 7px 10px; }
 
+/* Normal / modified */
+.ax-mode { display: inline-flex; border: 1px solid var(--border-strong); margin: 12px 0 8px; }
+.ax-mode-btn { font: inherit; font-size: 13.5px; padding: 6px 16px; border: 0; background: transparent; color: var(--muted);
+               cursor: pointer; }
+.ax-mode-btn + .ax-mode-btn { border-left: 1px solid var(--border-strong); }
+.ax-mode-btn:hover { color: var(--text); }
+.ax-mode-btn.is-on { background: var(--brand-wash); color: var(--brand); font-weight: 600; }
+.ax-mode-small { margin: 0; }
+.ax-mode-small .ax-mode-btn { font-size: 12px; padding: 3px 10px; }
+.ax-row-fields.ax-row-mod { grid-template-columns: 1fr; }
+.ax-params { display: flex; flex-wrap: wrap; gap: 8px; }
+.ax-params .ax-input { flex: 1 1 130px; width: 0; padding: 8px 10px; }
+.ax-row-answer { display: block; width: 100%; margin-top: 8px; padding: 8px 10px; }
+.ax-kind { display: inline-block; font-size: 11.5px; font-weight: 400; color: var(--muted); border: 1px solid var(--border);
+           padding: 0 6px; white-space: nowrap; }
+.ax-hint { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.45; }
+.ax-set { grid-column: 2 / -1; display: flex; gap: 6px; margin-top: 4px; }
+.ax-set .ax-input { flex: 1; max-width: 260px; padding: 6px 10px; }
+.ax-set .btn { padding: 5px 12px; }
+
 /* ── Game ─────────────────────────────────────────────────────────────── */
-.ax-bar { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: 2fr 1fr 1fr 1fr;
+.ax-bar { position: sticky; top: 0; z-index: 5; display: grid; grid-template-columns: var(--cols, 2fr 1fr 1fr 1fr);
           margin: 12px 0 14px; background: var(--panel); border: 1px solid var(--border-strong); }
 @media (max-width: 640px) { .ax-bar { grid-template-columns: 1fr 1fr; } .ax-bar .ax-stat:first-child { grid-column: 1 / -1; } }
 .ax-stat { padding: 10px 14px; border-right: 1px solid var(--border); min-width: 0; }
@@ -93,6 +113,7 @@
 .ax-stat span { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
 .ax-stat strong { display: block; font-size: 22px; font-variant-numeric: tabular-nums; margin-top: 2px; overflow-wrap: anywhere; }
 .ax-stat.ax-hero-stat strong { font-size: 30px; color: var(--brand); }
+.ax-stat strong small { font-size: 13px; color: var(--muted); font-weight: 600; }
 .ax-meter { height: 4px; background: var(--border); margin-top: 8px; }
 .ax-meter > i { display: block; height: 100%; background: var(--brand); }
 .ax-meter.is-low > i { background: var(--red); }

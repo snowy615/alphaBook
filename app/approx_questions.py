@@ -7,6 +7,11 @@ estimate, or a bit of maths or probability). The real-world answers are
 well documented, the maths ones exact (each was computed, not recalled).
 Every answer is positive, as Estimathon intervals must be. ``note`` is shown
 with the answer once the game is over: how you might have got there.
+
+MODIFIED_BANK is for the modified mode's closest-number questions, where each
+team gives one number and the closest scores most. Its answers mostly don't exist until the game is
+played: a number the system draws, or one worked out from what the teams
+submit (see approx.KINDS). A ``fixed`` one with no answer is set by the host.
 """
 from typing import Dict, List
 
@@ -142,3 +147,52 @@ for _category, _ids in CATEGORIES.items():
             _q["category"] = _category
 
 BY_ID: Dict[str, Dict] = {q["id"]: q for q in BANK}
+
+
+# ── Modified mode: questions the game answers itself ───────────────────────
+MODIFIED_CATEGORY = "Made by the game"
+MODIFIED_BANK: List[Dict] = [
+    {"id": "m-random-100", "kind": "random", "min": 1, "max": 100,
+     "text": "The system has picked a random whole number from 1 to 100. Estimate it.",
+     "note": "Nothing to go on, so aim for the middle: 50 is closest on average."},
+    {"id": "m-random-1000", "kind": "random", "min": 1, "max": 1000,
+     "text": "The system has picked a random whole number from 1 to 1000. Estimate it.",
+     "note": "Same idea: the middle of the range is closest on average, but so is everyone else's guess."},
+    {"id": "m-two-thirds", "kind": "mean", "factor": 2 / 3, "min": 0, "max": 100,
+     "text": "Give two-thirds of the average of every team's answer to this question. Answer from 0 to 100.",
+     "note": "Keynes's beauty contest: if every team reasons all the way down, the answer is 0. It rarely is."},
+    {"id": "m-average", "kind": "mean", "factor": 1, "min": 1, "max": 100,
+     "text": "Estimate the average of every team's answer to this question. Answer from 1 to 100.",
+     "note": "A coordination game: whatever the teams expect each other to say becomes the answer."},
+    {"id": "m-median", "kind": "median", "min": 1, "max": 1000,
+     "text": "Estimate the median of every team's answer to this question. Answer from 1 to 1000.",
+     "note": "The middle answer once they're sorted: one bold team can't drag it the way it drags an average."},
+    {"id": "m-sum", "kind": "sum", "min": 1, "max": 100,
+     "text": "Estimate the sum of every team's answer to this question. Answer from 1 to 100.",
+     "note": "With n teams the sum is n times the average, so count the teams first."},
+    {"id": "m-max-identical", "kind": "max_identical", "min": 1, "max": 10,
+     "text": "Estimate the largest number of teams that give exactly the same answer to this question. Answer from 1 to 10.",
+     "note": "If every team says the same number, that's the number of teams; if all differ, it's 1."},
+    {"id": "m-distinct", "kind": "distinct", "min": 1, "max": 20,
+     "text": "Estimate how many different numbers the teams give for this question. Answer from 1 to 20.",
+     "note": "At most the number of teams. Every team that copies the obvious answer brings it down."},
+    {"id": "m-digit-1", "kind": "digit_count", "digit": "1", "min": 0,
+     "text": "Estimate how many times the digit 1 appears across every answer to every question in this game.",
+     "note": "Every number written out in full (1e3 counts as 1000), both ends of an interval. Your own answer here counts too."},
+    {"id": "m-digit-7", "kind": "digit_count", "digit": "7", "min": 0,
+     "text": "Estimate how many times the digit 7 appears across every answer to every question in this game.",
+     "note": "Rarer than 1 (Benford's law), unless enough teams decide to make it common."},
+    {"id": "m-lowest-score", "kind": "lowest_score", "min": 0,
+     "text": "Estimate the lowest total score any team gets once the game is done.",
+     "note": "Counted in points on the other closest-number questions, so the answer doesn't depend on itself."},
+    {"id": "m-highest-score", "kind": "highest_score", "min": 0,
+     "text": "Estimate the winning team's total score once the game is done.",
+     "note": "Counted in points on the other closest-number questions: at most (number of teams) × (those questions)."},
+    {"id": "m-oaf-applications", "kind": "fixed",
+     "text": "Estimate the total number of applications to OAF Quant this cycle.",
+     "note": "Both programmes, Quant Bootcamp and Quant Analyst."},
+]
+for _q in MODIFIED_BANK:
+    _q["category"] = MODIFIED_CATEGORY
+
+MODIFIED_BY_ID: Dict[str, Dict] = {q["id"]: q for q in MODIFIED_BANK}
