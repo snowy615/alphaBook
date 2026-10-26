@@ -372,6 +372,17 @@
     } catch { /* leave all three hidden */ }
   }
 
+  // The Bootcamp page is only for Bootcamp members and the Analysts who run
+  // it, so the link only shows for them.
+  async function refreshBootcampLink() {
+    const link = $("#bootcampLink");
+    if (!link) return;
+    try {
+      const d = await fetchJSON("/bootcamp/access");
+      link.style.display = d && d.access ? "" : "none";
+    } catch { link.style.display = "none"; }
+  }
+
   async function initAuthUI() {
     const loginBox = $("#loginBox");
     const userBox = $("#userBox");
@@ -395,6 +406,7 @@
       if (adminLink) adminLink.style.display = isAdmin ? "inline-block" : "none";
       if (heroCta) { heroCta.textContent = "Open the market"; heroCta.href = "/market"; }
       refreshApplyBadge();
+      refreshBootcampLink();
     }
 
     try {

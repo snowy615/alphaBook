@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bootcamp - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/theme.js"></script>
+  <style>
+    .bc-next { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; padding: 14px 16px; border: 1px solid var(--border);
+               background: var(--panel); margin-bottom: 18px; }
+    .bc-next-label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--brand); font-weight: 700; }
+    .bc-next-when { font-weight: 700; font-size: 16px; margin-top: 2px; }
+    .bc-next-where { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+    .bc-dates { display: flex; flex-wrap: wrap; gap: 6px; margin-left: auto; }
+    .bc-date { font-size: 12px; padding: 3px 8px; border: 1px solid var(--border-strong); color: var(--muted); white-space: nowrap; }
+    .bc-date.is-next { border-color: var(--brand); color: var(--brand); font-weight: 600; }
+    .bc-date.is-done { opacity: .5; text-decoration: line-through; }
+
+    .bc-tabs { display: flex; gap: 0; border: 1px solid var(--border-strong); width: max-content; max-width: 100%; margin: 0 0 14px; }
+    .bc-tab { font: inherit; font-size: 13.5px; padding: 6px 14px; border: 0; background: transparent; color: var(--muted); cursor: pointer; }
+    .bc-tab + .bc-tab { border-left: 1px solid var(--border-strong); }
+    .bc-tab.is-on { background: var(--brand-wash); color: var(--brand); font-weight: 600; }
+
+    .bc-form { display: grid; gap: 12px; }
+    .bc-form textarea { min-height: 130px; resize: vertical; font-family: inherit; line-height: 1.5; }
+    .bc-kinds { display: flex; gap: 0; border: 1px solid var(--border-strong); width: max-content; }
+    .bc-files-pick { font-size: 13.5px; }
+    .bc-hint { font-size: 12px; color: var(--muted); margin: 0; }
+    .bc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+    .bc-post { margin-bottom: 14px; padding: 16px 18px; }
+    .bc-post-top { display: flex; gap: 10px; align-items: baseline; justify-content: space-between; flex-wrap: wrap; }
+    .bc-post h3 { margin: 6px 0 2px; font-size: 19px; }
+    .bc-kind { display: inline-block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700;
+               padding: 2px 8px; border: 1px solid var(--border-strong); color: var(--muted); }
+    .bc-kind.is-lecture { border-color: var(--brand); color: var(--brand); background: var(--brand-wash); }
+    .bc-meta { font-size: 12.5px; color: var(--muted); }
+    .bc-body { margin: 12px 0 0; white-space: pre-wrap; line-height: 1.6; font-size: 14.5px; overflow-wrap: anywhere; }
+    .bc-body a { color: var(--brand); }
+    .bc-files { margin-top: 14px; border-top: 1px solid var(--border); }
+    .bc-file { display: flex; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 14px; }
+    .bc-file:last-child { border-bottom: 0; }
+    .bc-file a { color: var(--text); font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+    .bc-file a:hover { color: var(--brand); }
+    .bc-file-ext { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand);
+                   border: 1px solid var(--brand); padding: 1px 5px; min-width: 38px; text-align: center; }
+    .bc-file-size { color: var(--muted); font-size: 12.5px; margin-left: auto; white-space: nowrap; }
+    .bc-file-x { padding: 2px 8px; color: var(--muted); }
+    .bc-file-x:hover { color: var(--red); }
+    .bc-edit-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
+    .bc-empty, .bc-denied { color: var(--muted); font-size: 14.5px; }
+    .bc-denied { padding: 26px 22px; text-align: center; }
+    .bc-progress { font-size: 13px; color: var(--muted); }
+    .bc-check { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+    .bc-emailed { font-size: 12.5px; color: var(--muted); }
+    .bc-emailed.is-done { color: var(--green); }
+  </style>
+</head>
+
+<body>
+  <div class="topbar">
+    <div class="brand">
+      <a href="/" class="brand-link">
+        <div class="logo"><img src="/static/alphabook.png" alt="AlphaBook" class="logo-img"></div>
+        <div class="titles">
+          <h1>{{ app_name }}</h1>
+          <div class="subtitle">Bootcamp</div>
+        </div>
+      </a>
+    </div>
+    <div class="actions">
+      <a href="/" class="btn ghost">Back to Platform</a>
+    </div>
+  </div>
+
+  <div class="container" style="max-width: 860px;">
+    <div class="msp-hero">
+      <h2>Quant Bootcamp</h2>
+      <p id="lede">Lectures, materials and announcements for the Bootcamp.</p>
+    </div>
+
+    <div id="msg" class="msp-msg hidden"></div>
+    <div id="denied" class="card bc-denied hidden"></div>
+
+    <div id="next"></div>
+
+    <!-- Analysts only: write a post -->
+    <div class="card msp-panel hidden" id="composer">
+      <div class="head">
+        <h3>New post</h3>
+        <span class="msp-muted">Analysts only · Bootcamp members see it straight away</span>
+      </div>
+      <div class="msp-panel-body bc-form" style="padding-top:12px;">
+        <div class="bc-kinds" role="group" aria-label="Kind of post">
+          <button type="button" class="bc-tab is-on" data-kind="lecture" aria-pressed="true">Lecture</button>
+          <button type="button" class="bc-tab" data-kind="announcement" aria-pressed="false">Announcement</button>
+        </div>
+        <input id="newTitle" class="msp-input" maxlength="150" placeholder="Session 2: Linear regression and overfitting" aria-label="Title">
+        <textarea id="newBody" class="msp-input" maxlength="10000" placeholder="What it covers, what to read beforehand, links to recordings…" aria-label="Post"></textarea>
+        <div>
+          <input type="file" id="newFiles" class="bc-files-pick" multiple aria-label="Attach files">
+          <p class="bc-hint">Slides, documents, spreadsheets, notebooks, code, images or zips, up to 25 MB each.</p>
+        </div>
+        <label class="bc-check"><input type="checkbox" id="newEmail"> <span id="newEmailLabel">Also email it to the Bootcamp</span></label>
+        <div class="bc-actions">
+          <button class="btn primary" id="newPost">Post</button>
+          <span class="bc-progress" id="newProgress"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bc-tabs hidden" id="filters" role="group" aria-label="Show">
+      <button type="button" class="bc-tab is-on" data-filter="">All</button>
+      <button type="button" class="bc-tab" data-filter="lecture">Lectures</button>
+      <button type="button" class="bc-tab" data-filter="announcement">Announcements</button>
+    </div>
+    <div id="feed"><p class="bc-empty">Loading…</p></div>
+  </div>
+
+  <script src="/static/bootcamp.js?v=2"></script>
+</body>
+
+</html>

@@ -4911,7 +4911,7 @@ class TestConfirmEmailByHand:
         js = Path(ap.__file__).parent.joinpath("static", "apply.js").read_text()
         assert "Any code we've sent you in the last 30 minutes works" in js
         assert "/Wait (\\d+)s/" in js
-        assert 'apply.js?v=16' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
+        assert 'apply.js?v=17' in Path(ap.__file__).parent.joinpath("templates", "apply.html").read_text()
 
 
 class TestReopenForOnePerson:

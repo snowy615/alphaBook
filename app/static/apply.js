@@ -961,6 +961,7 @@
       <h4 class="apl-sched-title">All sessions · Sundays, please come to all six</h4>
       <div class="apl-sched">${sched.map(row).join("")}</div>
       <p class="apl-hint" style="margin-top:14px;">Your membership is active (see your <a href="/profile">profile</a>).</p>
+      <a class="btn primary" href="/bootcamp" style="margin-top:8px;">Lectures, materials and announcements</a>
       <a class="btn" href="/" style="margin-top:8px;">Back to the trading floor</a>`);
   }
 
