@@ -412,3 +412,66 @@ class TestView:
         with pytest.raises(HTTPException) as exc:
             run(bc.view_file(p["id"], f["id"], CAMPER))
         assert "download it instead" in exc.value.detail
+
+
+class TestDirectLinks:
+    """With credentials that can sign, files come straight from storage."""
+
+    @pytest.fixture
+    def signing(self, db, monkeypatch):
+        calls = []
+
+        def generate_signed_url(self, **kw):
+            calls.append((self.name, kw))
+            return f"https://storage.example/{self.name}?sig=1"
+        monkeypatch.setattr(_Blob, "generate_signed_url", generate_signed_url, raising=False)
+        return calls
+
+    def test_downloads_redirect_to_a_short_lived_storage_link(self, db, signing):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("Week 1.pdf"), ANALYST))["post"]["files"][0]
+        r = run(bc.download_file(p["id"], f["id"], user=CAMPER))
+        assert r.status_code == 303 and r.headers["location"].startswith("https://storage.example/bootcamp/")
+        assert r.headers["cache-control"] == "no-store"
+        kw = signing[-1][1]
+        assert kw["response_disposition"].startswith('attachment; filename="Week 1.pdf"')
+        assert kw["expiration"].total_seconds() == bc.DIRECT_LINK_SECONDS
+
+    def test_viewing_in_the_browser_asks_storage_to_show_it(self, db, signing):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("model.py", b"x=1", "text/x-python"), ANALYST))["post"]["files"][0]
+        r = run(bc.view_file(p["id"], f["id"], CAMPER))
+        assert r.headers["location"].startswith("https://storage.example/")
+        kw = signing[-1][1]
+        assert kw["response_disposition"].startswith("inline;") and kw["response_type"].startswith("text/plain")
+
+    def test_the_office_viewer_still_gets_the_server_link(self, db, signing):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("deck.pptx", b"PK"), ANALYST))["post"]["files"][0]
+        r = run(bc.view_file(p["id"], f["id"], CAMPER))
+        assert r.headers["location"].startswith(bc.OFFICE_VIEWER) and "storage.example" not in r.headers["location"]
+
+    def test_outsiders_never_get_a_link(self, db, signing):
+        with pytest.raises(HTTPException):
+            run(bc.require_reader(MEMBER))
+
+
+class TestSpeed:
+    def test_loading_the_page_reads_each_collection_once(self, db, monkeypatch):
+        reads = []
+        real = db.collection
+
+        def counting(name):
+            coll = real(name)
+            original = coll.document
+
+            def document(doc_id=None):
+                ref = original(doc_id)
+                if name == "applications":
+                    reads.append(doc_id)
+                return ref
+            coll.document = document
+            return coll
+        monkeypatch.setattr(db, "collection", counting)
+        run(bc.list_posts(ANALYST))
+        assert reads == []                     # no read per member

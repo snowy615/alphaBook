@@ -53,7 +53,7 @@ from pydantic import BaseModel
 from app import db as db_module
 from app import mailer
 from app import membership as mb
-from app.applications import BASE_URL, COLLECTION as APPLICATIONS, bootcamp_schedule
+from app.applications import BASE_URL, COLLECTION as APPLICATIONS, _cached_collection, bootcamp_schedule
 from app.auth import ALGORITHM, SECRET_KEY, current_user
 from app.models import User
 
@@ -83,6 +83,9 @@ INLINE_TYPES = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg
 OFFICE_MAX_BYTES = {"ppt": 10, "pptx": 10, "doc": 10, "docx": 10, "xls": 5, "xlsx": 5}
 OFFICE_VIEWER = "https://view.officeapps.live.com/op/view.aspx?src="
 VIEW_LINK_SECONDS = 15 * 60
+# Downloads and in-browser views come straight from storage through a signed
+# link this long-lived: much faster than passing through this server.
+DIRECT_LINK_SECONDS = 5 * 60
 
 ACCESS_EDITOR, ACCESS_READER = "editor", "reader"
 EMAIL_BATCH = 8                 # emails per request, well inside the hosting timeout
@@ -352,6 +355,38 @@ async def remove_file(post_id: str, file_id: str, user: User = Depends(require_e
     return {"ok": True, "post": _view(post_id, post, True)}
 
 
+def _signed_url(entry: Dict[str, Any], inline: bool) -> Optional[str]:
+    """A short-lived link straight to the file in storage, saying how the
+    browser should treat it; None where the credentials can't sign (then the
+    file is streamed through here instead)."""
+    name = entry.get("name") or "file"
+    ascii_name = name.encode("ascii", "replace").decode().replace('"', "_")
+    inline_type = INLINE_TYPES.get(_extension(name)) if inline else None
+    try:
+        return db_module.bucket.blob(entry["blob"]).generate_signed_url(
+            version="v4", method="GET", expiration=dt.timedelta(seconds=DIRECT_LINK_SECONDS),
+            response_disposition=f"{'inline' if inline_type else 'attachment'}; filename=\"{ascii_name}\"; "
+                                 f"filename*=UTF-8''{quote(name)}",
+            **({"response_type": inline_type} if inline_type else {}))
+    except Exception:
+        return None
+
+
+async def _entry(post_id: str, file_id: str) -> Dict[str, Any]:
+    if not db_module.bucket:
+        raise HTTPException(500, "Storage not configured")
+    _, post = await _load(post_id)
+    entry = next((f for f in post.get("files") or [] if f.get("id") == file_id), None)
+    if entry is None:
+        raise HTTPException(404, "No such file")
+    return entry
+
+
+def _no_store(response):
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 async def _file(post_id: str, file_id: str) -> tuple:
     if not db_module.bucket:
         raise HTTPException(500, "Storage not configured")
@@ -367,7 +402,11 @@ async def _file(post_id: str, file_id: str) -> tuple:
 async def download_file(post_id: str, file_id: str, inline: bool = False, user: User = Depends(require_reader)):
     """Download one attachment, checked against the membership now; with
     ?inline=1, show it in the browser instead if the browser can."""
-    entry, data = await _file(post_id, file_id)
+    entry = await _entry(post_id, file_id)
+    url = _signed_url(entry, inline)
+    if url:
+        return _no_store(RedirectResponse(url, status_code=303))
+    data = await asyncio.to_thread(db_module.bucket.blob(entry["blob"]).download_as_bytes)
     return _file_response(entry, data, inline)
 
 
@@ -381,7 +420,9 @@ async def view_file(post_id: str, file_id: str, user: User = Depends(require_rea
         raise HTTPException(404, "No such file")
     how = viewer_of(entry.get("name") or "", entry.get("size") or 0)
     if how == "browser":
-        return RedirectResponse(f"/bootcamp/posts/{quote(post_id)}/files/{quote(file_id)}?inline=1", status_code=303)
+        url = _signed_url(entry, inline=True) if db_module.bucket else None
+        return _no_store(RedirectResponse(
+            url or f"/bootcamp/posts/{quote(post_id)}/files/{quote(file_id)}?inline=1", status_code=303))
     if how == "office":
         src = f"{BASE_URL}/bootcamp/shared/{_view_token(post_id, file_id)}/{quote(entry.get('name') or 'file')}"
         return RedirectResponse(OFFICE_VIEWER + quote(src, safe=""), status_code=303)
@@ -412,12 +453,13 @@ async def _members() -> Dict[str, Dict[str, Any]]:
     """Every Bootcamp member: uid -> their first name and the addresses they
     hear from us at (the Oxford address on their application and their
     account's, less any they've opted out of)."""
-    users = {d.id: (d.to_dict() or {}) for d in await db_module.db.collection("users").get()}
-    members = {uid: u for uid, u in users.items() if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
+    # Both from the minute-old cache the review page keeps: one scan each,
+    # not a read per member (which made the page take ten seconds to load).
+    members = {uid: u for uid, u in await _cached_collection("users") if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
+    oxford_of = {uid: (a.get("oxford_email") or "") for uid, a in await _cached_collection(APPLICATIONS)}
     out: Dict[str, Dict[str, Any]] = {}
     for uid, u in members.items():
-        app_doc = await db_module.db.collection(APPLICATIONS).document(uid).get()
-        oxford = ((app_doc.to_dict() or {}).get("oxford_email") if app_doc.exists else "") or ""
+        oxford = oxford_of.get(uid, "")
         addresses: List[str] = []
         for a in (oxford, u.get("email") or ""):
             a = a.strip()
