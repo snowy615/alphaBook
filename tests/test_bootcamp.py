@@ -207,7 +207,7 @@ class TestFiles:
         f = post["files"][0]
         assert f["name"] == "Week 1 slides.pdf" and f["size"] == len(b"%PDF-1.4 slides")
         assert "blob" not in f                               # storage paths stay on the server
-        resp = run(bc.download_file(p["id"], f["id"], CAMPER))
+        resp = run(bc.download_file(p["id"], f["id"], user=CAMPER))
         assert _body(resp) == b"%PDF-1.4 slides"
         assert resp.media_type == "application/pdf"
         assert 'attachment; filename="Week 1 slides.pdf"' in resp.headers["content-disposition"]
@@ -246,7 +246,7 @@ class TestFiles:
         post = run(bc.remove_file(p["id"], f["id"], ANALYST))["post"]
         assert [x["name"] for x in post["files"]] == ["b.pdf"] and len(db.bucket.blobs) == 1
         with pytest.raises(HTTPException) as exc:
-            run(bc.download_file(p["id"], f["id"], CAMPER))
+            run(bc.download_file(p["id"], f["id"], user=CAMPER))
         assert exc.value.status_code == 404
 
 
@@ -338,3 +338,77 @@ class TestEmail:
         assert "email" not in run(bc.list_posts(CAMPER))["posts"][0]
         staff = run(bc.list_posts(ANALYST))
         assert staff["posts"][0]["email"]["sent"] == 11 and staff["member_count"] == 11
+
+
+# ── Viewing without downloading ─────────────────────────────────────────────
+
+class TestView:
+    def test_which_files_open_where(self):
+        assert bc.viewer_of("slides.pdf", 1) == "browser" and bc.viewer_of("plot.PNG", 1) == "browser"
+        assert bc.viewer_of("deck.pptx", 2_700_000) == "office" and bc.viewer_of("sheet.xlsx", 1) == "office"
+        assert bc.viewer_of("deck.pptx", 11 * 1024 * 1024) is None          # too big for the Office viewer
+        assert bc.viewer_of("sheet.xlsx", 6 * 1024 * 1024) is None
+        assert bc.viewer_of("intro.ipynb", 1) is None and bc.viewer_of("code.zip", 1) is None
+
+    def test_a_pdf_opens_in_the_browser(self, db):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("slides.pdf"), ANALYST))["post"]["files"][0]
+        assert f["view"] == "browser"
+        r = run(bc.view_file(p["id"], f["id"], CAMPER))
+        assert r.status_code == 303 and r.headers["location"].endswith(f"/files/{f['id']}?inline=1")
+        resp = run(bc.download_file(p["id"], f["id"], inline=True, user=CAMPER))
+        assert resp.headers["content-disposition"].startswith("inline;") and resp.media_type == "application/pdf"
+        assert resp.headers["x-content-type-options"] == "nosniff"
+
+    def test_text_is_shown_as_text(self, db):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("model.py", b"print(1)", "text/x-python"), ANALYST))["post"]["files"][0]
+        resp = run(bc.download_file(p["id"], f["id"], inline=True, user=CAMPER))
+        assert resp.media_type.startswith("text/plain")
+
+    def test_powerpoint_opens_in_the_office_viewer_through_a_short_link(self, db):
+        from urllib.parse import parse_qs, unquote, urlparse
+        p = _post()
+        pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        f = run(bc.attach_file(p["id"], _upload("Session 1.pptx", b"PK deck", pptx), ANALYST))["post"]["files"][0]
+        assert f["view"] == "office"
+        r = run(bc.view_file(p["id"], f["id"], CAMPER))
+        loc = r.headers["location"]
+        assert loc.startswith(bc.OFFICE_VIEWER)
+        src = parse_qs(urlparse(loc).query)["src"][0]
+        assert src.startswith(f"{bc.BASE_URL}/bootcamp/shared/") and src.endswith("/Session%201.pptx")
+        token = src.split("/shared/")[1].split("/")[0]
+        resp = run(bc.shared_file(token, unquote(src.rsplit("/", 1)[1])))      # what Microsoft fetches
+        assert _body(resp) == b"PK deck" and resp.headers["content-disposition"].startswith("inline;")
+
+    def test_a_view_link_is_for_one_file_and_cannot_sign_anyone_in(self, db, monkeypatch):
+        from app import auth
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("a.pptx", b"PK"), ANALYST))["post"]["files"][0]
+        token = bc._view_token(p["id"], f["id"])
+        assert run(auth.get_user_from_token(token)) is None
+        login = auth.create_token("bc1")
+        with pytest.raises(HTTPException) as exc:
+            run(bc.shared_file(login, "a.pptx"))                  # a sign-in token opens nothing
+        assert exc.value.status_code == 404
+        with pytest.raises(HTTPException):
+            run(bc.shared_file(token[:-3] + "abc", "a.pptx"))     # tampered
+
+    def test_view_links_expire(self, db, monkeypatch):
+        import datetime as dt
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("a.pptx", b"PK"), ANALYST))["post"]["files"][0]
+        real_now = bc._now
+        monkeypatch.setattr(bc, "_now", lambda: real_now() - dt.timedelta(seconds=bc.VIEW_LINK_SECONDS + 60))
+        token = bc._view_token(p["id"], f["id"])
+        monkeypatch.setattr(bc, "_now", real_now)
+        with pytest.raises(HTTPException) as exc:
+            run(bc.shared_file(token, "a.pptx"))
+        assert "expired" in exc.value.detail
+
+    def test_zips_cannot_be_viewed(self, db):
+        p = _post()
+        f = run(bc.attach_file(p["id"], _upload("code.zip", b"PK"), ANALYST))["post"]["files"][0]
+        with pytest.raises(HTTPException) as exc:
+            run(bc.view_file(p["id"], f["id"], CAMPER))
+        assert "download it instead" in exc.value.detail

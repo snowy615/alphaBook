@@ -20,6 +20,12 @@ it in batches of a few, one request each; the post keeps who has been
 emailed, so a send that's interrupted picks up where it stopped and nobody
 gets it twice.
 
+Files can be viewed without downloading. PDFs, images and plain text open
+in the browser itself. Browsers can't show PowerPoint, Word or Excel, so
+those open in Microsoft's free Office viewer, which has to fetch the file
+itself: it gets a link to just that file, signed by the server and good for
+VIEW_LINK_SECONDS (it can't sign anyone in, and it works for nothing else).
+
 Storage: one ``bootcamp_posts`` document per post, its attachments listed on
 it; the files themselves go in the storage bucket under
 ``bootcamp/{post_id}/{file_id}/``. Downloads are streamed through the server,
@@ -39,7 +45,8 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
+from jose import JWTError, jwt
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 
@@ -47,7 +54,7 @@ from app import db as db_module
 from app import mailer
 from app import membership as mb
 from app.applications import BASE_URL, COLLECTION as APPLICATIONS, bootcamp_schedule
-from app.auth import current_user
+from app.auth import ALGORITHM, SECRET_KEY, current_user
 from app.models import User
 
 router = APIRouter(prefix="/bootcamp", tags=["bootcamp"])
@@ -67,6 +74,15 @@ ALLOWED_EXTENSIONS = {
     "pdf", "ppt", "pptx", "key", "doc", "docx", "xls", "xlsx", "csv", "txt", "md",
     "ipynb", "py", "r", "zip", "png", "jpg", "jpeg", "gif",
 }
+
+# Viewing in the browser: what the browser shows itself (and as what), and
+# what goes to Microsoft's Office viewer, which takes files up to these sizes.
+TEXT = "text/plain; charset=utf-8"
+INLINE_TYPES = {"pdf": "application/pdf", "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "gif": "image/gif", "txt": TEXT, "md": TEXT, "csv": TEXT, "py": TEXT, "r": TEXT}
+OFFICE_MAX_BYTES = {"ppt": 10, "pptx": 10, "doc": 10, "docx": 10, "xls": 5, "xlsx": 5}
+OFFICE_VIEWER = "https://view.officeapps.live.com/op/view.aspx?src="
+VIEW_LINK_SECONDS = 15 * 60
 
 ACCESS_EDITOR, ACCESS_READER = "editor", "reader"
 EMAIL_BATCH = 8                 # emails per request, well inside the hosting timeout
@@ -146,7 +162,8 @@ def _view(post_id: str, post: Dict[str, Any], editor: bool = False) -> Dict[str,
         "author_name": post.get("author_name") or "",
         "created_at": _iso(post.get("created_at")), "updated_at": _iso(post.get("updated_at")),
         "updated_by_name": post.get("updated_by_name") or "",
-        "files": [{k: f.get(k) for k in ("id", "name", "size", "content_type")} for f in post.get("files") or []],
+        "files": [{**{k: f.get(k) for k in ("id", "name", "size", "content_type")},
+                   "view": viewer_of(f.get("name") or "", f.get("size") or 0)} for f in post.get("files") or []],
     }
 
 
@@ -166,6 +183,40 @@ def _safe_name(name: str) -> str:
 
 def _extension(name: str) -> str:
     return name.rsplit(".", 1)[-1].lower() if "." in name else ""
+
+
+def viewer_of(name: str, size: int) -> Optional[str]:
+    """How a file can be viewed without downloading it: "browser", "office"
+    (Microsoft's viewer), or None (download only: zips, notebooks, and Office
+    files too big for the viewer)."""
+    ext = _extension(name)
+    if ext in INLINE_TYPES:
+        return "browser"
+    if ext in OFFICE_MAX_BYTES and size <= OFFICE_MAX_BYTES[ext] * 1024 * 1024:
+        return "office"
+    return None
+
+
+def _view_token(post_id: str, file_id: str) -> str:
+    """A link for one file, for a short while. No "sub", so it can't sign
+    anyone in; sign-in tokens have no "bv", so they can't open files."""
+    exp = _now() + dt.timedelta(seconds=VIEW_LINK_SECONDS)
+    return jwt.encode({"bv": f"{post_id}/{file_id}", "exp": exp}, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _file_response(entry: Dict[str, Any], data: bytes, inline: bool) -> StreamingResponse:
+    name = entry.get("name") or "file"
+    ascii_name = name.encode("ascii", "replace").decode().replace('"', "_")
+    inline_type = INLINE_TYPES.get(_extension(name)) if inline else None
+    disposition = "inline" if inline else "attachment"
+    return StreamingResponse(
+        io.BytesIO(data), media_type=inline_type or entry.get("content_type") or "application/octet-stream",
+        headers={"Content-Disposition": f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}",
+                 "X-Content-Type-Options": "nosniff",
+                 # Not kept by the browser: on a shared computer the next person to
+                 # sign in mustn't be handed it from the cache.
+                 "Cache-Control": "no-store"},
+    )
 
 
 # ── Pages ────────────────────────────────────────────────────────────────────
@@ -301,9 +352,7 @@ async def remove_file(post_id: str, file_id: str, user: User = Depends(require_e
     return {"ok": True, "post": _view(post_id, post, True)}
 
 
-@router.get("/posts/{post_id}/files/{file_id}", include_in_schema=False)
-async def download_file(post_id: str, file_id: str, user: User = Depends(require_reader)):
-    """Download one attachment, checked against the membership now."""
+async def _file(post_id: str, file_id: str) -> tuple:
     if not db_module.bucket:
         raise HTTPException(500, "Storage not configured")
     _, post = await _load(post_id)
@@ -311,15 +360,47 @@ async def download_file(post_id: str, file_id: str, user: User = Depends(require
     if entry is None:
         raise HTTPException(404, "No such file")
     data = await asyncio.to_thread(db_module.bucket.blob(entry["blob"]).download_as_bytes)
-    name = entry.get("name") or "file"
-    ascii_name = name.encode("ascii", "replace").decode().replace('"', "_")
-    return StreamingResponse(
-        io.BytesIO(data), media_type=entry.get("content_type") or "application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}",
-                 # Not kept by the browser: on a shared computer the next person to
-                 # sign in mustn't be handed it from the cache.
-                 "Cache-Control": "no-store"},
-    )
+    return entry, data
+
+
+@router.get("/posts/{post_id}/files/{file_id}", include_in_schema=False)
+async def download_file(post_id: str, file_id: str, inline: bool = False, user: User = Depends(require_reader)):
+    """Download one attachment, checked against the membership now; with
+    ?inline=1, show it in the browser instead if the browser can."""
+    entry, data = await _file(post_id, file_id)
+    return _file_response(entry, data, inline)
+
+
+@router.get("/posts/{post_id}/files/{file_id}/view", include_in_schema=False)
+async def view_file(post_id: str, file_id: str, user: User = Depends(require_reader)):
+    """Open a file to read without downloading it: in the browser itself, or
+    in Microsoft's Office viewer through a short-lived link to just this file."""
+    _, post = await _load(post_id)
+    entry = next((f for f in post.get("files") or [] if f.get("id") == file_id), None)
+    if entry is None:
+        raise HTTPException(404, "No such file")
+    how = viewer_of(entry.get("name") or "", entry.get("size") or 0)
+    if how == "browser":
+        return RedirectResponse(f"/bootcamp/posts/{quote(post_id)}/files/{quote(file_id)}?inline=1", status_code=303)
+    if how == "office":
+        src = f"{BASE_URL}/bootcamp/shared/{_view_token(post_id, file_id)}/{quote(entry.get('name') or 'file')}"
+        return RedirectResponse(OFFICE_VIEWER + quote(src, safe=""), status_code=303)
+    raise HTTPException(400, "That file can't be opened in the browser: download it instead")
+
+
+@router.get("/shared/{token}/{name}", include_in_schema=False)
+async def shared_file(token: str, name: str):
+    """The file behind a view link, for the Office viewer to fetch. Only with
+    a valid, unexpired link made for this one file."""
+    try:
+        claim = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM]).get("bv") or ""
+    except JWTError:
+        claim = ""
+    post_id, _, file_id = claim.partition("/")
+    if not post_id or not file_id:
+        raise HTTPException(404, "This link has expired. Open the file again from the Bootcamp page.")
+    entry, data = await _file(post_id, file_id)
+    return _file_response(entry, data, inline=True)
 
 
 # ── Emailing a post to the Bootcamp ──────────────────────────────────────────

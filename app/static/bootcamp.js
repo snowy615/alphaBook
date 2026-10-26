@@ -55,12 +55,20 @@
   }
 
   // ── Posts ────────────────────────────────────────────────────────────────
+  // Each file: its name opens it to read (in the browser, or Microsoft's
+  // Office viewer for slides, documents and spreadsheets), plus View and
+  // Download. Files the browser can't show (zips, notebooks) only download.
   function fileRow(post, f) {
     const ext = (f.name.split(".").pop() || "").slice(0, 5);
+    const base = `/bootcamp/posts/${esc(post.id)}/files/${esc(f.id)}`;
+    const viewTitle = f.view === "office" ? "Opens in Microsoft's Office viewer, in a new tab" : "Opens in a new tab";
     return `<div class="bc-file">
       <span class="bc-file-ext">${esc(ext)}</span>
-      <a href="/bootcamp/posts/${esc(post.id)}/files/${esc(f.id)}" download>${esc(f.name)}</a>
+      ${f.view ? `<a href="${base}/view" target="_blank" rel="noopener" title="${viewTitle}">${esc(f.name)}</a>`
+               : `<a href="${base}" download>${esc(f.name)}</a>`}
       <span class="bc-file-size">${sizeLabel(f.size || 0)}</span>
+      ${f.view ? `<a class="btn ghost bc-file-btn" href="${base}/view" target="_blank" rel="noopener" title="${viewTitle}">View</a>` : ""}
+      <a class="btn ghost bc-file-btn" href="${base}" download>Download</a>
       ${data.can_edit ? `<button class="btn ghost bc-file-x" data-act="rmfile" data-id="${esc(post.id)}" data-file="${esc(f.id)}" title="Remove ${esc(f.name)}" aria-label="Remove ${esc(f.name)}">✕</button>` : ""}
     </div>`;
   }

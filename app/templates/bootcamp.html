@@ -47,7 +47,9 @@
     .bc-file-ext { flex: none; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--brand);
                    border: 1px solid var(--brand); padding: 1px 5px; min-width: 38px; text-align: center; }
     .bc-file-size { color: var(--muted); font-size: 12.5px; margin-left: auto; white-space: nowrap; }
+    .bc-file .bc-file-btn { padding: 3px 10px; font-size: 12.5px; font-weight: 600; color: var(--text); flex: none; }
     .bc-file-x { padding: 2px 8px; color: var(--muted); }
+    @media (max-width: 520px) { .bc-file { flex-wrap: wrap; } .bc-file-size { margin-left: 0; } }
     .bc-file-x:hover { color: var(--red); }
     .bc-edit-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 14px; }
     .bc-empty, .bc-denied { color: var(--muted); font-size: 14.5px; }
@@ -119,7 +121,7 @@
     <div id="feed"><p class="bc-empty">Loading…</p></div>
   </div>
 
-  <script src="/static/bootcamp.js?v=2"></script>
+  <script src="/static/bootcamp.js?v=3"></script>
 </body>
 
 </html>
