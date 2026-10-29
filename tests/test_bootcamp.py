@@ -475,3 +475,79 @@ class TestSpeed:
         monkeypatch.setattr(db, "collection", counting)
         run(bc.list_posts(ANALYST))
         assert reads == []                     # no read per member
+
+
+# ── Attendance ──────────────────────────────────────────────────────────────
+
+S1, S2, S3 = "2026-10-25", "2026-11-01", "2026-11-08"
+
+
+def _mark(session, marks, user=ANALYST):
+    return run(bc.mark_attendance(session, bc.AttendanceIn(marks=marks), user))
+
+
+@pytest.fixture
+def roster(db):
+    db.collections["users"]["bc2"] = {"username": "ben", "full_name": "Ben Ng", "membership": mb.M_QUANT_BOOTCAMP}
+    db.collections.setdefault("applications", {})["bc1"] = {"oxford_email": "amy@ox.ac.uk"}
+    return db
+
+
+class TestAttendance:
+    def test_the_percentage(self):
+        s = bc.attendance_summary
+        assert s({}) == {"attended": 0, "counted": 0, "percent": None}
+        assert s({S1: "present", S2: "late", S3: "absent"}) == {"attended": 1.8, "counted": 3, "percent": 60}
+        assert s({S1: "late"})["percent"] == 80                                                    # late is 0.8
+        assert s({S1: "present", S2: "excused"}) == {"attended": 1, "counted": 1, "percent": 100}   # excused doesn't count
+
+    def test_analysts_mark_and_see_everyone(self, roster):
+        _mark(S1, {"bc1": "present", "bc2": "absent"})
+        _mark(S2, {"bc1": "late"})
+        out = run(bc.attendance(ANALYST))
+        assert out["can_edit"] and len(out["sessions"]) == 6
+        people = {m["name"]: m for m in out["members"]}
+        assert set(people) == {"Amy", "Ben Ng"}                         # Bootcamp members only
+        assert people["Amy"]["marks"] == {S1: "present", S2: "late"} and people["Amy"]["percent"] == 90
+        assert people["Amy"]["email"] == "amy@ox.ac.uk"
+        assert people["Ben Ng"]["percent"] == 0
+
+    def test_a_member_sees_only_their_own(self, roster):
+        _mark(S1, {"bc1": "present", "bc2": "absent"})
+        _mark(S2, {"bc1": "absent"})
+        mine = run(bc.attendance(CAMPER))
+        assert mine["can_edit"] is False and "members" not in mine
+        assert mine["mine"] == {"marks": {S1: "present", S2: "absent"}, "attended": 1, "counted": 2, "percent": 50}
+
+    def test_members_and_outsiders_cannot_mark(self, roster):
+        for who in (CAMPER, MEMBER):
+            with pytest.raises(HTTPException) as exc:
+                run(bc.require_editor(who))
+            assert exc.value.status_code == 403
+        with pytest.raises(HTTPException):
+            run(bc.require_reader(MEMBER))
+
+    def test_marking_keeps_the_rest_and_can_clear(self, roster):
+        _mark(S1, {"bc1": "present", "bc2": "present"})
+        out = _mark(S1, {"bc2": "late"})
+        assert out["marks"] == {"bc1": "present", "bc2": "late"}
+        assert _mark(S1, {"bc1": None})["marks"] == {"bc2": "late"}
+        assert db_module.db.collections["bootcamp_attendance"][S1]["updated_by_name"] == "Warren Jin"
+
+    @pytest.mark.parametrize("session,marks,words", [
+        ("2026-12-25", {"bc1": "present"}, "No such session"),
+        (S1, {"bc1": "here"}, "present, late, absent or excused"),
+        (S1, {"gm1": "present"}, "isn't in the Bootcamp")])
+    def test_bad_marks_are_refused(self, roster, session, marks, words):
+        with pytest.raises(HTTPException) as exc:
+            _mark(session, marks)
+        assert words in exc.value.detail
+
+    def test_someone_who_leaves_keeps_their_record_on_the_register(self, roster):
+        _mark(S1, {"bc2": "present"})
+        roster.collections["users"]["bc2"]["membership"] = mb.M_MEMBER
+        from app import applications as ap
+        ap._collection_cache.clear()
+        names = [m["name"] for m in run(bc.attendance(ANALYST))["members"]]
+        assert "(no longer in the Bootcamp)" in names
+        _mark(S1, {"bc2": None})                       # and their mark can still be cleared

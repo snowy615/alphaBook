@@ -520,3 +520,98 @@ async def email_post(post_id: str, req: EmailRequest, user: User = Depends(requi
         await ref.update({"email": state})
         post["email"] = state
     return {"ok": True, "remaining": remaining, "post": _view(post_id, post, True)}
+
+
+# ── Attendance ───────────────────────────────────────────────────────────────
+# One ``bootcamp_attendance`` document per session (id: its date), holding a
+# mark per member. Analysts mark it; each member sees their own marks and
+# percentage, nobody else's. Present counts as a full session and late as
+# LATE_CREDIT of one; excused sessions don't count either way; a session counts for someone only once
+# they've been marked for it, so nobody's percentage drops for a session that
+# hasn't been taken yet.
+
+ATTENDANCE = "bootcamp_attendance"
+PRESENT, LATE, ABSENT, EXCUSED = "present", "late", "absent", "excused"
+MARKS = (PRESENT, LATE, ABSENT, EXCUSED)
+CREDIT = {PRESENT: 1.0, LATE: 0.8, ABSENT: 0.0}     # how much of a session each mark counts for
+_attendance_lock = asyncio.Lock()
+
+
+def _session_ids() -> List[str]:
+    return [s["date"] for s in bootcamp_schedule()]
+
+
+async def _roster() -> Dict[str, Dict[str, str]]:
+    """Every Bootcamp member: uid -> name and Oxford email, for the register."""
+    oxford_of = {uid: (a.get("oxford_email") or "") for uid, a in await _cached_collection(APPLICATIONS)}
+    return {uid: {"name": (u.get("full_name") or "").strip() or u.get("username") or uid,
+                  "email": oxford_of.get(uid) or u.get("email") or ""}
+            for uid, u in await _cached_collection("users") if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
+
+
+async def _registers() -> Dict[str, Dict[str, str]]:
+    """session id -> {uid: mark}, for every session in the schedule."""
+    out = {}
+    for sid in _session_ids():
+        doc = await db_module.db.collection(ATTENDANCE).document(sid).get()
+        out[sid] = dict(((doc.to_dict() or {}).get("marks") or {}) if doc.exists else {})
+    return out
+
+
+def attendance_summary(marks: Dict[str, str]) -> Dict[str, Any]:
+    """{session: mark} -> attended, counted and the percentage (None until a
+    session counts)."""
+    counted = [m for m in marks.values() if m in CREDIT]
+    attended = round(sum(CREDIT[m] for m in counted), 1)
+    return {"attended": attended, "counted": len(counted),
+            "percent": round(100 * attended / len(counted)) if counted else None}
+
+
+@router.get("/attendance")
+async def attendance(user: User = Depends(require_reader)):
+    """An Analyst gets the whole register; a member gets their own line."""
+    sessions = bootcamp_schedule()
+    registers = await _registers()
+    if await access_of(user) == ACCESS_EDITOR:
+        roster = await _roster()
+        # Anyone marked who has since left the Bootcamp still shows, so marks don't vanish.
+        for marks in registers.values():
+            for uid in marks:
+                roster.setdefault(uid, {"name": "(no longer in the Bootcamp)", "email": ""})
+        members = []
+        for uid, who in roster.items():
+            marks = {sid: registers[sid][uid] for sid in registers if uid in registers[sid]}
+            members.append({"uid": uid, **who, "marks": marks, **attendance_summary(marks)})
+        members.sort(key=lambda m: m["name"].lower())
+        return {"can_edit": True, "sessions": sessions, "members": members, "marks": list(MARKS)}
+    uid = str(user.id)
+    marks = {sid: registers[sid][uid] for sid in registers if uid in registers[sid]}
+    return {"can_edit": False, "sessions": sessions, "mine": {"marks": marks, **attendance_summary(marks)}}
+
+
+class AttendanceIn(BaseModel):
+    marks: Dict[str, Optional[str]]     # uid -> mark, or None to clear it
+
+
+@router.put("/attendance/{session_id}")
+async def mark_attendance(session_id: str, req: AttendanceIn, user: User = Depends(require_editor)):
+    """Set (or clear) marks for one session; the other marks are kept."""
+    if session_id not in _session_ids():
+        raise HTTPException(404, "No such session")
+    roster = await _roster()
+    async with _attendance_lock:
+        ref = db_module.db.collection(ATTENDANCE).document(session_id)
+        doc = await ref.get()
+        marks = dict(((doc.to_dict() or {}).get("marks") or {}) if doc.exists else {})
+        for uid, mark in req.marks.items():
+            if mark is None:
+                marks.pop(uid, None)
+                continue
+            if mark not in MARKS:
+                raise HTTPException(400, "A mark is present, late, absent or excused")
+            if uid not in roster and uid not in marks:
+                raise HTTPException(400, "That person isn't in the Bootcamp")
+            marks[uid] = mark
+        await ref.set({"marks": marks, "updated_at": _now(), "updated_by": str(user.id),
+                       "updated_by_name": await _name_of(user)})
+    return {"ok": True, "session": session_id, "marks": marks}

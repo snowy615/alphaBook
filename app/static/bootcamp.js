@@ -260,6 +260,166 @@
     btn.disabled = false;
   });
 
+  // ── Attendance ───────────────────────────────────────────────────────────
+  // Members see their own marks and percentage; Analysts mark a session at a
+  // time and see everyone. Present counts as a full session, late as 0.8 of
+  // one (as the server counts it); excused doesn't count either way; unmarked
+  // sessions don't count yet.
+  const MARK_LABEL = { present: "Present", late: "Late", absent: "Absent", excused: "Excused" };
+  const MARK_KEY = { present: "P", late: "L", absent: "A", excused: "E" };
+  let att = null, attSession = null, attSearch = "";
+  const pctText = (p) => p == null ? "—" : `${p}%`;
+  const LOW = 60;                                 // below this, shown in red
+
+  const CREDIT = { present: 1, late: 0.8, absent: 0 };
+  function summary(marks) {
+    const counted = Object.values(marks).filter((m) => m in CREDIT);
+    const attended = Math.round(10 * counted.reduce((a, m) => a + CREDIT[m], 0)) / 10;
+    return { attended, counted: counted.length, percent: counted.length ? Math.round(100 * attended / counted.length) : null };
+  }
+
+  function drawMine() {
+    const me = att.mine, sum = summary(me.marks);
+    $("#attendanceView").innerHTML = `
+      <div class="card bc-att-me">
+        <div class="bc-pct${sum.percent != null && sum.percent < LOW ? " is-low" : ""}">${pctText(sum.percent)}</div>
+        <div class="bc-pct-sub">${sum.counted
+          ? `You've attended <strong>${sum.attended} of ${sum.counted}</strong> session${sum.counted === 1 ? "" : "s"} so far.`
+          : "Nothing recorded yet. Your attendance shows here once the Analysts take the register."}
+          <br>Present counts as a full session and late as 0.8 of one; excused sessions don't count against you.</div>
+      </div>
+      <div class="card">${att.sessions.map((x) => {
+        const m = me.marks[x.date];
+        const tag = m ? `<span class="bc-mark is-${m}">${MARK_LABEL[m]}</span>`
+          : `<span class="bc-mark">${x.status === "done" ? "Not recorded" : x.status === "next" ? "Next" : "Upcoming"}</span>`;
+        return `<div class="bc-sess"><div><strong>Session ${x.number}</strong>${x.title ? ` · ${esc(x.title)}` : ""}
+          <div class="bc-sess-when">${esc(x.date_label)}, ${esc(x.time_label)}</div></div>${tag}</div>`;
+      }).join("")}</div>`;
+  }
+
+  function defaultSession() {
+    const done = att.sessions.filter((x) => x.status === "done");
+    return (done[done.length - 1] || att.sessions[0] || {}).date;
+  }
+
+  function drawRegister() {
+    const sid = attSession;
+    const sess = att.sessions.find((x) => x.date === sid) || {};
+    const q = attSearch.trim().toLowerCase();
+    const rows = att.members.filter((m) => !q || m.name.toLowerCase().includes(q) || (m.email || "").toLowerCase().includes(q));
+    const counts = { present: 0, late: 0, absent: 0, excused: 0, none: 0 };
+    att.members.forEach((m) => { counts[m.marks[sid] || "none"]++; });
+    const grid = `<div class="bc-grid-wrap"><table class="bc-grid">
+      <thead><tr><th>Everyone</th>${att.sessions.map((x) => `<th title="${esc(x.date_label)}">S${x.number}</th>`).join("")}<th>Attendance</th></tr></thead>
+      <tbody>${att.members.map((m) => {
+        const sum = summary(m.marks);
+        return `<tr><td>${esc(m.name)}</td>${att.sessions.map((x) => {
+          const k = m.marks[x.date];
+          return `<td class="${k ? `m-${k}` : ""}">${k ? MARK_KEY[k] : "·"}</td>`;
+        }).join("")}<td class="${sum.percent != null && sum.percent < LOW ? "is-low" : ""}">${pctText(sum.percent)}</td></tr>`;
+      }).join("")}</tbody></table></div>
+      <p class="bc-key">P present · L late · A absent · E excused · · not recorded. Attendance = (present + 0.8 × late) ÷ sessions recorded, not counting excused.</p>`;
+    $("#attendanceView").innerHTML = `
+      <div class="bc-att-sessions" role="group" aria-label="Session">${att.sessions.map((x) =>
+        `<button type="button" class="bc-tab${x.date === sid ? " is-on" : ""}" data-sess="${esc(x.date)}">S${x.number} · ${esc(x.date_label.replace(/^\w+ /, ""))}</button>`).join("")}</div>
+      <div class="bc-att-tools">
+        <input class="msp-input" id="attSearch" placeholder="Search by name or email" value="${esc(attSearch)}" aria-label="Search members">
+        <button class="btn ghost" data-att-all="present">Unrecorded → Present</button>
+        <button class="btn ghost" data-att-all="absent">Unrecorded → Absent</button>
+        <button class="btn ghost" id="attCsv">Download CSV</button>
+      </div>
+      <p class="bc-att-count"><strong>Session ${sess.number || ""}${sess.title ? `: ${esc(sess.title)}` : ""}</strong> · ${esc(sess.date_label || "")} ·
+        ${counts.present} present · ${counts.late} late · ${counts.absent} absent · ${counts.excused} excused · ${counts.none} not recorded</p>
+      <div class="card bc-reg">${rows.map((m) => {
+        const sum = summary(m.marks), cur = m.marks[sid];
+        return `<div class="bc-reg-row">
+          <div class="bc-reg-who"><strong>${esc(m.name)}</strong><span>${esc(m.email)}</span></div>
+          <span class="bc-reg-pct${sum.percent != null && sum.percent < LOW ? " is-low" : ""}" title="Attendance so far">${pctText(sum.percent)}</span>
+          <div class="bc-seg" role="group" aria-label="${esc(m.name)}">${att.marks.map((k) =>
+            `<button type="button" class="${cur === k ? `is-${k}` : ""}" data-mark="${k}" data-uid="${esc(m.uid)}"
+               title="${MARK_LABEL[k]}${cur === k ? " (click again to clear)" : ""}" aria-pressed="${cur === k}">${MARK_KEY[k]}</button>`).join("")}</div>
+        </div>`;
+      }).join("") || '<p class="bc-empty" style="padding:14px;">Nobody matches.</p>'}</div>
+      ${grid}`;
+    const search = $("#attSearch");
+    search.addEventListener("input", () => {
+      attSearch = search.value; const pos = search.selectionStart;
+      drawRegister(); const again = $("#attSearch"); again.focus(); again.setSelectionRange(pos, pos);
+    });
+  }
+
+  async function saveMarks(changes) {
+    const sid = attSession, before = {};
+    att.members.forEach((m) => { if (m.uid in changes) before[m.uid] = m.marks[sid]; });
+    const apply = (vals) => att.members.forEach((m) => {
+      if (!(m.uid in vals)) return;
+      if (vals[m.uid]) m.marks[sid] = vals[m.uid]; else delete m.marks[sid];
+    });
+    apply(changes); drawRegister();               // show it straight away
+    try {
+      await send("PUT", `/bootcamp/attendance/${encodeURIComponent(sid)}`, { marks: changes });
+    } catch (err) {
+      apply(Object.fromEntries(Object.keys(changes).map((u) => [u, before[u] || null]))); drawRegister();
+      showMsg(err.message, false);
+    }
+  }
+
+  function csv() {
+    const head = ["Name", "Email", ...att.sessions.map((x) => `S${x.number} ${x.date}`), "Attended", "Counted", "Attendance %"];
+    const lines = att.members.map((m) => {
+      const sum = summary(m.marks);
+      return [m.name, m.email, ...att.sessions.map((x) => MARK_LABEL[m.marks[x.date]] || ""), sum.attended, sum.counted,
+              sum.percent == null ? "" : sum.percent];
+    });
+    const cell = (v) => /[",\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+    const blob = new Blob([[head, ...lines].map((r) => r.map(cell).join(",")).join("\n")], { type: "text/csv" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = "bootcamp_attendance.csv"; a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }
+
+  document.addEventListener("click", (e) => {
+    if (!att || !att.can_edit) return;
+    const sess = e.target.closest("[data-sess]");
+    if (sess) { attSession = sess.dataset.sess; drawRegister(); return; }
+    const mark = e.target.closest("[data-mark]");
+    if (mark) {
+      const m = att.members.find((x) => x.uid === mark.dataset.uid);
+      const k = mark.dataset.mark;
+      saveMarks({ [m.uid]: m.marks[attSession] === k ? null : k });   // clicking the current mark clears it
+      return;
+    }
+    const all = e.target.closest("[data-att-all]");
+    if (all) {
+      const changes = {};
+      att.members.forEach((m) => { if (!m.marks[attSession]) changes[m.uid] = all.dataset.attAll; });
+      if (!Object.keys(changes).length) { showMsg("Everyone already has a mark for this session.", true); return; }
+      saveMarks(changes);
+      return;
+    }
+    if (e.target.closest("#attCsv")) csv();
+  });
+
+  async function loadAttendance() {
+    try {
+      att = await api("/bootcamp/attendance");
+    } catch (err) { $("#attendanceView").innerHTML = `<p class="bc-empty">Couldn't load attendance: ${esc(err.message)}</p>`; return; }
+    if (att.can_edit) { attSession = attSession || defaultSession(); drawRegister(); } else drawMine();
+  }
+
+  // Posts / Attendance, remembered in the address (#attendance).
+  function showView(view) {
+    const isAtt = view === "attendance";
+    $("#postsView").classList.toggle("hidden", isAtt);
+    $("#attendanceView").classList.toggle("hidden", !isAtt);
+    document.querySelectorAll("#mainTabs [data-view]").forEach((b) => {
+      b.classList.toggle("is-on", b.dataset.view === view); b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
+    });
+    if (isAtt) loadAttendance();
+    history.replaceState(null, "", isAtt ? "#attendance" : location.pathname);
+  }
+  document.querySelectorAll("#mainTabs [data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
+
   // ── Load ─────────────────────────────────────────────────────────────────
   async function load() {
     try {
@@ -281,6 +441,8 @@
     if (data.can_edit) $("#lede").textContent = "Post lectures and announcements for the Bootcamp. Members see them here and can download the materials.";
     drawNext();
     drawFeed();
+    $("#mainTabs").classList.remove("hidden");
+    if (location.hash === "#attendance") showView("attendance");
   }
   load();
 })();
