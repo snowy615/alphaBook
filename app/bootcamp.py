@@ -41,6 +41,7 @@ import io
 import re
 import secrets
 import string
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -50,12 +51,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, StreamingResponse
 from jose import JWTError, jwt
 from fastapi.templating import Jinja2Templates
+from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
 from app import db as db_module
 from app import mailer
 from app import membership as mb
-from app.applications import BASE_URL, COLLECTION as APPLICATIONS, _cached_collection, bootcamp_schedule
+from app.applications import BASE_URL, COLLECTION as APPLICATIONS, bootcamp_schedule
 from app.auth import ALGORITHM, SECRET_KEY, current_user
 from app.models import User
 
@@ -95,9 +97,62 @@ EMAIL_BATCH = 8                 # emails per request, well inside the hosting ti
 
 # ── Who can see and write it ─────────────────────────────────────────────────
 
-async def _user_data(uid: str) -> Dict[str, Any]:
+# ── Reads, kept few ──────────────────────────────────────────────────────────
+# Every request checks who's asking, and several need the whole Bootcamp. The
+# first is one small read, kept for a minute; the second is one query for
+# just the Bootcamp's accounts (a few fields each) plus one batched read of
+# just their Oxford emails, kept for five minutes, never a scan of every
+# account and application.
+PROFILE_SECONDS = 60
+BOOTCAMP_SECONDS = 300
+_profile_cache: Dict[tuple, tuple] = {}
+_bootcamp_cache: Dict[int, tuple] = {}
+
+
+async def _profile(uid: str) -> Dict[str, Any]:
+    """This person's membership and name, at most a minute old."""
+    key, now = (id(db_module.db), uid), time.monotonic()
+    hit = _profile_cache.get(key)
+    if hit and now - hit[0] < PROFILE_SECONDS:
+        return hit[1]
     doc = await db_module.db.collection("users").document(uid).get()
-    return (doc.to_dict() or {}) if doc.exists else {}
+    data = (doc.to_dict() or {}) if doc.exists else {}
+    profile = {"membership": mb.membership_of(data), "name": (data.get("full_name") or "").strip()}
+    _profile_cache[key] = (now, profile)
+    return profile
+
+
+async def _bootcamp() -> Dict[str, Dict[str, Any]]:
+    """Every Bootcamp member: uid -> name, first name, Oxford email (or the
+    account's), and the To line for emailing them (their addresses, less any
+    they've opted out of). At most five minutes old."""
+    key, now = id(db_module.db), time.monotonic()
+    hit = _bootcamp_cache.get(key)
+    if hit and now - hit[0] < BOOTCAMP_SECONDS:
+        return hit[1]
+    users = db_module.db.collection("users")
+    query = users.where(filter=FieldFilter("membership", "in", sorted(mb.BOOTCAMP_MEMBERSHIPS)))
+    docs = await query.select(["full_name", "username", "email", "membership", "track", "email_opt_out"]).get()
+    accounts = {d.id: (d.to_dict() or {}) for d in docs}
+    accounts = {uid: u for uid, u in accounts.items() if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
+    oxford_of: Dict[str, str] = {}
+    if accounts:
+        refs = [db_module.db.collection(APPLICATIONS).document(uid) for uid in accounts]
+        async for snap in db_module.db.get_all(refs, field_paths=["oxford_email"]):
+            if snap.exists:
+                oxford_of[snap.id] = (snap.to_dict() or {}).get("oxford_email") or ""
+    out: Dict[str, Dict[str, Any]] = {}
+    for uid, u in accounts.items():
+        addresses: List[str] = []
+        for a in (oxford_of.get(uid) or "", u.get("email") or ""):
+            a = a.strip()
+            if a and a.lower() not in (x.lower() for x in addresses):
+                addresses.append(a)
+        name = (u.get("full_name") or "").strip() or u.get("username") or uid
+        out[uid] = {"name": name, "first": name.split()[0], "email": addresses[0] if addresses else "",
+                    "to": ", ".join(mailer.apply_preferences(addresses, u.get("email_opt_out"))) if addresses else ""}
+    _bootcamp_cache[key] = (now, out)
+    return out
 
 
 async def access_of(user: Optional[User]) -> Optional[str]:
@@ -107,7 +162,7 @@ async def access_of(user: Optional[User]) -> Optional[str]:
         return None
     if user.is_admin:
         return ACCESS_EDITOR
-    membership = mb.membership_of(await _user_data(str(user.id)))
+    membership = (await _profile(str(user.id)))["membership"]
     if membership in mb.ANALYST_MEMBERSHIPS:
         return ACCESS_EDITOR
     if membership in mb.BOOTCAMP_MEMBERSHIPS:
@@ -138,8 +193,7 @@ def _iso(value: Any) -> Optional[str]:
 
 
 async def _name_of(user: User) -> str:
-    data = await _user_data(str(user.id))
-    return (data.get("full_name") or "").strip() or user.username
+    return (await _profile(str(user.id)))["name"] or user.username
 
 
 async def _load(post_id: str) -> tuple:
@@ -452,25 +506,8 @@ _email_locks: Dict[str, asyncio.Lock] = {}
 
 
 async def _members() -> Dict[str, Dict[str, Any]]:
-    """Every Bootcamp member: uid -> their first name and the addresses they
-    hear from us at (the Oxford address on their application and their
-    account's, less any they've opted out of)."""
-    # Both from the minute-old cache the review page keeps: one scan each,
-    # not a read per member (which made the page take ten seconds to load).
-    members = {uid: u for uid, u in await _cached_collection("users") if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
-    oxford_of = {uid: (a.get("oxford_email") or "") for uid, a in await _cached_collection(APPLICATIONS)}
-    out: Dict[str, Dict[str, Any]] = {}
-    for uid, u in members.items():
-        oxford = oxford_of.get(uid, "")
-        addresses: List[str] = []
-        for a in (oxford, u.get("email") or ""):
-            a = a.strip()
-            if a and a.lower() not in (x.lower() for x in addresses):
-                addresses.append(a)
-        if addresses:
-            first = ((u.get("full_name") or "").split() or [u.get("username") or "there"])[0]
-            out[uid] = {"first": first, "to": ", ".join(mailer.apply_preferences(addresses, u.get("email_opt_out")))}
-    return out
+    """Every Bootcamp member who can be emailed: uid -> first name and To line."""
+    return {uid: {"first": m["first"], "to": m["to"]} for uid, m in (await _bootcamp()).items() if m["to"]}
 
 
 def _linked(text_html: str) -> str:
@@ -545,18 +582,17 @@ def _session_ids() -> List[str]:
 
 async def _roster() -> Dict[str, Dict[str, str]]:
     """Every Bootcamp member: uid -> name and Oxford email, for the register."""
-    oxford_of = {uid: (a.get("oxford_email") or "") for uid, a in await _cached_collection(APPLICATIONS)}
-    return {uid: {"name": (u.get("full_name") or "").strip() or u.get("username") or uid,
-                  "email": oxford_of.get(uid) or u.get("email") or ""}
-            for uid, u in await _cached_collection("users") if mb.membership_of(u) in mb.BOOTCAMP_MEMBERSHIPS}
+    return {uid: {"name": m["name"], "email": m["email"]} for uid, m in (await _bootcamp()).items()}
 
 
 async def _registers() -> Dict[str, Dict[str, str]]:
     """session id -> {uid: mark}, for every session in the schedule."""
-    out = {}
-    for sid in _session_ids():
-        doc = await db_module.db.collection(ATTENDANCE).document(sid).get()
-        out[sid] = dict(((doc.to_dict() or {}).get("marks") or {}) if doc.exists else {})
+    ids = _session_ids()
+    out: Dict[str, Dict[str, str]] = {sid: {} for sid in ids}
+    refs = [db_module.db.collection(ATTENDANCE).document(sid) for sid in ids]
+    async for snap in db_module.db.get_all(refs):          # one round trip for all six
+        if snap.exists:
+            out[snap.id] = dict((snap.to_dict() or {}).get("marks") or {})
     return out
 
 
@@ -601,6 +637,9 @@ async def mark_attendance(session_id: str, req: AttendanceIn, user: User = Depen
     if session_id not in _session_ids():
         raise HTTPException(404, "No such session")
     roster = await _roster()
+    if any(uid not in roster for uid in req.marks):
+        _bootcamp_cache.clear()           # someone who joined in the last few minutes
+        roster = await _roster()
     async with _attendance_lock:
         ref = db_module.db.collection(ATTENDANCE).document(session_id)
         doc = await ref.get()

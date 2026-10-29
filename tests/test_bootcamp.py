@@ -49,25 +49,55 @@ class _Ref:
         self._store.pop(self.id, None)
 
 
+class _Query:
+    def __init__(self, store, keep):
+        self._store, self._keep = store, keep
+
+    def select(self, _fields):
+        return self
+
+    async def get(self):
+        return [_Doc(self._store, k) for k, v in list(self._store.items()) if self._keep(v)]
+
+
 class _Coll:
     _ids = itertools.count(1)
 
-    def __init__(self, store):
-        self._store = store
+    def __init__(self, store, db):
+        self._store, self._db = store, db
 
     def document(self, doc_id=None):
         return _Ref(self._store, doc_id or f"p{next(self._ids)}")
 
     async def get(self):
+        self._db.scans.append(self)
         return [_Doc(self._store, k) for k in list(self._store)]
+
+    def where(self, filter):
+        f, op, value = filter.field_path, filter.op_string, filter.value
+        assert op in ("in", "==")
+        return _Query(self._store, lambda d: d.get(f) in value if op == "in" else d.get(f) == value)
 
 
 class _DB:
     def __init__(self):
         self.collections = {}
+        self.scans = []            # whole-collection reads, to keep an eye on them
+        self.batched = 0
 
     def collection(self, name):
-        return _Coll(self.collections.setdefault(name, {}))
+        coll = _Coll(self.collections.setdefault(name, {}), self)
+        coll.name = name
+        return coll
+
+    async def get_all(self, refs, field_paths=None):
+        self.batched += 1
+        for ref in refs:
+            doc = _Doc(ref._store, ref.id)
+            if doc.exists and field_paths:
+                data = {k: v for k, v in ref._store[ref.id].items() if k in field_paths}
+                doc = type("D", (), {"id": ref.id, "exists": True, "to_dict": lambda self, d=data: dict(d)})()
+            yield doc
 
 
 class _Blob:
@@ -102,6 +132,8 @@ def db(monkeypatch):
         "adm": {"username": "admin"},
     }
     monkeypatch.setattr(db_module, "db", fake)
+    bc._profile_cache.clear()
+    bc._bootcamp_cache.clear()
     bucket = _Bucket()
     monkeypatch.setattr(db_module, "bucket", bucket, raising=False)
     fake.bucket = bucket
@@ -457,24 +489,38 @@ class TestDirectLinks:
 
 
 class TestSpeed:
-    def test_loading_the_page_reads_each_collection_once(self, db, monkeypatch):
-        reads = []
-        real = db.collection
+    """No request scans every account or application; members come from one
+    query and one batched read, kept for a few minutes."""
 
-        def counting(name):
-            coll = real(name)
-            original = coll.document
+    def _scanned(self, db):
+        return {c.name for c in db.scans}
 
-            def document(doc_id=None):
-                ref = original(doc_id)
-                if name == "applications":
-                    reads.append(doc_id)
-                return ref
-            coll.document = document
-            return coll
-        monkeypatch.setattr(db, "collection", counting)
+    def test_no_page_scans_the_users_or_applications(self, db):
+        db.collections.setdefault("applications", {})["bc1"] = {"oxford_email": "amy@ox.ac.uk", "cv_text": "x" * 1000}
         run(bc.list_posts(ANALYST))
-        assert reads == []                     # no read per member
+        run(bc.attendance(ANALYST))
+        run(bc.attendance(CAMPER))
+        run(bc.list_projects(CAMPER))
+        run(bc.mark_attendance("2026-10-25", bc.AttendanceIn(marks={"bc1": "present"}), ANALYST))
+        assert not self._scanned(db) & {"users", "applications"}
+
+    def test_the_bootcamp_is_read_once_then_kept(self, db):
+        run(bc.list_posts(ANALYST))
+        first = db.batched
+        run(bc.list_posts(ANALYST))
+        run(bc.list_projects(CAMPER))
+        assert db.batched == first                 # no more reads for the members
+
+    def test_attendance_reads_all_six_sessions_at_once(self, db):
+        bc._bootcamp_cache.clear()
+        before = db.batched
+        run(bc._registers())
+        assert db.batched == before + 1
+
+    def test_someone_new_can_be_marked_without_waiting_for_the_cache(self, db):
+        run(bc.attendance(ANALYST))                # caches the Bootcamp
+        db.collections["users"]["new"] = {"username": "new", "membership": mb.M_QUANT_BOOTCAMP}
+        run(bc.mark_attendance("2026-10-25", bc.AttendanceIn(marks={"new": "present"}), ANALYST))
 
 
 # ── Attendance ──────────────────────────────────────────────────────────────
@@ -546,8 +592,7 @@ class TestAttendance:
     def test_someone_who_leaves_keeps_their_record_on_the_register(self, roster):
         _mark(S1, {"bc2": "present"})
         roster.collections["users"]["bc2"]["membership"] = mb.M_MEMBER
-        from app import applications as ap
-        ap._collection_cache.clear()
+        bc._bootcamp_cache.clear()
         names = [m["name"] for m in run(bc.attendance(ANALYST))["members"]]
         assert "(no longer in the Bootcamp)" in names
         _mark(S1, {"bc2": None})                       # and their mark can still be cleared
