@@ -551,3 +551,154 @@ class TestAttendance:
         names = [m["name"] for m in run(bc.attendance(ANALYST))["members"]]
         assert "(no longer in the Bootcamp)" in names
         _mark(S1, {"bc2": None})                       # and their mark can still be cleared
+
+
+# ── Group projects ──────────────────────────────────────────────────────────
+
+BEN = User(id="bc2", username="ben")
+CY = User(id="bc3", username="cy")
+
+
+@pytest.fixture
+def campers(db):
+    users = db.collections["users"]
+    users["bc2"] = {"username": "ben", "full_name": "Ben Ng", "membership": mb.M_QUANT_BOOTCAMP, "email": "ben@gmail.com"}
+    users["bc3"] = {"username": "cy", "full_name": "Cy Li", "membership": mb.M_QUANT_BOOTCAMP}
+    db.collections.setdefault("applications", {}).update({
+        "bc1": {"oxford_email": "amy@ox.ac.uk"}, "bc2": {"oxford_email": "ben@ox.ac.uk"}, "bc3": {"oxford_email": "cy@ox.ac.uk"}})
+    return db
+
+
+def _start(user=CAMPER, name="Options pricing with ML", desc="Calibrating a vol surface."):
+    return run(bc.create_project(bc.ProjectIn(name=name, description=desc), user))
+
+
+def _projects(user):
+    return run(bc.list_projects(user))
+
+
+def _mine(user):
+    return next(p for p in _projects(user)["projects"] if p["is_member"])
+
+
+class TestProjects:
+    def test_start_one_and_everyone_sees_it_with_oxford_emails(self, campers):
+        out = _start()
+        assert len(out["code"]) == 6
+        seen = _projects(BEN)["projects"][0]
+        assert seen["name"] == "Options pricing with ML" and seen["owner_name"] == "Amy"
+        assert seen["members"] == [{"uid": "bc1", "name": "Amy", "email": "amy@ox.ac.uk", "is_owner": True}]
+        assert "code" not in seen and "requests" not in seen          # the code is the owner's
+        assert _mine(CAMPER)["code"] == out["code"]
+        assert _projects(ANALYST)["projects"][0]["name"] == seen["name"]   # Analysts see them too
+
+    def test_only_bootcamp_members_start_or_join(self, campers):
+        for who in (ANALYST, MEMBER):
+            with pytest.raises(HTTPException) as exc:
+                run(bc.require_member(who))
+            assert exc.value.status_code == 403
+
+    def test_joining_with_the_code(self, campers):
+        code = _start()["code"]
+        out = run(bc.join_with_code(bc.JoinCode(code=f" {code.lower()} "), BEN))
+        assert out["name"] == "Options pricing with ML"
+        assert [m["name"] for m in _mine(BEN)["members"]] == ["Amy", "Ben Ng"]
+        assert _mine(BEN)["members"][1]["email"] == "ben@ox.ac.uk"
+        with pytest.raises(HTTPException) as exc:
+            run(bc.join_with_code(bc.JoinCode(code="ZZZZZZ"), CY))
+        assert exc.value.status_code == 404
+
+    def test_request_then_the_owner_accepts_or_declines(self, campers):
+        pid = _start()["id"]
+        run(bc.request_to_join(pid, BEN))
+        run(bc.request_to_join(pid, CY))
+        assert _projects(BEN)["projects"][0]["requested"] is True
+        reqs = _mine(CAMPER)["requests"]
+        assert [r["name"] for r in reqs] == ["Ben Ng", "Cy Li"] and reqs[0]["email"] == "ben@ox.ac.uk"
+        with pytest.raises(HTTPException) as exc:
+            run(bc.decide_request(pid, "bc2", bc.RequestDecision(accept=True), BEN))   # only the owner
+        assert exc.value.status_code == 403
+        run(bc.decide_request(pid, "bc2", bc.RequestDecision(accept=True), CAMPER))
+        run(bc.decide_request(pid, "bc3", bc.RequestDecision(accept=False), CAMPER))
+        mine = _mine(CAMPER)
+        assert [m["uid"] for m in mine["members"]] == ["bc1", "bc2"] and mine["requests"] == []
+        assert not any(p["is_member"] for p in _projects(CY)["projects"])
+
+    def test_cancelling_a_request(self, campers):
+        pid = _start()["id"]
+        run(bc.request_to_join(pid, BEN))
+        run(bc.cancel_request(pid, BEN))
+        assert _mine(CAMPER)["requests"] == []
+
+    def test_one_project_at_a_time_and_joining_withdraws_other_requests(self, campers):
+        a = _start()
+        b = _start(BEN, name="Pairs trading")
+        run(bc.request_to_join(b["id"], CY))
+        with pytest.raises(HTTPException) as exc:
+            _start(CAMPER, name="Second one")
+        assert "already in a project" in exc.value.detail
+        with pytest.raises(HTTPException):
+            run(bc.request_to_join(b["id"], CAMPER))
+        run(bc.join_with_code(bc.JoinCode(code=a["code"]), CY))      # Cy joins Amy's instead
+        assert _mine(BEN)["requests"] == []                          # so the request to Ben's is gone
+
+    def test_an_accept_after_they_joined_elsewhere_is_refused(self, campers):
+        a, b = _start(), _start(BEN, name="Pairs trading")
+        run(bc.request_to_join(a["id"], CY))
+        run(bc.request_to_join(b["id"], CY))
+        run(bc.decide_request(b["id"], "bc3", bc.RequestDecision(accept=True), BEN))
+        assert _mine(CAMPER)["requests"] == []                       # withdrawn when Cy joined Ben's
+
+    def test_only_the_owner_renames_and_the_name_can_change(self, campers):
+        pid = _start()["id"]
+        run(bc.join_with_code(bc.JoinCode(code=_mine(CAMPER)["code"]), BEN))
+        with pytest.raises(HTTPException):
+            run(bc.update_project(pid, bc.ProjectIn(name="Mine now"), BEN))
+        run(bc.update_project(pid, bc.ProjectIn(name="Vol surfaces", description="New plan"), CAMPER))
+        p = _mine(BEN)
+        assert (p["name"], p["description"]) == ("Vol surfaces", "New plan")
+        with pytest.raises(HTTPException) as exc:
+            run(bc.update_project(pid, bc.ProjectIn(name="  "), CAMPER))
+        assert "name" in exc.value.detail
+
+    def test_a_new_code_retires_the_old_one(self, campers):
+        a = _start()
+        new = run(bc.new_code(a["id"], CAMPER))["code"]
+        assert new != a["code"]
+        with pytest.raises(HTTPException):
+            run(bc.join_with_code(bc.JoinCode(code=a["code"]), BEN))
+        run(bc.join_with_code(bc.JoinCode(code=new), BEN))
+
+    def test_leaving_hands_over_and_the_last_one_out_removes_it(self, campers):
+        a = _start()
+        run(bc.join_with_code(bc.JoinCode(code=a["code"]), BEN))
+        run(bc.join_with_code(bc.JoinCode(code=a["code"]), CY))
+        assert run(bc.leave_project(a["id"], CAMPER))["removed"] is False
+        p = _mine(BEN)
+        assert p["owner"] == "bc2" and p["is_owner"] and [m["uid"] for m in p["members"]] == ["bc2", "bc3"]
+        assert not any(x["is_member"] for x in _projects(CAMPER)["projects"])
+        run(bc.leave_project(a["id"], CY))
+        assert run(bc.leave_project(a["id"], BEN))["removed"] is True
+        assert _projects(BEN)["projects"] == []
+        _start()                                                     # free to start another
+
+    def test_analysts_can_remove_a_project(self, campers):
+        a = _start()
+        with pytest.raises(HTTPException):
+            run(bc.require_editor(CAMPER))
+        run(bc.remove_project(a["id"], ANALYST))
+        assert _projects(CAMPER)["projects"] == []
+
+
+class TestUndecided:
+    def test_everyone_starts_undecided_and_leaves_the_list_on_joining(self, campers):
+        names = lambda: [m["name"] for m in _projects(BEN)["undecided"]]  # noqa: E731
+        assert names() == ["Amy", "Ben Ng", "Cy Li"]                    # Bootcamp members only, by name
+        a = _start()
+        assert names() == ["Ben Ng", "Cy Li"]
+        run(bc.join_with_code(bc.JoinCode(code=a["code"]), BEN))
+        out = _projects(CY)
+        assert [m["name"] for m in out["undecided"]] == ["Cy Li"] and out["undecided"][0]["email"] == "cy@ox.ac.uk"
+        run(bc.leave_project(a["id"], BEN))
+        assert names() == ["Ben Ng", "Cy Li"]                            # back on the list after leaving
+        assert [m["name"] for m in _projects(ANALYST)["undecided"]] == ["Ben Ng", "Cy Li"]

@@ -407,16 +407,156 @@
     if (att.can_edit) { attSession = attSession || defaultSession(); drawRegister(); } else drawMine();
   }
 
-  // Posts / Attendance, remembered in the address (#attendance).
+  // ── Group projects ───────────────────────────────────────────────────────
+  // Members start a project (name + description), share its code to let
+  // people straight in, or accept requests to join. Everyone sees every
+  // project and its members' Oxford emails. One project per member.
+  let pj = null, pjEditing = false, pjLeaving = null;
+
+  const memberRows = (p) => `<div class="bc-pj-members">${p.members.map((m) => `
+    <div class="bc-pj-member"><span>${esc(m.name)}${m.is_owner ? '<span class="bc-pj-lead">runs it</span>' : ""}</span>
+      ${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : '<span class="msp-muted">no email on file</span>'}</div>`).join("")}</div>`;
+
+  function myProjectHtml(p) {
+    const edit = pjEditing && p.is_owner;
+    return `<article class="card bc-pj is-mine" id="pj-${esc(p.id)}">
+      <div class="bc-pj-top"><span class="bc-pj-tag">Your project</span>
+        <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"}</span></div>
+      ${edit ? `<div class="bc-form" style="margin-top:10px;">
+          <input class="msp-input" id="pjEditName" maxlength="80" value="${esc(p.name)}" aria-label="Project name">
+          <textarea class="msp-input" id="pjEditDesc" maxlength="2000" aria-label="Description">${esc(p.description)}</textarea>
+          <div class="bc-actions"><button class="btn primary" data-pj="save" data-id="${esc(p.id)}">Save</button>
+            <button class="btn ghost" data-pj="cancel-edit">Cancel</button></div></div>`
+        : `<h3 style="margin-top:8px;">${esc(p.name)}</h3>${p.description ? `<p class="bc-pj-desc">${linkify(p.description)}</p>` : ""}`}
+      ${p.is_owner ? `<div class="bc-pj-code"><strong>${esc(p.code)}</strong>
+          <span>Your join code. Anyone in the Bootcamp who enters it joins straight away, so only share it with people you want in.</span>
+          <button class="btn ghost" data-pj="copy" data-code="${esc(p.code)}">Copy</button>
+          <button class="btn ghost" data-pj="newcode" data-id="${esc(p.id)}" title="The old code stops working">New code</button></div>` : ""}
+      ${p.is_owner && (p.requests || []).length ? `<div class="bc-pj-sub">Asking to join</div>${p.requests.map((r) => `
+        <div class="bc-pj-req"><div><strong>${esc(r.name)}</strong> · <a href="mailto:${esc(r.email)}">${esc(r.email)}</a></div>
+          <button class="btn primary" data-pj="accept" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Accept</button>
+          <button class="btn ghost" data-pj="decline" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Decline</button></div>`).join("")}` : ""}
+      <div class="bc-pj-sub">Members</div>${memberRows(p)}
+      ${pjLeaving === p.id ? `<div class="bc-pj-confirm"><span>Leave <strong>${esc(p.name)}</strong>?
+          ${p.members.length === 1 ? "You're the only member, so the project will be removed." : p.is_owner ? "The longest-standing member will take over running it." : "You'll need the code or a new request to rejoin."}</span>
+          <button class="btn bc-danger" data-pj="leave-yes" data-id="${esc(p.id)}">Leave</button>
+          <button class="btn ghost" data-pj="leave-no">Cancel</button></div>`
+        : `<div class="bc-pj-actions">${p.is_owner && !edit ? `<button class="btn ghost" data-pj="edit">Edit name and description</button>` : ""}
+          <button class="btn ghost" data-pj="leave" data-id="${esc(p.id)}">Leave project</button></div>`}
+    </article>`;
+  }
+
+  function otherProjectHtml(p) {
+    const canAsk = pj.is_member && !pj.in_project;
+    return `<article class="card bc-pj">
+      <div class="bc-pj-top"><h3>${esc(p.name)}</h3>
+        <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"} · run by ${esc(p.owner_name)}</span></div>
+      ${p.description ? `<p class="bc-pj-desc">${linkify(p.description)}</p>` : ""}
+      ${memberRows(p)}
+      <div class="bc-pj-actions">
+        ${canAsk ? (p.requested
+          ? `<span class="bc-meta">Request sent. ${esc(p.owner_name)} will see it.</span><button class="btn ghost" data-pj="unrequest" data-id="${esc(p.id)}">Cancel request</button>`
+          : `<button class="btn" data-pj="request" data-id="${esc(p.id)}">Request to join</button>`) : ""}
+        ${pj.can_moderate ? `<button class="btn ghost" data-pj="remove" data-id="${esc(p.id)}">Remove project</button>` : ""}
+      </div>
+    </article>`;
+  }
+
+  // Everyone not in a project yet: where people looking for a group, or for
+  // teammates, find each other.
+  function undecidedHtml() {
+    const list = pj.undecided || [];
+    return `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:26px 0 10px;">
+        Not in a project yet · ${list.length}</h4>
+      ${list.length ? `<div class="card" style="padding:4px 18px;"><div class="bc-pj-members" style="border-top:0;">${list.map((m) => `
+        <div class="bc-pj-member"><span>${esc(m.name)}${m.uid === pj.me ? '<span class="bc-pj-lead">you</span>' : ""}</span>
+          ${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : '<span class="msp-muted">no email on file</span>'}</div>`).join("")}
+        </div></div>` : '<p class="bc-empty">Everyone is in a project.</p>'}`;
+  }
+
+  function drawProjects() {
+    const mine = pj.projects.filter((p) => p.is_member), others = pj.projects.filter((p) => !p.is_member);
+    const start = pj.is_member && !pj.in_project ? `<div class="bc-pj-start">
+        <div class="card bc-form"><h3>Start a project</h3>
+          <input class="msp-input" id="pjName" maxlength="80" placeholder="Project name (you can change it later)" aria-label="Project name">
+          <textarea class="msp-input" id="pjDesc" maxlength="2000" placeholder="What you want to build or research, and who you're looking for" aria-label="Description"></textarea>
+          <div class="bc-actions"><button class="btn primary" data-pj="create">Start project</button></div></div>
+        <div class="card bc-form"><h3>Have a join code?</h3>
+          <input class="msp-input bc-pj-code-in" id="pjCode" maxlength="6" placeholder="CODE" autocomplete="off" aria-label="Join code">
+          <div class="bc-actions"><button class="btn primary" data-pj="join">Join</button></div>
+          <p class="bc-hint">Ask whoever runs a project for its code, or press Request to join on it below.</p></div>
+      </div>` : "";
+    $("#projectsView").innerHTML = `${start}${mine.map(myProjectHtml).join("")}
+      ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : "Projects"}</h4>` : ""}
+      ${others.map(otherProjectHtml).join("")}
+      ${!pj.projects.length ? `<p class="bc-empty">No projects yet.${pj.is_member ? " Start the first one above." : ""}</p>` : ""}
+      ${undecidedHtml()}`;
+  }
+
+  async function loadProjects() {
+    try { pj = await api("/bootcamp/projects"); } catch (err) {
+      $("#projectsView").innerHTML = `<p class="bc-empty">Couldn't load projects: ${esc(err.message)}</p>`; return;
+    }
+    drawProjects();
+  }
+
+  document.addEventListener("click", async (e) => {
+    const b = e.target.closest("[data-pj]");
+    if (!b || !pj) return;
+    const act = b.dataset.pj, id = b.dataset.id ? encodeURIComponent(b.dataset.id) : "";
+    try {
+      if (act === "edit") { pjEditing = true; drawProjects(); return; }
+      if (act === "cancel-edit") { pjEditing = false; drawProjects(); return; }
+      if (act === "leave") { pjLeaving = b.dataset.id; drawProjects(); return; }
+      if (act === "leave-no") { pjLeaving = null; drawProjects(); return; }
+      if (act === "copy") {
+        try { await navigator.clipboard.writeText(b.dataset.code); showMsg("Code copied.", true); }
+        catch { showMsg(`The code is ${b.dataset.code}`, true); }
+        return;
+      }
+      if (act === "remove" && !b.dataset.sure) {
+        b.dataset.sure = "1"; b.textContent = "Sure? Click again to remove it for everyone";
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Remove project"; } }, 4000);
+        return;
+      }
+      b.disabled = true;
+      if (act === "create") {
+        await send("POST", "/bootcamp/projects", { name: $("#pjName").value, description: $("#pjDesc").value });
+        showMsg("Project started. Share its code with the people you want in.", true);
+      } else if (act === "join") {
+        const d = await send("POST", "/bootcamp/projects/join", { code: $("#pjCode").value });
+        showMsg(`You've joined ${d.name || "the project"}.`, true);
+      } else if (act === "save") {
+        await send("PUT", `/bootcamp/projects/${id}`, { name: $("#pjEditName").value, description: $("#pjEditDesc").value });
+        pjEditing = false; showMsg("Saved.", true);
+      } else if (act === "newcode") {
+        await send("POST", `/bootcamp/projects/${id}/code`); showMsg("New code made. The old one no longer works.", true);
+      } else if (act === "request") {
+        await send("POST", `/bootcamp/projects/${id}/request`); showMsg("Request sent.", true);
+      } else if (act === "unrequest") {
+        await send("DELETE", `/bootcamp/projects/${id}/request`);
+      } else if (act === "accept" || act === "decline") {
+        await send("POST", `/bootcamp/projects/${id}/requests/${encodeURIComponent(b.dataset.uid)}`, { accept: act === "accept" });
+      } else if (act === "leave-yes") {
+        const d = await send("POST", `/bootcamp/projects/${id}/leave`);
+        pjLeaving = null; showMsg(d.removed ? "You've left, and the project has been removed." : "You've left the project.", true);
+      } else if (act === "remove") {
+        await send("DELETE", `/bootcamp/projects/${id}`); showMsg("Project removed.", true);
+      }
+      await loadProjects();
+    } catch (err) { showMsg(err.message, false); b.disabled = false; }
+  });
+
+  // Posts / Attendance / Group projects, remembered in the address.
+  const VIEWS = { posts: "#postsView", attendance: "#attendanceView", projects: "#projectsView" };
   function showView(view) {
-    const isAtt = view === "attendance";
-    $("#postsView").classList.toggle("hidden", isAtt);
-    $("#attendanceView").classList.toggle("hidden", !isAtt);
+    for (const [name, sel] of Object.entries(VIEWS)) $(sel).classList.toggle("hidden", name !== view);
     document.querySelectorAll("#mainTabs [data-view]").forEach((b) => {
       b.classList.toggle("is-on", b.dataset.view === view); b.setAttribute("aria-selected", b.dataset.view === view ? "true" : "false");
     });
-    if (isAtt) loadAttendance();
-    history.replaceState(null, "", isAtt ? "#attendance" : location.pathname);
+    if (view === "attendance") loadAttendance();
+    if (view === "projects") loadProjects();
+    history.replaceState(null, "", view === "posts" ? location.pathname : `#${view}`);
   }
   document.querySelectorAll("#mainTabs [data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 
@@ -442,7 +582,8 @@
     drawNext();
     drawFeed();
     $("#mainTabs").classList.remove("hidden");
-    if (location.hash === "#attendance") showView("attendance");
+    const hash = location.hash.slice(1);
+    if (hash in VIEWS && hash !== "posts") showView(hash);
   }
   load();
 })();

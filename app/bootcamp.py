@@ -39,6 +39,8 @@ import datetime as dt
 import html
 import io
 import re
+import secrets
+import string
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -615,3 +617,270 @@ async def mark_attendance(session_id: str, req: AttendanceIn, user: User = Depen
         await ref.set({"marks": marks, "updated_at": _now(), "updated_by": str(user.id),
                        "updated_by_name": await _name_of(user)})
     return {"ok": True, "session": session_id, "marks": marks}
+
+
+
+# ── Group projects ───────────────────────────────────────────────────────────
+# Bootcamp members start projects (a name and a description, both editable
+# by whoever runs it). Each project has a join code its owner shares:
+# entering it joins straight away. Anyone else can ask to join instead, and
+# the owner accepts or declines. Everyone on the Bootcamp page sees every
+# project and who's in it, with their Oxford emails, so groups can get in
+# touch. A member is in one project at a time; joining one withdraws their
+# requests to the others. When the owner leaves, the longest-standing member
+# takes over; a project nobody is left in is removed. Analysts see them all
+# and can remove one.
+
+PROJECTS = "bootcamp_projects"
+PROJECT_NAME_MAX = 80
+PROJECT_DESCRIPTION_MAX = 2000
+PROJECTS_PER_MEMBER = 1
+_CODE_ALPHABET = "".join(c for c in string.ascii_uppercase + string.digits if c not in "O0I1")
+_projects_lock = asyncio.Lock()
+
+
+async def require_member(user: User = Depends(current_user)) -> User:
+    """Bootcamp members: the people who run and join group projects."""
+    if await access_of(user) != ACCESS_READER:
+        raise HTTPException(403, "Group projects are for Bootcamp members")
+    return user
+
+
+async def _all_projects() -> Dict[str, Dict[str, Any]]:
+    return {d.id: (d.to_dict() or {}) for d in await db_module.db.collection(PROJECTS).get()}
+
+
+def _projects_of(projects: Dict[str, Dict[str, Any]], uid: str) -> List[str]:
+    return [pid for pid, p in projects.items() if uid in (p.get("members") or [])]
+
+
+def _new_code(projects: Dict[str, Dict[str, Any]]) -> str:
+    taken = {p.get("code") for p in projects.values()}
+    while True:
+        code = "".join(secrets.choice(_CODE_ALPHABET) for _ in range(6))
+        if code not in taken:
+            return code
+
+
+def _checked_project(name: str, description: str) -> Dict[str, str]:
+    name = " ".join((name or "").split())
+    if not name:
+        raise HTTPException(400, "Give the project a name")
+    if len(name) > PROJECT_NAME_MAX:
+        raise HTTPException(400, f"Keep the name under {PROJECT_NAME_MAX} characters")
+    description = (description or "").strip()
+    if len(description) > PROJECT_DESCRIPTION_MAX:
+        raise HTTPException(400, f"Keep the description under {PROJECT_DESCRIPTION_MAX:,} characters")
+    return {"name": name, "description": description}
+
+
+def _room_for(projects: Dict[str, Dict[str, Any]], uid: str) -> None:
+    if len(_projects_of(projects, uid)) >= PROJECTS_PER_MEMBER:
+        raise HTTPException(400, "You're already in a project. Leave it first to join another.")
+
+
+async def _load_project(project_id: str) -> tuple:
+    ref = db_module.db.collection(PROJECTS).document(project_id)
+    doc = await ref.get()
+    if not doc.exists:
+        raise HTTPException(404, "No such project")
+    return ref, doc.to_dict() or {}
+
+
+def _owner_only(project: Dict[str, Any], user: User) -> None:
+    if project.get("owner") != str(user.id):
+        raise HTTPException(403, "Only the person running the project can do that")
+
+
+async def _withdraw_requests(uid: str, keep: Optional[str] = None) -> None:
+    """Someone who's joined a project no longer wants into the others."""
+    for pid, p in (await _all_projects()).items():
+        if pid != keep and uid in (p.get("requests") or {}):
+            requests = dict(p["requests"])
+            requests.pop(uid)
+            await db_module.db.collection(PROJECTS).document(pid).update({"requests": requests})
+
+
+def _add_member(project: Dict[str, Any], uid: str) -> Dict[str, Any]:
+    members = list(project.get("members") or [])
+    if uid not in members:
+        members.append(uid)
+    joined = dict(project.get("joined") or {})
+    joined.setdefault(uid, _now())
+    requests = dict(project.get("requests") or {})
+    requests.pop(uid, None)
+    return {"members": members, "joined": joined, "requests": requests}
+
+
+@router.get("/projects")
+async def list_projects(user: User = Depends(require_reader)):
+    """Every project, with who's in it and their Oxford emails. The owner
+    also gets the join code and the requests waiting on them."""
+    uid = str(user.id)
+    access = await access_of(user)
+    roster = await _roster()
+    who = lambda u: {"uid": u, **roster.get(u, {"name": "(no longer in the Bootcamp)", "email": ""})}  # noqa: E731
+    out = []
+    projects = await _all_projects()
+    for pid, p in projects.items():
+        members = list(p.get("members") or [])
+        is_owner = p.get("owner") == uid
+        view = {
+            "id": pid, "name": p.get("name") or "", "description": p.get("description") or "",
+            "owner": p.get("owner"), "owner_name": who(p.get("owner"))["name"] if p.get("owner") else "",
+            "members": [{**who(u), "is_owner": u == p.get("owner")} for u in members],
+            "is_member": uid in members, "is_owner": is_owner,
+            "requested": uid in (p.get("requests") or {}),
+            "created_at": _iso(p.get("created_at")),
+        }
+        if is_owner:
+            view["code"] = p.get("code")
+            view["requests"] = [{**who(u), "at": _iso(r.get("at"))} for u, r in (p.get("requests") or {}).items()]
+        out.append(view)
+    out.sort(key=lambda v: (not v["is_member"], v["created_at"] or ""))
+    # Everyone starts here: the members not in a project yet, so people
+    # looking for a group (or for teammates) can find each other.
+    placed = {u for p in projects.values() for u in p.get("members") or []}
+    undecided = sorted(({"uid": u, **who(u)} for u in roster if u not in placed), key=lambda m: m["name"].lower())
+    return {"projects": out, "is_member": access == ACCESS_READER, "can_moderate": access == ACCESS_EDITOR,
+            "in_project": any(v["is_member"] for v in out), "undecided": undecided, "me": uid}
+
+
+class ProjectIn(BaseModel):
+    name: str
+    description: str = ""
+
+
+@router.post("/projects")
+async def create_project(req: ProjectIn, user: User = Depends(require_member)):
+    uid = str(user.id)
+    fields = _checked_project(req.name, req.description)
+    async with _projects_lock:
+        projects = await _all_projects()
+        _room_for(projects, uid)
+        project = {**fields, "owner": uid, "members": [uid], "joined": {uid: _now()}, "requests": {},
+                   "code": _new_code(projects), "created_at": _now()}
+        ref = db_module.db.collection(PROJECTS).document()
+        await ref.set(project)
+    await _withdraw_requests(uid, keep=ref.id)
+    return {"ok": True, "id": ref.id, "code": project["code"]}
+
+
+@router.put("/projects/{project_id}")
+async def update_project(project_id: str, req: ProjectIn, user: User = Depends(require_member)):
+    """Rename it or change the description: whoever runs it."""
+    ref, project = await _load_project(project_id)
+    _owner_only(project, user)
+    await ref.update({**_checked_project(req.name, req.description), "updated_at": _now()})
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/code")
+async def new_code(project_id: str, user: User = Depends(require_member)):
+    """A fresh join code (the old one stops working), say if it got around."""
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        _owner_only(project, user)
+        code = _new_code(await _all_projects())
+        await ref.update({"code": code})
+    return {"ok": True, "code": code}
+
+
+class JoinCode(BaseModel):
+    code: str
+
+
+@router.post("/projects/join")
+async def join_with_code(req: JoinCode, user: User = Depends(require_member)):
+    uid = str(user.id)
+    code = "".join((req.code or "").split()).upper()
+    async with _projects_lock:
+        projects = await _all_projects()
+        match = next((pid for pid, p in projects.items() if code and p.get("code") == code), None)
+        if match is None:
+            raise HTTPException(404, "No project has that code. Check it with the person running the project.")
+        if uid in (projects[match].get("members") or []):
+            return {"ok": True, "id": match}
+        _room_for(projects, uid)
+        await db_module.db.collection(PROJECTS).document(match).update(_add_member(projects[match], uid))
+    await _withdraw_requests(uid, keep=match)
+    return {"ok": True, "id": match, "name": projects[match].get("name")}
+
+
+@router.post("/projects/{project_id}/request")
+async def request_to_join(project_id: str, user: User = Depends(require_member)):
+    uid = str(user.id)
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if uid in (project.get("members") or []):
+            raise HTTPException(400, "You're already in this project")
+        _room_for(await _all_projects(), uid)
+        requests = dict(project.get("requests") or {})
+        requests[uid] = {"at": _now()}
+        await ref.update({"requests": requests})
+    return {"ok": True}
+
+
+@router.delete("/projects/{project_id}/request")
+async def cancel_request(project_id: str, user: User = Depends(require_member)):
+    ref, project = await _load_project(project_id)
+    requests = dict(project.get("requests") or {})
+    if requests.pop(str(user.id), None) is not None:
+        await ref.update({"requests": requests})
+    return {"ok": True}
+
+
+class RequestDecision(BaseModel):
+    accept: bool
+
+
+@router.post("/projects/{project_id}/requests/{member_uid}")
+async def decide_request(project_id: str, member_uid: str, req: RequestDecision, user: User = Depends(require_member)):
+    """The owner lets someone in, or doesn't."""
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        _owner_only(project, user)
+        requests = dict(project.get("requests") or {})
+        if member_uid not in requests:
+            raise HTTPException(404, "That request isn't there any more")
+        if not req.accept:
+            requests.pop(member_uid)
+            await ref.update({"requests": requests})
+            return {"ok": True}
+        projects = await _all_projects()
+        if _projects_of(projects, member_uid):
+            requests.pop(member_uid)
+            await ref.update({"requests": requests})
+            raise HTTPException(400, "They've joined another project since asking")
+        await ref.update(_add_member(project, member_uid))
+    await _withdraw_requests(member_uid, keep=project_id)
+    return {"ok": True}
+
+
+@router.post("/projects/{project_id}/leave")
+async def leave_project(project_id: str, user: User = Depends(require_member)):
+    uid = str(user.id)
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        members = list(project.get("members") or [])
+        if uid not in members:
+            raise HTTPException(400, "You're not in this project")
+        members.remove(uid)
+        if not members:
+            await ref.delete()             # nobody left
+            return {"ok": True, "removed": True}
+        joined = dict(project.get("joined") or {})
+        joined.pop(uid, None)
+        change: Dict[str, Any] = {"members": members, "joined": joined}
+        if project.get("owner") == uid:   # the longest-standing member takes over
+            change["owner"] = min(members, key=lambda u: (_iso(joined.get(u)) or "", members.index(u)))
+        await ref.update(change)
+    return {"ok": True, "removed": False}
+
+
+@router.delete("/projects/{project_id}")
+async def remove_project(project_id: str, user: User = Depends(require_editor)):
+    """Analysts can take a project down (say it was a test, or abandoned)."""
+    ref, _ = await _load_project(project_id)
+    await ref.delete()
+    return {"ok": True}

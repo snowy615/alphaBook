@@ -111,6 +111,38 @@
     .bc-grid td.is-low { color: var(--red); font-weight: 700; }
     .bc-key { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
     @media (max-width: 560px) { .bc-reg-row { flex-wrap: wrap; } .bc-reg-who { flex-basis: 100%; } }
+
+    /* Group projects */
+    .bc-pj-start { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 14px; margin-bottom: 18px; }
+    @media (max-width: 700px) { .bc-pj-start { grid-template-columns: 1fr; } }
+    .bc-pj-start .card { padding: 16px 18px; }
+    .bc-pj-start h3, .bc-pj h3 { margin: 0 0 10px; font-size: 17px; }
+    .bc-pj-start textarea { min-height: 90px; resize: vertical; font-family: inherit; }
+    .bc-pj-code-in { text-transform: uppercase; letter-spacing: .25em; font-weight: 700; text-align: center; }
+    .bc-pj { padding: 16px 18px; margin-bottom: 14px; }
+    .bc-pj.is-mine { border-color: var(--brand); box-shadow: inset 3px 0 0 var(--brand); }
+    .bc-pj-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+    .bc-pj-tag { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--brand);
+                 border: 1px solid var(--brand); padding: 2px 8px; }
+    .bc-pj-desc { white-space: pre-wrap; line-height: 1.55; font-size: 14.5px; margin: 0 0 12px; overflow-wrap: anywhere; }
+    .bc-pj-members { border-top: 1px solid var(--border); }
+    .bc-pj-member { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border);
+                    font-size: 14px; flex-wrap: wrap; }
+    .bc-pj-member:last-child { border-bottom: 0; }
+    .bc-pj-member a { color: var(--brand); text-decoration: none; overflow-wrap: anywhere; }
+    .bc-pj-lead { font-size: 11px; color: var(--muted); margin-left: 6px; text-transform: uppercase; letter-spacing: .05em; }
+    .bc-pj-code { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 12px 14px; margin: 12px 0;
+                  background: var(--brand-wash); border: 1px solid var(--brand); }
+    .bc-pj-code strong { font-size: 26px; letter-spacing: .25em; color: var(--brand); font-variant-numeric: tabular-nums; }
+    .bc-pj-code span { font-size: 13px; color: var(--muted); flex: 1 1 200px; }
+    .bc-pj-req { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+    .bc-pj-req:last-child { border-bottom: 0; }
+    .bc-pj-req > div { flex: 1; min-width: 0; font-size: 14px; }
+    .bc-pj-sub { font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin: 14px 0 4px; }
+    .bc-pj-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    .bc-pj-confirm { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; padding: 10px 12px;
+                     border: 1px solid rgba(242, 85, 90, .5); background: rgba(242, 85, 90, .06); font-size: 14px; }
+    .btn.bc-danger { border-color: var(--red); color: var(--red); }
   </style>
 </head>
 
@@ -144,9 +176,11 @@
     <div class="bc-tabs bc-main-tabs hidden" id="mainTabs" role="tablist" aria-label="Bootcamp page">
       <button type="button" class="bc-tab is-on" data-view="posts" role="tab" aria-selected="true">Posts</button>
       <button type="button" class="bc-tab" data-view="attendance" role="tab" aria-selected="false">Attendance</button>
+      <button type="button" class="bc-tab" data-view="projects" role="tab" aria-selected="false">Group projects</button>
     </div>
 
     <div id="attendanceView" class="hidden"><p class="bc-empty">Loading…</p></div>
+    <div id="projectsView" class="hidden"><p class="bc-empty">Loading…</p></div>
 
     <div id="postsView">
     <!-- Analysts only: write a post -->
@@ -183,7 +217,7 @@
     </div>
   </div>
 
-  <script src="/static/bootcamp.js?v=5"></script>
+  <script src="/static/bootcamp.js?v=7"></script>
 </body>
 
 </html>
