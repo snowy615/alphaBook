@@ -5188,7 +5188,7 @@ class TestReviewPageCost:
 
 class TestBootcampSchedule:
     """Everyone who has accepted a Bootcamp place sees the six Sunday sessions:
-    the first 1:15-4 pm, the rest 2-4 pm, each marked done / next / upcoming."""
+    the first two 1:15-4 pm, the rest 2-4 pm, each marked done / next / upcoming."""
 
     def _state(self, monkeypatch, now, programme=mb.M_QUANT_BOOTCAMP, response="accepted"):
         monkeypatch.setattr(ap, "_now", lambda: now)
@@ -5202,7 +5202,8 @@ class TestBootcampSchedule:
         sched = st["bootcamp_schedule"]
         assert [s["date"] for s in sched] == ["2026-10-25", "2026-11-01", "2026-11-08", "2026-11-15", "2026-11-22", "2026-11-29"]
         assert sched[0]["time_label"] == "1:15–4 pm" and sched[0]["title"] == "Game + Introduction to Machine Learning"
-        assert {s["time_label"] for s in sched[1:]} == {"2–4 pm"}
+        assert sched[1]["time_label"] == "1:15–4 pm"
+        assert {s["time_label"] for s in sched[2:]} == {"2–4 pm"}
         assert sched[0]["date_label"] == "Sunday 25 October" and sched[0]["venue"] == "Gillis Lecture Theatre, Balliol College"
         assert [s["status"] for s in sched] == ["next"] + ["upcoming"] * 5
 

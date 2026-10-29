@@ -1135,7 +1135,7 @@ async def state(user: User = Depends(current_user)):
 BOOTCAMP_VENUE = "Gillis Lecture Theatre, Balliol College"
 BOOTCAMP_SCHEDULE: List[Dict[str, Any]] = [
     {"date": dt.date(2026, 10, 25), "start": "13:15", "end": "16:00", "title": "Game + Introduction to Machine Learning"},
-    {"date": dt.date(2026, 11, 1), "start": "14:00", "end": "16:00", "title": ""},
+    {"date": dt.date(2026, 11, 1), "start": "13:15", "end": "16:00", "title": ""},
     {"date": dt.date(2026, 11, 8), "start": "14:00", "end": "16:00", "title": ""},
     {"date": dt.date(2026, 11, 15), "start": "14:00", "end": "16:00", "title": ""},
     {"date": dt.date(2026, 11, 22), "start": "14:00", "end": "16:00", "title": ""},
