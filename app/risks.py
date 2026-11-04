@@ -254,9 +254,10 @@ async def _record_scores(game_id: str, game: dict, day: int) -> None:
     try:
         episode = _episode_of(game)
         trades = game.get("trades", {})
-        feedback_by_user = {}
+        feedback_by_user, rated = {}, []
         for p in game.get("players", []):
             card = ep_lib.score_player(episode, trades.get(p["user_id"], []), day)
+            rated.append({"user_id": p["user_id"], "username": p.get("username", ""), "value": float(card["score"])})
             coaching = fb.analyse("risks", {**card, "gross_limit": ep_lib.GROSS_LIMIT})
             feedback_by_user[p["user_id"]] = coaching
             await scores.record_result(
@@ -265,6 +266,7 @@ async def _record_scores(game_id: str, game: dict, day: int) -> None:
                 detail={"pnl": card["pnl"], "max_drawdown": card["max_drawdown"]},
                 feedback=coaching,
             )
+        await scores.rate_game("risks", game_id, rated)
         await db_module.db.collection(COLLECTION).document(game_id).update(
             {"feedback": feedback_by_user})
     except Exception:

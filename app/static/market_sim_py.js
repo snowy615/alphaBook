@@ -314,14 +314,33 @@
         oldRects.set(tr.dataset.uid, tr.getBoundingClientRect());
       });
 
+      // Live, P&L is marked to the market (the hidden fair value stays hidden);
+      // once the run is over it settles at fair and the strategy split shows:
+      // what pricing made (edge) and what holding inventory made (direction).
+      const settled = rows.some((r) => r.pnl_basis === "fair");
+      // Your own row and the bots' carry figures; other players' only a word
+      // (positive / negative), so their numbers can't be copied.
+      const part = (v) => typeof v === "number"
+        ? `<td class="msp-num ${v >= 0 ? "msp-up" : "msp-down"}">${money(v)}</td>`
+        : `<td class="msp-num ${v === "positive" ? "msp-up" : v === "negative" ? "msp-down" : "msp-muted"}">${esc(v || "—")}</td>`;
+      const stratCells = (r) => {
+        const st = r.strategy || {};
+        if (!settled) return "";
+        const how = typeof st.edge === "number" ? "" : [st.aggression, st.call ? `direction ${st.call}` : ""].filter(Boolean).join(" · ");
+        return `<td>${st.style ? `<span class="msp-tag msp-style-${esc(st.style.key)}" title="${esc(how)}">${esc(st.style.label)}</span>` : ""}</td>
+          ${part(st.edge)}${part(st.direction)}`;
+      };
       table.innerHTML = `
-        <thead><tr><th>#</th><th>Player</th><th class="msp-num">P&amp;L</th>
+        <thead><tr><th>#</th><th>Player</th>
+        <th class="msp-num" title="${settled ? "Settled at the revealed fair values" : "Marked to the market (mid of the book), not to the hidden fair value"}">P&amp;L${settled ? "" : " <span class=\"msp-muted\">(marked to market)</span>"}</th>
+        ${settled ? '<th>Style</th><th class="msp-num" title="What their prices made against fair at the moment they traded">Edge</th><th class="msp-num" title="What holding inventory made as fair moved">Direction</th>' : ""}
         <th class="msp-num">Fills</th><th></th></tr></thead>
         <tbody>${rows.map((r) => `
           <tr class="${r.is_bot ? "msp-bot-row" : ""} ${r.user_id === myUid ? "msp-me-row" : ""}" data-uid="${esc(String(r.user_id))}">
             <td>${r.rank}</td>
-            <td>${esc(r.username)}${r.is_bot ? ' <span class="msp-tag">bot</span>' : ""}</td>
+            <td>${esc(r.username)}${r.is_bot ? ` <span class="msp-tag">bot${r.bot_skill ? ` · ${esc(r.bot_skill)}` : ""}</span>` : ""}</td>
             <td class="msp-num ${r.pnl >= 0 ? "msp-up" : "msp-down"}">${money(r.pnl)}</td>
+            ${stratCells(r)}
             <td class="msp-num">${r.fills}</td>
             <td>${!r.is_bot && r.connected ? '<span class="msp-dot" title="bot connected"></span>' : ""}</td>
           </tr>`).join("")}</tbody>`;
@@ -652,6 +671,21 @@
           </tr>`).join("")}</tbody>`;
     }
 
+    // How you're trading so far: maker share, two-sided quoting and inventory
+    // use are safe to show live; the fair-based split waits for the end.
+    function styleStat(st) {
+      if (!st) return "";
+      const pct = (v) => v == null ? "—" : `${Math.round(100 * v)}%`;
+      if (st.style) {
+        return `<div class="msp-stat"><span class="msp-stat-label">Style</span>
+          <span class="msp-stat-value">${esc(st.style.label)}</span>
+          <span class="msp-stat-sub">edge ${money(st.edge)} · direction ${money(st.direction)}</span></div>`;
+      }
+      return `<div class="msp-stat"><span class="msp-stat-label" title="Share of your volume filled as a resting (maker) order, and the share of the time you quoted both sides">Maker share · quoting</span>
+        <span class="msp-stat-value">${pct(st.maker_share)} · ${pct(st.quote_uptime)}</span>
+        <span class="msp-stat-sub">inventory ${pct(st.avg_inventory)} of limit</span></div>`;
+    }
+
     // The always-visible stat strip along the top of the board. Everything a
     // player checks mid-run lives here so nothing has to be scrolled to.
     function renderMe(me, items, runStatus, meRow) {
@@ -681,8 +715,9 @@
         stats.innerHTML = `
           <div class="msp-stat"><span class="msp-stat-label">Rank</span>
             <span class="msp-stat-value">${rank}</span></div>
-          <div class="msp-stat msp-stat-key"><span class="msp-stat-label">P&amp;L</span>
+          <div class="msp-stat msp-stat-key"><span class="msp-stat-label" title="${me.pnl_basis === "fair" ? "Settled at the revealed fair values" : "Marked to the market (mid of everyone else's quotes), never to the hidden fair value"}">P&amp;L · ${me.pnl_basis === "fair" ? "settled" : "marked to market"}</span>
             <span class="msp-stat-value ${me.pnl >= 0 ? "msp-up" : "msp-down"}">${money(me.pnl)}</span></div>
+          ${styleStat(me.strategy)}
           <div class="msp-stat"><span class="msp-stat-label">Cash</span>
             <span class="msp-stat-value">${money(me.cash)}</span></div>
           <div class="msp-stat"><span class="msp-stat-label">Fills</span>

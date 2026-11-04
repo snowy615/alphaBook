@@ -99,23 +99,47 @@
     }).join("");
   }
 
+  // How someone trades in a mode, over their games: their usual style and
+  // whether their edge or their direction made the money.
+  const STYLE = { market_maker: "Market maker", directional: "Directional", taker: "Liquidity taker",
+                  mixed: "Mixed", idle: "Didn't trade" };
+  function strategyCell(st, unit) {
+    if (!st) return '<span class="msp-muted">—</span>';
+    const parts = [];
+    if (st.style) parts.push(`<strong>${esc(STYLE[st.style] || st.style)}</strong>${st.games > 1 ? ` <span class="msp-muted">${st.style_games}/${st.games}</span>` : ""}`);
+    // Your own row has the figures; other players' only coarse words, so
+    // nobody can copy someone else's numbers.
+    if (st.edge_per_game != null || st.direction_per_game != null) {
+      parts.push(`<span title="Your average per game: trading edge (prices against fair) and direction (inventory as fair moved)">edge ${num(st.edge_per_game, unit)} · direction ${num(st.direction_per_game, unit)}</span>`);
+    } else if (st.made_on) {
+      parts.push(`<span title="Whether pricing or holding inventory drove their results">made on ${esc(st.made_on)}</span>`);
+    }
+    if (st.direction_hit != null) parts.push(`<span title="Share of what you traded that went the way the price then went">right way ${Math.round(100 * st.direction_hit)}%</span>`);
+    else if (st.call) parts.push(`<span title="How often their position went the way the price then went">direction ${esc(st.call)}</span>`);
+    return `<div class="lbx-strategy">${parts.join("<br>")}</div>`;
+  }
+
   function renderMode(key) {
     const meta = DATA.modes.find((m) => m.key === key) || {};
     const rows = DATA.mode_boards[key] || [];
+    const calibrated = meta.kind === "per_game";
+    const hasStrategy = rows.some((r) => r.strategy);
+    const cols = 6 + (calibrated ? 1 : 0) + (hasStrategy ? 1 : 0);
 
     $("#lbHead").innerHTML = `
       <tr>
         <th class="lbx-w-rank">#</th>
         <th>Player</th>
         <th class="lbx-w-rating">Rating</th>
-        <th class="lbx-w-mid">${esc(meta.metric || "Score")}</th>
-        <th class="lbx-w-mid">Best</th>
+        ${calibrated ? '<th class="lbx-w-mid" title="Calibrated skill: results rated against who and what each game was played against. Everyone starts at 1000.">Skill</th>' : ""}
+        ${hasStrategy ? "<th>Strategy</th>" : ""}
+        <th class="lbx-w-mid" title="Raw average, before calibration">Avg ${esc((meta.metric || "Score").toLowerCase())}</th>
         <th class="lbx-w-mid">Games</th>
         <th class="lbx-w-mid">Trend</th>
       </tr>`;
 
     if (!rows.length) {
-      $("#lbBody").innerHTML = `<tr><td colspan="7" class="lbx-empty">
+      $("#lbBody").innerHTML = `<tr><td colspan="${cols}" class="lbx-empty">
         Nobody has finished ${esc(meta.label || "this mode")} yet —
         <a href="${esc(meta.href || "/")}">be first</a>.</td></tr>`;
       return;
@@ -128,8 +152,9 @@
           <td class="lbx-rank">${r.rank}</td>
           <td class="lbx-name">${esc(r.username)}${r.is_me ? '<span class="lbx-you">you</span>' : ""}</td>
           <td>${ratingCell(r.rating, r.provisional)}</td>
+          ${calibrated ? `<td class="lbx-mid lbx-skill">${r.skill != null ? r.skill : "—"}</td>` : ""}
+          ${hasStrategy ? `<td>${strategyCell(r.strategy, meta.unit)}</td>` : ""}
           <td class="lbx-mid">${num(r.value, meta.unit)}</td>
-          <td class="lbx-mid">${num(r.best, meta.unit)}</td>
           <td class="lbx-mid">${r.games}</td>
           <td class="lbx-mid ${t.cls}" title="${t.label}">${t.icon}</td>
         </tr>`;
@@ -144,7 +169,8 @@
     } else {
       const meta = DATA.modes.find((m) => m.key === active) || {};
       $("#lbBoardTitle").textContent = meta.label || active;
-      $("#lbBoardNote").textContent = meta.blurb || "";
+      $("#lbBoardNote").textContent = meta.kind === "per_game"
+        ? "ranked on calibrated skill, not the raw average" : (meta.blurb || "");
       renderMode(active);
     }
   }

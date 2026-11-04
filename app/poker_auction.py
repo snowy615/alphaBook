@@ -541,6 +541,10 @@ async def advance(game_id: str, user: User = Depends(current_user)):
                     detail={"team_id": team["team_id"], "hand": hand.get("rank_name", "")},
                     feedback=coaching,
                 )
+        await scores.rate_game("poker_auction", game_id, [
+            {"user_id": uid, "username": team.get("team_name", ""), "value": float(team.get("money", 0))}
+            for team in teams for uid in team.get("user_ids", [])
+        ])
 
         await doc.reference.update({"feedback": feedback_by_user})
         return {"ok": True, "action": "finished"}

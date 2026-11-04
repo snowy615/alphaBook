@@ -415,3 +415,166 @@ class TestRegistry:
         assert run in engine.open_runs()
         run.finish()
         assert run not in engine.open_runs()
+
+
+# ── Fair value stays hidden while live ──────────────────────────────────────
+
+
+class TestHiddenFair:
+    def test_live_pnl_does_not_move_with_the_hidden_fair_value(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "WIDGET", "side": "BUY", "qty": 20})
+        before = run.player_view("u1")["pnl"]
+        run.items["WIDGET"].fair *= 1.5            # a big hidden move, nothing in the book changes
+        assert run.player_view("u1")["pnl"] == before
+        assert run.player_view("u1")["pnl_basis"] == "market"
+
+    def test_fair_cannot_be_backed_out_of_any_live_figure(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "GADGET", "side": "BUY", "qty": 30})
+        p = run.participants["u1"]
+        live = {
+            "view": run.player_view("u1")["pnl"],
+            "board": next(r["pnl"] for r in run.leaderboard() if r["user_id"] == "u1"),
+            "orders": submit(run, "u1", {"item": "WIDGET", "side": "BUY", "price": 1, "qty": 1})["pnl"],
+        }
+        fair = run.items["GADGET"].fair
+        for name, pnl in live.items():
+            implied = (pnl - p.cash) / p.pos["GADGET"]
+            assert implied != pytest.approx(fair, abs=1e-6), name
+        for b in run.bots_view():
+            part = run.participants[b["uid"]]
+            assert b["pnl"] == pytest.approx(part.pnl(run.marks_for(b["uid"])), abs=0.01)
+
+    def test_your_own_quotes_do_not_move_your_mark(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "WIDGET", "side": "BUY", "qty": 10})
+        mine, theirs = run.marks_for("u1")["WIDGET"], run.marks_for("other")["WIDGET"]
+        bid, ask = run._touch(run.books["WIDGET"])
+        # A new best bid just under the offer: it rests and drags the book's mid up...
+        submit(run, "u1", {"item": "WIDGET", "side": "BUY", "price": round(ask - 0.01, 2), "qty": 1})
+        assert run.marks_for("other")["WIDGET"] > theirs
+        # ...but not u1's own mark, so u1 can't talk up their own position.
+        assert run.marks_for("u1")["WIDGET"] == pytest.approx(mine)
+
+    def test_fair_is_used_once_the_run_is_over(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "WIDGET", "side": "BUY", "qty": 20})
+        heartbeat(run, engine.TOTAL_TICKS)
+        p = run.participants["u1"]
+        row = next(r for r in run.results if r["user_id"] == "u1")
+        assert row["pnl_basis"] == "fair"
+        assert row["pnl"] == pytest.approx(p.pnl({s: i.fair for s, i in run.items.items()}), abs=0.01)
+
+
+# ── Strategy, not just P&L ──────────────────────────────────────────────────
+
+
+class TestStrategy:
+    def test_settled_pnl_is_exactly_edge_plus_direction(self, run: Run):
+        started(run, "a", "b")
+        run.add_bot("market_maker", "good", 0)
+        for i in range(120):
+            submit(run, "a", {"item": "WIDGET", "side": "BUY" if i % 3 else "SELL", "qty": 15})
+            submit(run, "b", {"item": "DOODAD", "side": "SELL", "qty": 10})
+            heartbeat(run, 1)
+        heartbeat(run, engine.TOTAL_TICKS)
+        fair = {s: i.fair for s, i in run.items.items()}
+        for p in run.participants.values():
+            assert p.pnl(fair) == pytest.approx(p.edge + p.inventory_pnl, abs=1e-6), p.name
+
+    def test_maker_and_taker_are_told_apart(self, run: Run):
+        started(run, "maker", "taker")
+        bid, ask = run._touch(run.books["GIZMO"])
+        inside = round(ask - 0.01, 2)                # a new best offer, inside the spread: it rests
+        submit(run, "maker", {"item": "GIZMO", "side": "SELL", "price": inside, "qty": 5})
+        submit(run, "taker", {"item": "GIZMO", "side": "BUY", "qty": 5})           # lifts it
+        maker, taker = run.participants["maker"], run.participants["taker"]
+        assert maker.maker_volume == 5 and maker.taker_volume == 0
+        assert taker.taker_volume == 5 and taker.maker_volume == 0
+
+    def test_the_fair_based_parts_wait_for_the_end(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "WIDGET", "side": "BUY", "qty": 20})
+        heartbeat(run, 10)
+        live = run.player_view("u1")["strategy"]
+        assert {"edge", "direction", "markout_per_share", "direction_hit", "style"}.isdisjoint(live)
+        assert live["maker_share"] == 0.0 and live["avg_inventory"] > 0
+        heartbeat(run, engine.TOTAL_TICKS)
+        done = next(r for r in run.results if r["user_id"] == "u1")["strategy"]
+        assert {"edge", "direction", "edge_per_share", "markout_per_share", "direction_hit", "style"} <= set(done)
+        assert done["edge"] + done["direction"] == pytest.approx(
+            next(r for r in run.results if r["user_id"] == "u1")["pnl"], abs=0.02)
+
+    def test_markouts_settle_a_few_ticks_later(self, run: Run):
+        started(run, "u1")
+        submit(run, "u1", {"item": "DOODAD", "side": "BUY", "qty": 10})
+        p = run.participants["u1"]
+        assert p.markout_volume == 0
+        heartbeat(run, engine.MARKOUT_TICKS + 1)
+        assert p.markout_volume == 10
+
+    def test_two_sided_quoting_is_counted(self, run: Run):
+        started(run, "mm")
+        submit(run, "mm", {"item": "WIDGET", "side": "BUY", "price": 50, "qty": 1},
+                          {"item": "WIDGET", "side": "SELL", "price": 200, "qty": 1})
+        p = run.participants["mm"]
+        quoted, samples = p.quoted, p.samples
+        heartbeat(run, 4)
+        assert (p.quoted - quoted, p.samples - samples) == (4, 4)    # one item of four, every tick
+        assert 0 < run.strategy(p, reveal=False)["quote_uptime"] <= 0.25
+
+    @pytest.mark.parametrize("st,volume,key", [
+        ({}, 0, "idle"),
+        ({"maker_share": 0.9, "quote_uptime": 0.6, "edge": 50, "direction": -10}, 100, "market_maker"),
+        ({"maker_share": 0.2, "quote_uptime": 0.0, "edge": 5, "direction": 400, "avg_inventory": 0.5}, 100, "directional"),
+        ({"maker_share": 0.1, "quote_uptime": 0.0, "edge": 80, "direction": 5, "avg_inventory": 0.02}, 100, "taker"),
+        ({"maker_share": 0.5, "quote_uptime": 0.1, "edge": 20, "direction": 5, "avg_inventory": 0.02}, 100, "mixed")])
+    def test_styles(self, st, volume, key):
+        assert engine.style_of(st, volume)["key"] == key
+
+
+# ── Other players see a style, not figures they could copy ──────────────────
+
+
+class TestPrivacy:
+    def _finished(self, run):
+        started(run, "a", "b")
+        for i in range(30):
+            submit(run, "a", {"item": "WIDGET", "side": "BUY" if i % 2 else "SELL", "qty": 10})
+            submit(run, "b", {"item": "GADGET", "side": "BUY", "qty": 5})
+            heartbeat(run, 1)
+        heartbeat(run, engine.TOTAL_TICKS)
+        return run
+
+    def test_your_own_row_and_the_bots_are_in_full(self, run: Run):
+        rows = engine.view_for(self._finished(run).results, "a")
+        mine = next(r for r in rows if r["user_id"] == "a")
+        assert isinstance(mine["strategy"]["edge"], float) and "positions" in mine
+        bot = next(r for r in rows if r["is_bot"])
+        assert isinstance(bot["strategy"]["edge"], float)
+
+    def test_others_get_a_style_and_words_only(self, run: Run):
+        rows = engine.view_for(self._finished(run).results, "a")
+        other = next(r for r in rows if r["user_id"] == "b")
+        assert set(other) <= {"user_id", "username", "is_bot", "pnl", "pnl_basis", "fills", "rank", "connected", "strategy"}
+        st = other["strategy"]
+        assert st["style"]["label"]
+        assert all(isinstance(v, str) for k, v in st.items() if k != "style")      # no figures at all
+        assert st["edge"] in ("positive", "negative", "flat") and st["made_on"] in ("pricing", "direction")
+
+    def test_live_too(self, run: Run):
+        started(run, "a", "b")
+        submit(run, "b", {"item": "GADGET", "side": "BUY", "qty": 5})
+        heartbeat(run, 3)
+        other = next(r for r in engine.view_for(run.leaderboard(), "a") if r["user_id"] == "b")
+        assert "positions" not in other and "quote_uptime" not in other["strategy"]
+        assert other["strategy"].get("aggression") == "mostly aggressive"
+
+    def test_the_tape_names_only_you_and_the_bots(self, run: Run):
+        from app.market_sim_py import _tape_for
+        started(run, "a", "b")
+        submit(run, "a", {"item": "WIDGET", "side": "BUY", "qty": 5})
+        submit(run, "b", {"item": "GADGET", "side": "BUY", "qty": 5})
+        names = {n for t in _tape_for(run, "a") for n in (t["buyer"], t["seller"])}
+        assert "a" in names and "b" not in names and "a player" in names

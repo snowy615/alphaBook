@@ -568,6 +568,13 @@ async def _record_scores(game_id: str, game_data: dict, results: dict) -> dict:
                     "difficulty": settings.get("difficulty", "")},
             feedback=coaching,
         )
+    # Against the others in the room, or, played alone, against the usual
+    # accuracy at this difficulty.
+    await scores.rate_game("mental_math", game_id, [
+        {"user_id": p.get("user_id"), "username": p.get("username", ""),
+         "value": 100.0 * int((results.get(p.get("user_id")) or {}).get("score", 0)) / total}
+        for p in game_data.get("players", [])
+    ], context=scores.context_of("mental_math", {"difficulty": settings.get("difficulty", "")}))
     return out
 
 

@@ -219,6 +219,20 @@ class CreateRequest(BaseModel):
 
 
 # ---- Pages ----
+
+def direction_record(user_trades: list, final_price: float) -> dict:
+    """Was the call right? The share of what someone traded (by size) that
+    went the way the price then went, to the end of the game."""
+    right = total = 0.0
+    for t in user_trades:
+        size = abs(float(t.get("delta") or 0))
+        if not size:
+            continue
+        total += size
+        if float(t["delta"]) * (final_price - float(t["price"])) > 0:
+            right += size
+    return {"direction_hit": round(right / total, 3)} if total else {}
+
 @router.get("", include_in_schema=False)
 async def rules_page(request: Request):
     return templates.TemplateResponse("headline_rules.html", {
@@ -518,6 +532,7 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
 
     if just_finished:
         feedback_by_user = {}
+        final_price = prices[-1] if prices else current_price
         for row in leaderboard:
             coaching = fb.analyse("headline", {
                 "pnl": row["pnl"],
@@ -530,9 +545,13 @@ async def game_state(game_id: str, user: User = Depends(current_user)):
                 "headline", row["user_id"], row["username"], row["pnl"],
                 game_id=game_id,
                 detail={"template": game_data.get("template_name", ""),
-                        "position": row["position"]},
+                        "position": row["position"],
+                        "strategy": direction_record(trades.get(row["user_id"], []), final_price)},
                 feedback=coaching,
             )
+        await scores.rate_game("headline", game_id, [
+            {"user_id": r["user_id"], "username": r["username"], "value": r["pnl"]} for r in leaderboard
+        ], context=scores.context_of("headline", {"template": game_data.get("template_name", "")}))
         await doc.reference.update({"feedback": feedback_by_user})
         game_data["feedback"] = feedback_by_user
 

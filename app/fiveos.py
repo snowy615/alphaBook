@@ -543,6 +543,10 @@ async def _record_scores(game_id: str, game_data: dict) -> None:
                 detail={"team": row.get("team", "")},
                 feedback=coaching,
             )
+        await scores.rate_game("fiveos", game_id, [
+            {"user_id": uid, "username": row.get("username", ""), "value": float(row.get("pnl", 0.0))}
+            for uid, row in (pnl.get("players") or {}).items()
+        ])
 
         await db_module.db.collection("fiveos_games").document(game_id).update(
             {"feedback": feedback_by_user})

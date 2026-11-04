@@ -12,8 +12,19 @@ turns into
 * an **overall rating** — the mean of the modes they've played, plus a small
   breadth bonus.
 
-Two deliberate choices come from how this is used (ranking students, not
-running a casino):
+Calibration. A raw result means little on its own: $500 against noob bots
+in a calm market isn't $500 against cracked bots, and 90% at easy mental
+maths isn't 90% at hard. So each finished game is rated against who and what
+it was played against (:func:`rate_game`), Elo-style: every result is a set of
+head-to-heads against everyone else in that game, and a win over a strong
+opponent is worth more than one over a weak one. House bots take part at a
+fixed strength set by their skill level (BOT_SKILL_RATING). A game played
+alone is measured against "par", the typical result for the same mode and
+settings. A mode's rating ranks players on this skill, not on their raw
+average.
+
+Two more deliberate choices come from how this is used (ranking students,
+not running a casino):
 
 1. **Volume is capped.** A mode's representative number is the player's
    *average* result, never a running total, so grinding one mode cannot
@@ -52,6 +63,18 @@ BREADTH_BONUS_MAX = 6.0
 RECENT_KEEP = 10
 # Leaderboard cache, seconds.
 CACHE_TTL = 20.0
+
+# ── Calibrated skill (see the module docstring) ─────────────────────────────
+SKILL_START = 1000.0
+# House bots' fixed strength, by skill level: beating cracked bots is worth more.
+BOT_SKILL_RATING: Dict[str, float] = {"noob": 850.0, "normal": 1000.0, "good": 1150.0, "cracked": 1300.0}
+PAR_RATING = 1000.0           # "par", the typical result, plays at an average strength
+PAR_MIN_RESULTS = 5           # fewer results than this for the settings and there's no par yet
+PAR_KEEP = 200                # results kept per mode and settings to find par
+K_NEW, K_SETTLED = 48.0, 24.0  # rating movement: bigger while a player is new to a mode
+K_SETTLE_GAMES = 10
+CONTEXTS_COLLECTION = "score_contexts"
+RATED_GAMES_COLLECTION = "score_games"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,6 +253,22 @@ async def record_result(
             # The dashboard shows the most recent game's coaching per mode, so
             # keep it on the aggregate rather than re-querying the event log.
             agg["last_feedback"] = feedback
+        strategy = (detail or {}).get("strategy") or {}
+        if strategy:
+            # How they trade, across games: the style each game read as, and
+            # what their edge and their direction made on average.
+            key = (strategy.get("style") or {}).get("key")
+            if key:
+                styles = dict(agg.get("styles") or {})
+                styles[key] = int(styles.get(key, 0)) + 1
+                agg["styles"] = styles
+            agg["strategy_games"] = int(agg.get("strategy_games", 0)) + 1
+            for field, src in (("edge_sum", "edge"), ("direction_sum", "direction")):
+                if strategy.get(src) is not None:
+                    agg[field] = float(agg.get(field, 0.0)) + float(strategy[src])
+            if strategy.get("direction_hit") is not None:
+                agg["hit_sum"] = float(agg.get("hit_sum", 0.0)) + float(strategy["direction_hit"])
+                agg["hit_games"] = int(agg.get("hit_games", 0)) + 1
 
         modes[mode] = agg
         await ref.set({
@@ -274,6 +313,179 @@ async def set_gauge(mode: str, user_id: str, username: str, value: float, activi
         }, merge=True)
     except Exception:
         log.warning("set_gauge failed (mode=%s user=%s)", mode, user_id, exc_info=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Calibrated skill: rating a game against who and what it was played against
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _expected(r_a: float, r_b: float) -> float:
+    return 1.0 / (1.0 + 10.0 ** ((r_b - r_a) / 400.0))
+
+
+def _k(games: int) -> float:
+    return K_NEW if games < K_SETTLE_GAMES else K_SETTLED
+
+
+def _median(values: List[float]) -> float:
+    v = sorted(values)
+    n = len(v)
+    return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2.0
+
+
+def elo_deltas(field: List[Dict[str, Any]]) -> Dict[str, float]:
+    """One game's rating changes, every result taken as a head-to-head with
+    each other entrant (higher value wins, equal is a draw). ``field`` rows:
+    {"id", "value", "rating", "games", "fixed"}; fixed entrants (house bots,
+    par) don't move. Each player's change is scaled by how many opponents they
+    had, so a big game isn't worth more than a small one."""
+    out: Dict[str, float] = {}
+    for me in field:
+        if me.get("fixed"):
+            continue
+        others = [o for o in field if o is not me]
+        if not others:
+            continue
+        total = 0.0
+        for o in others:
+            score = 1.0 if me["value"] > o["value"] else 0.5 if me["value"] == o["value"] else 0.0
+            total += score - _expected(me["rating"], o["rating"])
+        out[me["id"]] = _k(me["games"]) * total / len(others)
+    return out
+
+
+def context_of(mode: str, detail: Optional[Dict[str, Any]]) -> str:
+    """The settings that change what a result means, for finding par: the
+    difficulty in Mental Math, the scenario in Headline."""
+    detail = detail or {}
+    if mode == "mental_math":
+        return str(detail.get("difficulty") or "")
+    if mode == "headline":
+        return str(detail.get("template") or "")
+    return ""
+
+
+async def rate_game(mode: str, game_id: str, rows: List[Dict[str, Any]], context: str = "") -> Dict[str, float]:
+    """Rate one finished game. ``rows``: every entrant, {"user_id",
+    "username", "value"}, with "bot_skill" for a house bot. Call once, after
+    the game's record_result calls. A game with a single entrant is played
+    against par for its settings (``context``). Once only per game; never
+    raises. Returns the rating changes."""
+    if mode not in MODES or mode_meta(mode).get("kind") != "per_game" or not game_id:
+        return {}
+    try:
+        flag = db_module.db.collection(RATED_GAMES_COLLECTION).document(f"{mode}__{game_id}")
+        if (await flag.get()).exists:
+            return {}
+        humans = [r for r in rows if r.get("user_id") and "bot_skill" not in r]
+        if not humans:
+            return {}
+        refs = {r["user_id"]: db_module.db.collection(PLAYERS_COLLECTION).document(str(r["user_id"])) for r in humans}
+        current: Dict[str, Dict[str, Any]] = {}
+        for uid, ref in refs.items():
+            doc = await ref.get()
+            agg = (((doc.to_dict() or {}).get("modes") or {}).get(mode) or {}) if doc.exists else {}
+            current[uid] = {"rating": float(agg.get("skill", SKILL_START)), "games": int(agg.get("skill_games", 0))}
+        field = [{"id": r["user_id"], "value": float(r["value"]), **current[r["user_id"]]} for r in humans]
+        field += [{"id": f"bot:{i}", "value": float(r["value"]), "fixed": True, "games": 0,
+                   "rating": BOT_SKILL_RATING.get(str(r.get("bot_skill")), SKILL_START)}
+                  for i, r in enumerate(rows) if "bot_skill" in r]
+
+        ctx_ref = db_module.db.collection(CONTEXTS_COLLECTION).document(f"{mode}__{context or 'any'}")
+        ctx_doc = await ctx_ref.get()
+        past = [float(v) for v in ((ctx_doc.to_dict() or {}).get("values") or [])] if ctx_doc.exists else []
+        if len(field) == 1 and len(past) >= PAR_MIN_RESULTS:
+            field.append({"id": "par", "value": _median(past), "rating": PAR_RATING, "fixed": True, "games": 0})
+
+        deltas = elo_deltas(field)
+        now = dt.datetime.utcnow()
+        for uid, delta in deltas.items():
+            await refs[uid].set({"modes": {mode: {
+                "skill": round(current[uid]["rating"] + delta, 2),
+                "skill_games": current[uid]["games"] + 1, "skill_updated_at": now,
+            }}}, merge=True)
+        await ctx_ref.set({"values": (past + [float(r["value"]) for r in humans])[-PAR_KEEP:], "updated_at": now})
+        await flag.set({"mode": mode, "game_id": game_id, "rated_at": now, "deltas": deltas})
+        invalidate_cache()
+        return deltas
+    except Exception:
+        log.warning("rate_game failed (mode=%s game=%s)", mode, game_id, exc_info=True)
+        return {}
+
+
+def _bot_skill_from_name(name: str) -> str:
+    """Older runs saved bots by name only: "Momentum · good", or the two
+    defaults ("Market Maker Bot", "Flow Bot"), which are normal."""
+    tail = (name or "").rsplit("·", 1)[-1].strip().lower()
+    return tail if tail in BOT_SKILL_RATING else "normal"
+
+
+def replay_skills(events: List[Dict[str, Any]], bots_by_game: Dict[str, List[Dict[str, Any]]]) -> Dict[str, Any]:
+    """Rate every past game in order, as :func:`rate_game` would have.
+    ``events``: score_events rows; ``bots_by_game``: coding-game run id ->
+    its house bots' rows. Returns {"skills": {(uid, mode): (skill, games)},
+    "contexts": {doc id: values}, "games": [doc ids rated]}. Pure: no reads
+    or writes, so it can be checked before anything is saved."""
+    games: Dict[Tuple[str, str], List[Dict[str, Any]]] = {}
+    for e in events:
+        mode = e.get("mode")
+        if mode not in MODES or mode_meta(mode).get("kind") != "per_game" or not e.get("user_id"):
+            continue
+        key = (mode, e.get("game_id") or f"solo:{e.get('user_id')}:{e.get('created_at')}")
+        games.setdefault(key, []).append(e)
+    order = sorted(games, key=lambda k: min(str(x.get("created_at") or "") for x in games[k]))
+    skills: Dict[Tuple[str, str], Tuple[float, int]] = {}
+    contexts: Dict[str, List[float]] = {}
+    rated: List[str] = []
+    for mode, game_id in order:
+        rows = games[(mode, game_id)]
+        seen = {}
+        for e in rows:                                  # one result per player per game
+            seen[e["user_id"]] = e
+        rows = list(seen.values())
+        field = [{"id": e["user_id"], "value": float(e.get("value") or 0.0),
+                  "rating": skills.get((e["user_id"], mode), (SKILL_START, 0))[0],
+                  "games": skills.get((e["user_id"], mode), (SKILL_START, 0))[1]} for e in rows]
+        if mode == "market_sim_py":
+            field += [{"id": f"bot:{i}", "value": float(b.get("pnl") or 0.0), "fixed": True, "games": 0,
+                       "rating": BOT_SKILL_RATING.get(b.get("bot_skill") or _bot_skill_from_name(b.get("username", "")),
+                                                      SKILL_START)}
+                      for i, b in enumerate(bots_by_game.get(game_id, []))]
+        ctx = f"{mode}__{context_of(mode, rows[0].get('detail')) or 'any'}"
+        past = contexts.get(ctx, [])
+        if len(field) == 1 and len(past) >= PAR_MIN_RESULTS:
+            field.append({"id": "par", "value": _median(past), "rating": PAR_RATING, "fixed": True, "games": 0})
+        for uid, delta in elo_deltas(field).items():
+            r, g = skills.get((uid, mode), (SKILL_START, 0))
+            skills[(uid, mode)] = (r + delta, g + 1)
+        contexts[ctx] = (past + [float(e.get("value") or 0.0) for e in rows])[-PAR_KEEP:]
+        if not str(game_id).startswith("solo:"):
+            rated.append(f"{mode}__{game_id}")
+    return {"skills": skills, "contexts": contexts, "games": rated}
+
+
+async def rebuild_skills(write: bool = False) -> Dict[str, Any]:
+    """Rate every game played so far, oldest first, so ratings start from
+    everyone's history rather than from scratch. Reads the score history
+    once; writes only with ``write``. Run once when calibration goes live."""
+    events = [d.to_dict() or {} for d in await db_module.db.collection(EVENTS_COLLECTION).get()]
+    bots_by_game: Dict[str, List[Dict[str, Any]]] = {}
+    for d in await db_module.db.collection("algo_sim_runs").get():
+        bots_by_game[d.id] = list((d.to_dict() or {}).get("bots") or [])
+    out = replay_skills(events, bots_by_game)
+    if write:
+        now = dt.datetime.utcnow()
+        for (uid, mode), (skill, games) in out["skills"].items():
+            await db_module.db.collection(PLAYERS_COLLECTION).document(str(uid)).set(
+                {"modes": {mode: {"skill": round(skill, 2), "skill_games": games, "skill_updated_at": now}}}, merge=True)
+        for ctx, values in out["contexts"].items():
+            await db_module.db.collection(CONTEXTS_COLLECTION).document(ctx).set({"values": values, "updated_at": now})
+        for doc_id in out["games"]:
+            await db_module.db.collection(RATED_GAMES_COLLECTION).document(doc_id).set(
+                {"rated_at": now, "rebuilt": True})
+        invalidate_cache()
+    return {"events": len(events), "games": len(out["games"]), "players": len({u for u, _ in out["skills"]}),
+            "skills": out["skills"]}
 
 
 _last_market_sync = 0.0
@@ -377,15 +589,19 @@ def compute_ratings(players: List[Dict[str, Any]]) -> Dict[str, Any]:
             if value is None:
                 continue
             games = int(agg.get("games", 0) or 0)
+            skill = float(agg.get("skill", SKILL_START)) if mode_meta(mode).get("kind") == "per_game" else None
             row_modes[mode] = {
                 "value": value,
+                "skill": skill,
+                "skill_games": int(agg.get("skill_games", 0) or 0),
+                "strategy": _strategy_summary(agg),
                 "games": games,
                 "best": agg.get("best"),
                 "last": agg.get("last"),
                 "recent": list(agg.get("recent") or []),
                 "last_feedback": agg.get("last_feedback"),
             }
-            per_mode_values[mode].append(value)
+            per_mode_values[mode].append(skill if skill is not None else value)
         prepared.append({
             "user_id": p.get("user_id", ""),
             "username": p.get("username") or "player",
@@ -397,13 +613,17 @@ def compute_ratings(players: List[Dict[str, Any]]) -> Dict[str, Any]:
     for row in prepared:
         ratings: Dict[str, Any] = {}
         for mode, info in row["modes"].items():
-            raw = _percentile(sorted_by_mode[mode], info["value"])
+            ranked_on = info["skill"] if info["skill"] is not None else info["value"]
+            raw = _percentile(sorted_by_mode[mode], ranked_on)
             conf = _confidence(info["games"])
             rating = 50.0 + (raw - 50.0) * conf      # shrink thin samples to the middle
             ratings[mode] = {
                 "rating": round(rating, 1),
                 "raw_percentile": round(raw, 1),
                 "value": info["value"],
+                "skill": round(info["skill"]) if info["skill"] is not None else None,
+                "skill_games": info["skill_games"],
+                "strategy": info["strategy"],
                 "games": info["games"],
                 "best": info["best"],
                 "last": info["last"],
@@ -447,6 +667,36 @@ def compute_ratings(players: List[Dict[str, Any]]) -> Dict[str, Any]:
     return {"players": ranked, "mode_boards": mode_boards}
 
 
+def _strategy_summary(agg: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """How someone trades in a mode, over their games: their usual style and
+    what their edge and their direction made per game on average."""
+    n = int(agg.get("strategy_games", 0) or 0)
+    if not n:
+        return None
+    styles = agg.get("styles") or {}
+    usual, count = max(styles.items(), key=lambda kv: kv[1]) if styles else (None, 0)
+    hit_games = int(agg.get("hit_games", 0) or 0)
+    return {"style": usual, "style_games": int(count), "games": n,
+            "edge_per_game": round(float(agg.get("edge_sum", 0.0)) / n, 2),
+            "direction_per_game": round(float(agg.get("direction_sum", 0.0)) / n, 2),
+            "direction_hit": round(float(agg.get("hit_sum", 0.0)) / hit_games, 3) if hit_games else None}
+
+
+def public_strategy_summary(st: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Someone's strategy as others see it on the board: the usual style and
+    coarse words, not the per-game figures (those are theirs alone)."""
+    if not st:
+        return None
+    out: Dict[str, Any] = {k: st[k] for k in ("style", "style_games", "games") if k in st}
+    e, d = st.get("edge_per_game"), st.get("direction_per_game")
+    if e or d:
+        out["made_on"] = "pricing" if abs(e or 0) >= abs(d or 0) else "direction"
+    hit = st.get("direction_hit")
+    if hit is not None:
+        out["call"] = "mostly right" if hit >= 0.6 else "mostly wrong" if hit < 0.4 else "mixed"
+    return out
+
+
 def _trend(recent: List[float]) -> str:
     """Improving / steady / slipping, from the first vs second half of recent results."""
     vals = [float(v) for v in recent if v is not None]
@@ -480,8 +730,10 @@ async def _load_players() -> List[Dict[str, Any]]:
     put instructors on a board meant for students.
     """
     try:
-        user_docs = await db_module.db.collection("users").get()
-        admins = {d.id for d in user_docs if (d.to_dict() or {}).get("is_admin")}
+        # Just the admins (a handful), not every account.
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        query = db_module.db.collection("users").where(filter=FieldFilter("is_admin", "==", True))
+        admins = {d.id for d in await query.select(["is_admin"]).get()}
     except Exception:
         log.warning("Could not load users while ranking; keeping everyone", exc_info=True)
         admins = set()

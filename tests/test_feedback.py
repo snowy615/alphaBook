@@ -122,3 +122,27 @@ class TestPokerAuction:
         body = texts(out)
         assert "winner's curse" in body
         assert "second-price" in body
+
+
+class TestBotRunStrategy:
+    def _run(self, **st):
+        from app import feedback as fb
+        return fb.analyse("market_sim_py", {"pnl": st.pop("pnl", 0.0), "fills": 40, "volume": 800,
+                                            "orders_accepted": 50, "orders_rejected": 0, "strategy": st})
+
+    def test_good_prices_given_back_by_inventory(self):
+        out = self._run(pnl=-50, edge=300, direction=-350, edge_per_share=0.4, markout_per_share=0.3,
+                        style={"key": "market_maker", "label": "Market maker"}, avg_inventory=0.3, direction_hit=0.4)
+        labels = {s["label"]: s["value"] for s in out["stats"]}
+        assert labels["Edge"] == "$300" and labels["Direction"] == "-$350" and labels["Style"] == "Market maker"
+        text = " ".join(n["text"] for n in out["notes"])
+        assert "holding inventory gave back $350" in text and "right side of fair's moves 40%" in text
+
+    def test_adverse_selection_is_called_out(self):
+        out = self._run(pnl=20, edge=60, direction=-40, edge_per_share=0.3, markout_per_share=-0.2,
+                        style={"key": "market_maker", "label": "Market maker"})
+        assert any("Adverse selection" in n["text"] for n in out["notes"])
+
+    def test_paying_the_spread_for_a_good_call(self):
+        out = self._run(pnl=100, edge=-200, direction=300, style={"key": "taker", "label": "Liquidity taker"})
+        assert any("crossing the spread" in n["text"] for n in out["notes"])

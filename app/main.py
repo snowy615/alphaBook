@@ -395,9 +395,17 @@ async def api_leaderboard(request: Request, limit: int = 100):
         out = []
         for r in rows[:limit]:
             row = public(r)
+            row["is_me"] = bool(my_id) and row.get("user_id") == my_id
+            # Exact strategy figures are the player's own; everyone else gets
+            # the style and a coarse read, nothing precise enough to copy.
+            if not row["is_me"] and "strategy" in row:
+                row["strategy"] = scores.public_strategy_summary(row["strategy"])
             if isinstance(row.get("ratings"), dict):
                 row["ratings"] = {m: public(v) for m, v in row["ratings"].items()}
-            row["is_me"] = bool(my_id) and row.get("user_id") == my_id
+                if not row["is_me"]:
+                    for v in row["ratings"].values():
+                        if "strategy" in v:
+                            v["strategy"] = scores.public_strategy_summary(v["strategy"])
             out.append(row)
         return out
 

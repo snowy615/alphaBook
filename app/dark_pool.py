@@ -713,6 +713,9 @@ async def _finish_session(game: dict, game_id: str) -> None:
             detail={"decisions": n, "calibration_score": round(calibration_score, 1)},
             feedback=coaching,
         )
+    await scores.rate_game("dark_pool", game_id, [
+        {"user_id": d["user_id"], "username": d["username"], "value": float(d["chips"])} for d in _desks(game)
+    ])
 
     game["feedback"] = feedback_by_user
     game["assessment"] = assessment_by_user

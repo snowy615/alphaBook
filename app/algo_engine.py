@@ -17,9 +17,18 @@ Why this shape
 * **Continuous matching.** Orders match on arrival against the live book, the
   way a real exchange works. Fairness comes from a per-user rate limit in the
   gateway, not from batching.
-* **Fair-value marking.** P&L marks positions at each item's hidden fair value,
-  not the book mid, so quoting a silly price to yourself can't manufacture
-  profit.
+* **Fair value stays hidden until the end.** While a run is live, P&L is
+  marked to the market: the mid of everyone *else's* quotes (so nobody can
+  move their own mark), falling back to the last trade, then the open. Marking
+  live P&L at the hidden fair value would hand it to every bot: with one
+  position, fair = (P&L - cash) / position. Only the final, settled P&L marks
+  at fair, once the run is over and fair is revealed anyway.
+* **Strategy, not just P&L.** Every fill and every fair-value move is booked
+  to each participant as it happens, so the settled P&L splits exactly into
+  *trading edge* (how far inside fair each fill was) and *direction* (what
+  holding inventory made as fair moved), with what fills were worth a few
+  seconds later (adverse selection), maker/taker share, two-sided quoting
+  time and inventory use alongside. See :meth:`Run.strategy`.
 * **Request-driven clock.** Cloud Run throttles the CPU between requests, so the
   market's heartbeat (fair-value walk + bot quoting) is advanced from the same
   polls the clients make, via :meth:`Run.advance`. ``advance`` never awaits, so
@@ -74,6 +83,9 @@ MM_STEP_BPS: float = 12.0   # extra spread per deeper ladder level
 MM_SKEW_BPS: float = 70.0   # how hard quotes lean against inventory
 
 MAX_BOTS: int = 12          # house bots per run
+
+# A fill's markout: what it was worth this many ticks later, against fair.
+MARKOUT_TICKS: int = 5
 
 # Default two-bot roster every run starts with (admins add more, or remove).
 MM_BOT_ID = "__ALGO_MM__"
@@ -141,8 +153,26 @@ class Participant:
     last_reject: str = ""
     last_seen: float = 0.0        # monotonic clock of the last API call
 
-    def pnl(self, fair: Dict[str, float]) -> float:
-        mark = sum(self.pos[s] * fair[s] for s in ITEM_SYMBOLS)
+    # Strategy book-keeping. With cash and positions starting at zero, the
+    # fair-marked P&L is exactly edge + inventory_pnl: a fill changes it by
+    # how far inside fair it was, a fair-value step by position x the move.
+    edge: float = 0.0             # sum of qty x (fair - price) on buys, (price - fair) on sells
+    inventory_pnl: float = 0.0    # sum of position x fair-value change, every tick
+    dir_right: float = 0.0        # the part of inventory_pnl that went the right way
+    dir_total: float = 0.0        # sum of |position x fair-value change|
+    markout: float = 0.0          # fills valued at fair MARKOUT_TICKS later
+    markout_volume: float = 0.0
+    maker_volume: float = 0.0     # filled resting (passive) orders
+    taker_volume: float = 0.0     # filled orders that crossed the spread
+    inventory_use: float = 0.0    # sum over ticks of mean |position| / limit
+    max_inventory: float = 0.0    # largest |position| in any item, as a share of the limit
+    quoted: int = 0               # item-ticks with orders resting on both sides
+    samples: int = 0              # ticks sampled for the two above
+
+    def pnl(self, marks: Dict[str, float]) -> float:
+        """Cash plus positions marked at ``marks`` (fair at the end; the
+        market's own prices while live)."""
+        mark = sum(self.pos[s] * marks[s] for s in ITEM_SYMBOLS)
         return self.cash + mark
 
 
@@ -217,6 +247,8 @@ class Run:
         self._bot_seq = 0
         self.tape: Deque[Dict[str, Any]] = deque(maxlen=60)
         self.results: List[Dict[str, Any]] = []
+        # Fills waiting for their markout: (due tick, uid, item, signed qty, price).
+        self._markouts: Deque[Tuple[int, str, str, float, float]] = deque()
 
         # The empire layer, seeded from the same value as the market so a run
         # replays identically end to end.
@@ -274,7 +306,6 @@ class Run:
         self.participants.pop(uid, None)
 
     def bots_view(self) -> List[Dict[str, Any]]:
-        fair = {s: it.fair for s, it in self.items.items()}
         out = []
         for b in self.bots:
             part = self.participants[b.uid]
@@ -289,7 +320,7 @@ class Run:
                 "enters_at": int(round(b.activate_tick * TICK_SECONDS)),
                 "active": self.status != "lobby" and self.tick >= b.activate_tick,
                 "removable": self.status == "lobby" or self.tick < b.activate_tick,
-                "pnl": round(part.pnl(fair), 2),
+                "pnl": round(part.pnl(self.marks_for(b.uid)), 2),
             })
         out.sort(key=lambda r: (r["activate_tick"], r["name"]))
         return out
@@ -374,10 +405,9 @@ class Run:
         so it inherits the same catch-up behaviour and can never drift from the
         contest it is funded by.
         """
-        fair = {s: item.fair for s, item in self.items.items()}
         for p in self.participants.values():
             if not p.is_bot:
-                self.world.set_pnl(p.uid, p.pnl(fair))
+                self.world.set_pnl(p.uid, p.pnl(self.marks_for(p.uid)))
 
         ticks_due = int(self.tick * TICK_SECONDS / world_mod.WORLD_TICK_SECONDS)
         while self.world.tick_no < ticks_due:
@@ -396,8 +426,10 @@ class Run:
 
     # -- the market heartbeat -------------------------------------------
     def _heartbeat(self) -> None:
+        before = {s: item.fair for s, item in self.items.items()}
         for item in self.items.values():
             item.step(self.rng)
+        self._book_fair_moves(before)
         # Makers quote first (phase 0) so takers (phase 1) see a two-sided book.
         active = [b for b in self.bots if self.tick >= b.activate_tick]
         active.sort(key=lambda b: BOT_ARCHETYPES[b.archetype]["phase"])
@@ -439,12 +471,11 @@ class Run:
             results.append({"ok": False,
                             "error": f"only {MAX_ORDERS_PER_REQUEST} orders per request are accepted"})
 
-        fair = {s: item.fair for s, item in self.items.items()}
         return {
             "results": results,
             "position": dict(p.pos),
             "cash": round(p.cash, 4),
-            "pnl": round(p.pnl(fair), 4),
+            "pnl": round(p.pnl(self.marks_for(p.uid)), 4),       # marked to the market, never to fair
         }
 
     def cancel(self, uid: str, item: Optional[str] = None) -> int:
@@ -586,16 +617,23 @@ class Run:
         seller = self.participants.get(str(fill["seller_id"]))
         notional = price * qty
 
-        if buyer:
-            buyer.cash -= notional
-            buyer.pos[symbol] += qty
-            buyer.fills += 1
-            buyer.volume += qty
-        if seller:
-            seller.cash += notional
-            seller.pos[symbol] -= qty
-            seller.fills += 1
-            seller.volume += qty
+        fair = self.items[symbol].fair
+        due = self.tick + MARKOUT_TICKS
+        for part, sign, is_taker in ((buyer, 1.0, taker_side == "BUY"), (seller, -1.0, taker_side == "SELL")):
+            if part is None:
+                continue
+            part.cash -= sign * notional
+            part.pos[symbol] += sign * qty
+            part.fills += 1
+            part.volume += qty
+            part.edge += sign * qty * (fair - price)
+            if is_taker:
+                part.taker_volume += qty
+            else:
+                part.maker_volume += qty
+            limit_share = abs(part.pos[symbol]) / POSITION_LIMIT
+            part.max_inventory = max(part.max_inventory, limit_share)
+            self._markouts.append((due, part.uid, symbol, sign * qty, price))
 
         self.items[symbol].last = price
         self.tape.appendleft({
@@ -607,6 +645,84 @@ class Run:
             "seller": seller.name if seller else "?",
             "taker_side": taker_side,
         })
+
+    # -- strategy book-keeping ---------------------------------------------
+    def _book_fair_moves(self, before: Dict[str, float]) -> None:
+        """After a fair-value step: book each holder's inventory P&L, settle
+        fills whose markout is due, and sample inventory and quoting."""
+        for p in self.participants.values():
+            for symbol, f0 in before.items():
+                move = p.pos[symbol] * (self.items[symbol].fair - f0)
+                if move:
+                    p.inventory_pnl += move
+                    p.dir_total += abs(move)
+                    if move > 0:
+                        p.dir_right += move
+        while self._markouts and self._markouts[0][0] <= self.tick:
+            _, uid, symbol, signed_qty, price = self._markouts.popleft()
+            part = self.participants.get(uid)
+            if part is not None:
+                part.markout += signed_qty * (self.items[symbol].fair - price)
+                part.markout_volume += abs(signed_qty)
+        # Who has orders resting on each side of each book, in one pass per book.
+        sides: Dict[str, Dict[str, List[bool]]] = {}
+        for symbol, book in self.books.items():
+            seen: Dict[str, List[bool]] = {}
+            for i, levels in enumerate((book.bids, book.asks)):
+                for dq in levels.values():
+                    for o in dq:
+                        if o.qty > 0:
+                            seen.setdefault(str(o.user_id), [False, False])[i] = True
+            sides[symbol] = seen
+        for p in self.participants.values():
+            if p.is_bot:
+                continue
+            p.samples += 1
+            p.inventory_use += sum(abs(p.pos[s]) for s in ITEM_SYMBOLS) / (POSITION_LIMIT * len(ITEM_SYMBOLS))
+            p.quoted += sum(1 for s in ITEM_SYMBOLS if all(sides[s].get(p.uid, (False, False))))
+
+    def strategy(self, p: Participant, reveal: bool) -> Dict[str, Any]:
+        """How this participant traded. The fair-based parts (edge, direction,
+        markout) only once fair is revealed; the rest is safe to show live."""
+        volume = p.maker_volume + p.taker_volume
+        out: Dict[str, Any] = {
+            "maker_share": round(p.maker_volume / volume, 3) if volume else None,
+            "quote_uptime": round(p.quoted / (p.samples * len(ITEM_SYMBOLS)), 3) if p.samples else None,
+            "avg_inventory": round(p.inventory_use / p.samples, 3) if p.samples else None,
+            "max_inventory": round(p.max_inventory, 3),
+        }
+        if not reveal:
+            return out
+        out.update({
+            "edge": round(p.edge, 2),
+            "direction": round(p.inventory_pnl, 2),
+            "edge_per_share": round(p.edge / volume, 4) if volume else None,
+            "markout_per_share": round(p.markout / p.markout_volume, 4) if p.markout_volume else None,
+            "direction_hit": round(p.dir_right / p.dir_total, 3) if p.dir_total else None,
+        })
+        out["style"] = style_of(out, volume)
+        return out
+
+    # -- marks -----------------------------------------------------------
+    def marks_for(self, uid: Optional[str] = None) -> Dict[str, float]:
+        """Fair once the run is over; while it's live, the market's own price
+        for each item, leaving out ``uid``'s orders so nobody marks their own
+        position with their own quotes: the mid of the rest of the book, else
+        whichever side there is, else the last trade, else the open."""
+        if self.status == "finished":
+            return {s: item.fair for s, item in self.items.items()}
+        out = {}
+        for symbol, item in self.items.items():
+            book = self.books[symbol]
+            bid = next((float(px) for px in sorted(book.bids, reverse=True)
+                        if any(o.qty > 0 and str(o.user_id) != uid for o in book.bids[px])), None)
+            ask = next((float(px) for px in sorted(book.asks)
+                        if any(o.qty > 0 and str(o.user_id) != uid for o in book.asks[px])), None)
+            if bid is not None and ask is not None:
+                out[symbol] = (bid + ask) / 2
+            else:
+                out[symbol] = bid if bid is not None else ask if ask is not None else (item.last or item.open_price)
+        return out
 
     # -- book helpers ----------------------------------------------------
     @staticmethod
@@ -832,14 +948,16 @@ class Run:
         p = self.member(uid)
         if p is None:
             return None
-        fair = {s: item.fair for s, item in self.items.items()}
+        finished = self.status == "finished"
         open_orders = {}
         for symbol in ITEM_SYMBOLS:
             rb, rs = self._resting(self.books[symbol], uid)
             open_orders[symbol] = {"buy": rb, "sell": rs}
         return {
             "cash": round(p.cash, 2),
-            "pnl": round(p.pnl(fair), 2),
+            "pnl": round(p.pnl(self.marks_for(uid)), 2),
+            "pnl_basis": "fair" if finished else "market",
+            "strategy": self.strategy(p, reveal=finished),
             "fills": p.fills,
             "orders_accepted": p.orders_accepted,
             "orders_rejected": p.orders_rejected,
@@ -849,19 +967,28 @@ class Run:
         }
 
     def leaderboard(self) -> List[Dict[str, Any]]:
-        fair = {s: item.fair for s, item in self.items.items()}
+        finished = self.status == "finished"
         rows = []
         now = time.monotonic()
         # A bot scheduled to enter later shouldn't sit on the board at 0 yet.
         pending_bots = {b.uid for b in self.bots if self.tick < b.activate_tick}
+        bot_of = {b.uid: b for b in self.bots}
         for p in self.participants.values():
             if p.uid in pending_bots:
                 continue
+            bot = bot_of.get(p.uid)
+            strategy = self.strategy(p, reveal=finished)
+            if bot is not None and finished:
+                # A house bot's style is what it was built to do.
+                strategy["style"] = {"key": bot.archetype, "label": BOT_ARCHETYPES[bot.archetype]["label"]}
             rows.append({
+                **({"bot_skill": bot.skill, "bot_archetype": bot.archetype} if bot else {}),
                 "user_id": p.uid,
                 "username": p.name,
                 "is_bot": p.is_bot,
-                "pnl": round(p.pnl(fair), 2),
+                "pnl": round(p.pnl(self.marks_for(p.uid)), 2),
+                "pnl_basis": "fair" if finished else "market",
+                "strategy": strategy,
                 "cash": round(p.cash, 2),
                 "fills": p.fills,
                 "volume": round(p.volume, 0),
@@ -874,6 +1001,61 @@ class Run:
         for rank, row in enumerate(rows, start=1):
             row["rank"] = rank
         return rows
+
+
+def _sign_word(v: Optional[float]) -> str:
+    return "positive" if (v or 0) > 0 else "negative" if (v or 0) < 0 else "flat"
+
+
+def public_strategy(st: Dict[str, Any]) -> Dict[str, Any]:
+    """What other players may see of someone's strategy: the style and a few
+    coarse words, never figures precise enough to copy (exact edge, how much
+    of the time they quote, how big they hold). Owners see the full numbers."""
+    out: Dict[str, Any] = {}
+    if st.get("style"):
+        out["style"] = st["style"]
+    ms = st.get("maker_share")
+    if ms is not None:
+        out["aggression"] = "mostly passive" if ms >= 0.6 else "mostly aggressive" if ms <= 0.4 else "balanced"
+    if "edge" in st:
+        e, d = st.get("edge") or 0.0, st.get("direction") or 0.0
+        out.update({"made_on": "pricing" if abs(e) >= abs(d) else "direction",
+                    "edge": _sign_word(e), "direction": _sign_word(d)})
+    hit = st.get("direction_hit")
+    if hit is not None:
+        out["call"] = "mostly right" if hit >= 0.6 else "mostly wrong" if hit < 0.4 else "mixed"
+    return out
+
+
+def view_for(rows: List[Dict[str, Any]], viewer: str) -> List[Dict[str, Any]]:
+    """The run's leaderboard as one player may see it: their own row and the
+    house bots' in full; other players' with rank, P&L, fills and a coarse
+    read of their style, but not their positions, cash, volume, order counts
+    or exact strategy figures, so nobody can copy someone else's moves."""
+    out = []
+    for r in rows:
+        if r.get("is_bot") or str(r.get("user_id")) == str(viewer):
+            out.append(r)
+            continue
+        out.append({**{k: r[k] for k in ("user_id", "username", "is_bot", "pnl", "pnl_basis", "fills", "rank", "connected")
+                       if k in r},
+                    "strategy": public_strategy(r.get("strategy") or {})})
+    return out
+
+
+def style_of(st: Dict[str, Any], volume: float) -> Dict[str, str]:
+    """A one-line read of how someone traded, from :meth:`Run.strategy`."""
+    if not volume:
+        return {"key": "idle", "label": "Didn't trade"}
+    maker, uptime = st.get("maker_share") or 0.0, st.get("quote_uptime") or 0.0
+    edge, direction = st.get("edge") or 0.0, st.get("direction") or 0.0
+    if maker >= 0.6 and uptime >= 0.25:
+        return {"key": "market_maker", "label": "Market maker"}
+    if abs(direction) > abs(edge) and (st.get("avg_inventory") or 0.0) >= 0.1:
+        return {"key": "directional", "label": "Directional"}
+    if maker <= 0.4:
+        return {"key": "taker", "label": "Liquidity taker"}
+    return {"key": "mixed", "label": "Mixed"}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

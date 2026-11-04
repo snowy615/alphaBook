@@ -514,6 +514,9 @@ async def _record_results(game: dict, game_id: str) -> None:
                     "bankrupt": bool(p.get("bankrupt"))},
             feedback=coaching,
         )
+    await scores.rate_game("toxic_flow", game_id, [
+        {"user_id": p["user_id"], "username": p["username"], "value": float(p["chips"])} for p in _players(game)
+    ])
     game["feedback"] = feedback_by_user
 
 

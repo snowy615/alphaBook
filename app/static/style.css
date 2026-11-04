@@ -9098,3 +9098,7 @@ body.tut-locked {
 }
 .stock-real.is-sim { color: var(--amber, #d29922); }
 .market-source { font-size: 13px; color: var(--muted); margin: 6px 0 0; }
+
+.lbx-strategy { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
+.lbx-strategy strong { color: var(--text); }
+.lbx-skill { font-weight: 700; font-variant-numeric: tabular-nums; }

@@ -170,9 +170,16 @@ async def _persist_results(run: engine.Run) -> None:
         await scores.record_result(
             "market_sim_py", r.get("user_id", ""), r.get("username", ""), r.get("pnl", 0.0),
             game_id=run.id,
-            detail={"fills": r.get("fills", 0), "volume": r.get("volume", 0)},
+            detail={"fills": r.get("fills", 0), "volume": r.get("volume", 0), "strategy": r.get("strategy") or {}},
             feedback=coaching,
         )
+    # The rating weighs each result against everyone in the run, the house
+    # bots included at a strength set by their skill level.
+    await scores.rate_game("market_sim_py", run.id, [
+        {"user_id": r.get("user_id", ""), "username": r.get("username", ""), "value": float(r.get("pnl", 0.0)),
+         **({"bot_skill": r.get("bot_skill") or "normal"} if r.get("is_bot") else {})}
+        for r in run.results
+    ])
 
 
 # ---- Pages ----
@@ -446,6 +453,23 @@ async def cancel_orders(run_id: str, req: CancelRequest, user: User = Depends(cu
     return {"ok": True, "cancelled": removed}
 
 
+def _tape_for(run: engine.Run, viewer: str) -> list:
+    """Recent trades, with other players' names left off: seeing who traded
+    what, as it happens, would let anyone copy a strong player's moves. The
+    house bots and your own trades keep their names."""
+    bots = {p.name for p in run.participants.values() if p.is_bot}
+    me = run.participants.get(viewer)
+    mine = me.name if me is not None and not me.is_bot else None
+    out = []
+    for t in list(run.tape)[:25]:
+        t = dict(t)
+        for side in ("buyer", "seller"):
+            if t.get(side) not in bots and t.get(side) != mine:
+                t[side] = "a player"
+        out.append(t)
+    return out
+
+
 # ---- Spectator / leaderboard state (the web run page polls this) ----
 @router.get("/run/{run_id}/state")
 async def run_state(run_id: str, user: User = Depends(current_user)):
@@ -469,9 +493,9 @@ async def run_state(run_id: str, user: User = Depends(current_user)):
             for p in run.players
         ],
         "market": run.market_snapshot(reveal_fair=finished),
-        "leaderboard": run.leaderboard(),
+        "leaderboard": engine.view_for(run.leaderboard(), str(user.id)),
         "bots": run.bots_view(),
-        "tape": list(run.tape)[:25],
+        "tape": _tape_for(run, str(user.id)),
         "me": run.player_view(str(user.id)),
     }
 

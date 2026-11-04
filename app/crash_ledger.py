@@ -498,6 +498,9 @@ async def _finalize(game: Game) -> Dict[str, Any]:
                 "best_streak": game.best_streak},
         feedback=coaching,
     )
+    # Played alone, so it's measured against the usual score.
+    await scores.rate_game("crash_ledger", game.id, [
+        {"user_id": game.uid, "username": game.username, "value": float(game.score)}])
     return final
 
 

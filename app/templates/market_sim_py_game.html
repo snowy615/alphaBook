@@ -166,7 +166,7 @@
         <div class="card msp-panel">
           <div class="head">
             <h3>Leaderboard</h3>
-            <span class="msp-muted">marked at fair value</span>
+            <span class="msp-muted">marked to market live · settled at fair at the bell</span>
           </div>
           <div class="msp-panel-body msp-flush">
             <div id="lbMe" class="msp-lb-me hidden"></div>
@@ -292,7 +292,7 @@
     window.POSITION_LIMIT = {{ position_limit }};
   </script>
   <script src="/static/feedback.js?v=1"></script>
-  <script src="/static/market_sim_py.js"></script>
+  <script src="/static/market_sim_py.js?v=3"></script>
   <script src="/static/world.js"></script>
   <script src="/static/tutorial.js"></script>
   <script>
@@ -315,8 +315,8 @@
       { heading: "Two commands to get trading",
         body: "<p>Open the <strong>Setup</strong> panel and download the client. Your run id and token are already filled in.</p><p><code>cd ~/Downloads</code><br><code>python3 algo_client.py</code></p><p>Edit <code>on_tick</code>, re-run, iterate. Reconnecting mid-round is fine.</p>" },
 
-      { heading: "You are marked at a hidden fair value",
-        body: "<p>Every item walks a fair value nobody can see until the bell, and your P&amp;L is marked against it. Quoting silly prices to yourself does not manufacture profit.</p><p>Position limits are enforced per item, and rejected orders show up in your stats.</p>",
+      { heading: "Fair values stay hidden until the bell",
+        body: "<p>Every item walks a fair value nobody can see until the bell. While the run is live your P&amp;L is marked to the market (the mid of everyone else's quotes), so it never gives fair away. At the bell everyone settles at fair, and the result splits into your edge (your prices) and your direction (your inventory).</p><p>Position limits are enforced per item, and rejected orders show up in your stats.</p>",
         facts: [["Position limit", "1,000 / item"], ["Order rate", "~10/sec"]] },
 
       { heading: "Your P&L is your build budget",

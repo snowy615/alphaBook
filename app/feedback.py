@@ -467,22 +467,54 @@ def _bot_run(p: Dict[str, Any]) -> Dict[str, Any]:
     else:
         grade, headline = "mixed", "It traded, but the edge wasn't there."
 
-    stats = [
-        {"label": "P&L", "value": _money(pnl)},
-        {"label": "Fills", "value": str(fills)},
-        {"label": "Volume", "value": f"{volume:,.0f}"},
-        {"label": "Rejected", "value": f"{rejected}"},
-    ]
+    # How the P&L was made: pricing (edge) or inventory (direction), and what
+    # the fills were worth a few seconds on (adverse selection).
+    st = p.get("strategy") or {}
+    edge, direction = st.get("edge"), st.get("direction")
+    style = (st.get("style") or {}).get("label")
+    stats = [{"label": "P&L", "value": _money(pnl)}]
+    if edge is not None:
+        stats += [{"label": "Edge", "value": _money(edge)}, {"label": "Direction", "value": _money(direction)}]
+    stats.append({"label": "Style", "value": style} if style else {"label": "Fills", "value": str(fills)})
 
     notes: List[Note] = []
+    if edge is not None and fills:
+        if edge > 0 and direction < 0 and abs(direction) > edge * 0.5:
+            notes.append({"kind": "gap", "text":
+                          f"Your prices were good ({_money(edge)} of edge against fair) but holding inventory "
+                          f"gave back {_money(-direction)}. Skew your quotes against your position, or flatten "
+                          f"sooner, so the spread you earn isn't spent riding the move."})
+        elif edge < 0 < direction:
+            notes.append({"kind": "gap", "text":
+                          f"Your direction was right (+{_money(direction)}), but you paid {_money(-edge)} to get "
+                          f"there by crossing the spread at bad prices. Work orders inside the book instead of "
+                          f"taking."})
+        elif edge > 0:
+            notes.append({"kind": "win", "text":
+                          f"{_money(edge)} of trading edge: your fills were on the right side of fair on average, "
+                          f"which is skill rather than luck."})
+        eps, mps = st.get("edge_per_share"), st.get("markout_per_share")
+        if eps is not None and mps is not None and mps < eps - 0.01 and mps < 0:
+            if (st.get("maker_share") or 0) >= 0.5:
+                why = ("The flow hitting your quotes knew more than they did; widen, or pull quotes when "
+                       "the book moves.")
+            else:
+                why = "You were trading just before the price turned; wait for confirmation instead of chasing."
+            notes.append({"kind": "gap", "text":
+                          f"Adverse selection: at the moment you traded, a fill was worth {eps:+.2f} a share, but "
+                          f"5 seconds later {mps:+.2f}. {why}"})
+        hit = st.get("direction_hit")
+        if hit is not None and (st.get("avg_inventory") or 0) >= 0.1:
+            notes.append({"kind": "win" if hit >= 0.5 else "gap", "text":
+                          f"Your inventory was on the right side of fair's moves {hit * 100:.0f}% of the time."})
     if error:
-        notes.append({"kind": "gap", "text": f"The run ended with: {str(error)[:160]}"})
+        notes.insert(0, {"kind": "gap", "text": f"The run ended with: {str(error)[:160]}"})
     if fills == 0 and not error:
         notes.append({"kind": "gap", "text":
                       "No fills all run. Either your quotes never crossed the book or you "
                       "only ever rested far from the touch — check the prices you're sending "
                       "against the market snapshot."})
-    elif fills:
+    elif fills and edge is None:
         notes.append({"kind": "win", "text":
                       f"{fills} fills for {volume:,.0f} of volume — the bot was genuinely in "
                       f"the market."})
