@@ -240,11 +240,64 @@
     if (!inp || !inp.files.length) return;
     const id = inp.dataset.id;
     const post = await upload(id, [...inp.files], $(`#prog-${CSS.escape(id)}`));
-    if (post) { replacePost(post); drawFeed(); showMsg("Files attached.", true); }
+    if (post) { replacePost(post); drawFeed(); showMsg(`${inp.files.length} file${inp.files.length === 1 ? "" : "s"} attached.`, true); }
+  });
+
+  // Files waiting to go with the new post. Picking again, or dropping more
+  // in, adds to the list instead of replacing it (a file input on its own
+  // forgets the last pick), and each can be taken off before posting.
+  let staged = [];
+  const MAX_BYTES = 25 * 1024 * 1024;
+  function stage(files) {
+    const tooBig = [];
+    for (const f of files) {
+      if (f.size > MAX_BYTES) { tooBig.push(f.name); continue; }
+      if (!staged.some((s) => s.name === f.name && s.size === f.size)) staged.push(f);
+    }
+    if (tooBig.length) showMsg(`Over 25 MB, so not added: ${tooBig.join(", ")}`, false);
+    drawStaged();
+  }
+  function drawStaged() {
+    $("#newStaged").innerHTML = staged.map((f, i) => `<div class="bc-file">
+        <span class="bc-file-ext">${esc((f.name.split(".").pop() || "").slice(0, 5))}</span>
+        <span>${esc(f.name)}</span><span class="bc-file-size">${sizeLabel(f.size)}</span>
+        <button type="button" class="btn ghost bc-file-x" data-unstage="${i}" title="Take ${esc(f.name)} off" aria-label="Take ${esc(f.name)} off">✕</button>
+      </div>`).join("");
+  }
+  $("#newFiles").addEventListener("change", (e) => { stage([...e.target.files]); e.target.value = ""; });
+  $("#newStaged").addEventListener("click", (e) => {
+    const b = e.target.closest("[data-unstage]");
+    if (b) { staged.splice(+b.dataset.unstage, 1); drawStaged(); }
+  });
+  // Drop files on the new-post box to add them, or on a post (Analysts) to attach them straight away.
+  const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  document.addEventListener("dragover", (e) => {
+    if (!isFiles(e) || !data || !data.can_edit) return;
+    const zone = e.target.closest("#newDrop, .bc-post");
+    if (!zone) return;
+    e.preventDefault();
+    document.querySelectorAll(".is-over").forEach((z) => z !== zone && z.classList.remove("is-over"));
+    zone.classList.add("is-over");
+  });
+  document.addEventListener("dragleave", (e) => {
+    const zone = e.target.closest("#newDrop, .bc-post");
+    if (zone && !zone.contains(e.relatedTarget)) zone.classList.remove("is-over");
+  });
+  document.addEventListener("drop", async (e) => {
+    if (!isFiles(e) || !data || !data.can_edit) return;
+    const zone = e.target.closest("#newDrop, .bc-post");
+    if (!zone) return;
+    e.preventDefault();
+    zone.classList.remove("is-over");
+    const files = [...e.dataTransfer.files];
+    if (zone.id === "newDrop") { stage(files); return; }
+    const id = zone.id.replace(/^post-/, "");
+    const post = await upload(id, files, $(`#prog-${CSS.escape(id)}`));
+    if (post) { replacePost(post); drawFeed(); showMsg(`${files.length} file${files.length === 1 ? "" : "s"} attached.`, true); }
   });
 
   $("#newPost").addEventListener("click", async () => {
-    const btn = $("#newPost"), files = [...$("#newFiles").files];
+    const btn = $("#newPost"), files = staged.slice();
     btn.disabled = true;
     try {
       let post = (await send("POST", "/bootcamp/posts",
@@ -253,7 +306,7 @@
       if (files.length) post = (await upload(post.id, files, $("#newProgress"))) || post;
       replacePost(post); drawFeed();
       const email = $("#newEmail").checked;
-      $("#newTitle").value = ""; $("#newBody").value = ""; $("#newFiles").value = ""; $("#newEmail").checked = false;
+      $("#newTitle").value = ""; $("#newBody").value = ""; staged = []; drawStaged(); $("#newEmail").checked = false;
       showMsg("Posted. Bootcamp members can see it now.", true);
       if (email) await emailPost(post.id, false, $("#newProgress"));
     } catch (err) { showMsg(err.message, false); }

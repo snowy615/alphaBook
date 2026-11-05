@@ -26,7 +26,13 @@
     .bc-form { display: grid; gap: 12px; }
     .bc-form textarea { min-height: 130px; resize: vertical; font-family: inherit; line-height: 1.5; }
     .bc-kinds { display: flex; gap: 0; border: 1px solid var(--border-strong); width: max-content; }
-    .bc-files-pick { font-size: 13.5px; }
+    .bc-drop { border: 1px dashed var(--border-strong); padding: 12px 14px; display: flex; flex-wrap: wrap; gap: 8px 12px;
+               align-items: center; }
+    .bc-drop.is-over, .bc-post.is-over { border-color: var(--brand); background: var(--brand-wash); }
+    .bc-pick { cursor: pointer; flex: none; }
+    .bc-staged { flex-basis: 100%; display: flex; flex-direction: column; }
+    .bc-staged:empty { display: none; }
+    .bc-staged .bc-file { padding: 6px 0; }
     .bc-hint { font-size: 12px; color: var(--muted); margin: 0; }
     .bc-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
@@ -196,9 +202,12 @@
         </div>
         <input id="newTitle" class="msp-input" maxlength="150" placeholder="Session 2: Linear regression and overfitting" aria-label="Title">
         <textarea id="newBody" class="msp-input" maxlength="10000" placeholder="What it covers, what to read beforehand, links to recordings…" aria-label="Post"></textarea>
-        <div>
-          <input type="file" id="newFiles" class="bc-files-pick" multiple aria-label="Attach files">
-          <p class="bc-hint">Slides, documents, spreadsheets, notebooks, code, images or zips, up to 25 MB each.</p>
+        <div class="bc-drop" id="newDrop">
+          <label class="btn ghost bc-pick">Add files
+            <input type="file" id="newFiles" multiple hidden aria-label="Add files"></label>
+          <span class="bc-hint">or drop them here. Add as many as you like: each one you pick joins the list.
+            Slides, documents, spreadsheets, notebooks, code, images or zips, up to 25 MB each.</span>
+          <div class="bc-staged" id="newStaged"></div>
         </div>
         <label class="bc-check"><input type="checkbox" id="newEmail"> <span id="newEmailLabel">Also email it to the Bootcamp</span></label>
         <div class="bc-actions">
@@ -217,7 +226,7 @@
     </div>
   </div>
 
-  <script src="/static/bootcamp.js?v=7"></script>
+  <script src="/static/bootcamp.js?v=8"></script>
 </body>
 
 </html>
