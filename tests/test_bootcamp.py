@@ -747,3 +747,82 @@ class TestUndecided:
         run(bc.leave_project(a["id"], BEN))
         assert names() == ["Ben Ng", "Cy Li"]                            # back on the list after leaving
         assert [m["name"] for m in _projects(ANALYST)["undecided"]] == ["Ben Ng", "Cy Li"]
+
+
+# ── Analysts organising the groups ──────────────────────────────────────────
+
+
+class TestAnalystGroups:
+    def _group(self, name="Group 1"):
+        return run(bc.create_group(bc.ProjectIn(name=name, description="Momentum"), ANALYST))["id"]
+
+    def _members(self, viewer, gid):
+        return [m["uid"] for m in next(p for p in _projects(viewer)["projects"] if p["id"] == gid)["members"]]
+
+    def test_an_analyst_group_starts_empty_and_is_run_by_the_analysts(self, campers):
+        gid = self._group()
+        p = next(x for x in _projects(ANALYST)["projects"] if x["id"] == gid)
+        assert p["members"] == [] and p["owner"] is None and p["managed"] and p["can_manage"]
+        assert len(p["code"]) == 6                            # Analysts see every group's code
+        seen = next(x for x in _projects(CAMPER)["projects"] if x["id"] == gid)
+        assert "code" not in seen and not seen["can_manage"]
+
+    def test_only_analysts_create_groups_and_assign(self, campers):
+        for who in (CAMPER, MEMBER):
+            with pytest.raises(HTTPException):
+                run(bc.require_editor(who))
+
+    def test_assigning_moves_people_between_groups(self, campers):
+        g1, g2 = self._group("Group 1"), self._group("Group 2")
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc1"), ANALYST))
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc2"), ANALYST))
+        assert self._members(ANALYST, g1) == ["bc1", "bc2"]
+        run(bc.assign_member(g2, bc.AssignIn(uid="bc2"), ANALYST))          # moved, not copied
+        assert self._members(ANALYST, g1) == ["bc1"] and self._members(ANALYST, g2) == ["bc2"]
+        assert [u["uid"] for u in _projects(ANALYST)["undecided"]] == ["bc3"]
+        with pytest.raises(HTTPException) as exc:
+            run(bc.assign_member(g1, bc.AssignIn(uid="gm1"), ANALYST))       # not in the Bootcamp
+        assert "isn't in the Bootcamp" in exc.value.detail
+
+    def test_moving_someone_out_of_a_member_project_keeps_or_clears_it(self, campers):
+        own = _start()["id"]                                  # Amy's own project, just her
+        g1 = self._group()
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc1"), ANALYST))
+        assert all(p["id"] != own for p in _projects(ANALYST)["projects"])   # emptied, so it went
+
+    def test_assigning_withdraws_their_requests(self, campers):
+        own = _start()["id"]
+        run(bc.request_to_join(own, BEN))
+        g1 = self._group()
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc2"), ANALYST))
+        assert _mine(CAMPER)["requests"] == []
+
+    def test_removing_and_an_empty_analyst_group_stays(self, campers):
+        g1 = self._group()
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc1"), ANALYST))
+        out = run(bc.unassign_member(g1, "bc1", ANALYST))
+        assert out["removed"] is False and self._members(ANALYST, g1) == []
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc1"), ANALYST))
+        assert run(bc.leave_project(g1, CAMPER))["removed"] is False      # leaving it doesn't delete it either
+
+    def test_making_a_lead_hands_them_the_group(self, campers):
+        g1 = self._group()
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc1"), ANALYST))
+        run(bc.assign_member(g1, bc.AssignIn(uid="bc2"), ANALYST))
+        run(bc.make_lead(g1, bc.AssignIn(uid="bc2"), ANALYST))
+        p = _mine(BEN)
+        assert p["is_owner"] and p["code"]
+        run(bc.update_project(g1, bc.ProjectIn(name="Renamed by Ben"), BEN))
+        with pytest.raises(HTTPException):
+            run(bc.make_lead(g1, bc.AssignIn(uid="bc3"), ANALYST))        # not in the group
+
+    def test_analysts_can_run_any_group(self, campers):
+        own = _start()["id"]
+        run(bc.request_to_join(own, BEN))
+        run(bc.decide_request(own, "bc2", bc.RequestDecision(accept=True), ANALYST))
+        run(bc.update_project(own, bc.ProjectIn(name="Renamed by an Analyst"), ANALYST))
+        run(bc.new_code(own, ANALYST))
+        p = _mine(CAMPER)
+        assert p["name"] == "Renamed by an Analyst" and [m["uid"] for m in p["members"]] == ["bc1", "bc2"]
+        with pytest.raises(HTTPException):
+            run(bc.update_project(own, bc.ProjectIn(name="Not mine"), BEN))   # an ordinary member still can't

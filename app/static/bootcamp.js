@@ -464,14 +464,14 @@
   // Members start a project (name + description), share its code to let
   // people straight in, or accept requests to join. Everyone sees every
   // project and its members' Oxford emails. One project per member.
-  let pj = null, pjEditing = false, pjLeaving = null;
+  let pj = null, pjEditing = null, pjLeaving = null;      // pjEditing: the project being renamed
 
   const memberRows = (p) => `<div class="bc-pj-members">${p.members.map((m) => `
     <div class="bc-pj-member"><span>${esc(m.name)}${m.is_owner ? '<span class="bc-pj-lead">runs it</span>' : ""}</span>
       ${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : '<span class="msp-muted">no email on file</span>'}</div>`).join("")}</div>`;
 
   function myProjectHtml(p) {
-    const edit = pjEditing && p.is_owner;
+    const edit = pjEditing === p.id && p.is_owner;
     return `<article class="card bc-pj is-mine" id="pj-${esc(p.id)}">
       <div class="bc-pj-top"><span class="bc-pj-tag">Your project</span>
         <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"}</span></div>
@@ -494,7 +494,7 @@
           ${p.members.length === 1 ? "You're the only member, so the project will be removed." : p.is_owner ? "The longest-standing member will take over running it." : "You'll need the code or a new request to rejoin."}</span>
           <button class="btn bc-danger" data-pj="leave-yes" data-id="${esc(p.id)}">Leave</button>
           <button class="btn ghost" data-pj="leave-no">Cancel</button></div>`
-        : `<div class="bc-pj-actions">${p.is_owner && !edit ? `<button class="btn ghost" data-pj="edit">Edit name and description</button>` : ""}
+        : `<div class="bc-pj-actions">${p.is_owner && !edit ? `<button class="btn ghost" data-pj="edit" data-id="${esc(p.id)}">Edit name and description</button>` : ""}
           <button class="btn ghost" data-pj="leave" data-id="${esc(p.id)}">Leave project</button></div>`}
     </article>`;
   }
@@ -503,14 +503,59 @@
     const canAsk = pj.is_member && !pj.in_project;
     return `<article class="card bc-pj">
       <div class="bc-pj-top"><h3>${esc(p.name)}</h3>
-        <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"} · run by ${esc(p.owner_name)}</span></div>
+        <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"} · run by ${p.owner ? esc(p.owner_name) : "the Analysts"}</span></div>
       ${p.description ? `<p class="bc-pj-desc">${linkify(p.description)}</p>` : ""}
       ${memberRows(p)}
       <div class="bc-pj-actions">
         ${canAsk ? (p.requested
-          ? `<span class="bc-meta">Request sent. ${esc(p.owner_name)} will see it.</span><button class="btn ghost" data-pj="unrequest" data-id="${esc(p.id)}">Cancel request</button>`
+          ? `<span class="bc-meta">Request sent. ${p.owner ? esc(p.owner_name) : "The Analysts"} will see it.</span><button class="btn ghost" data-pj="unrequest" data-id="${esc(p.id)}">Cancel request</button>`
           : `<button class="btn" data-pj="request" data-id="${esc(p.id)}">Request to join</button>`) : ""}
         ${pj.can_moderate ? `<button class="btn ghost" data-pj="remove" data-id="${esc(p.id)}">Remove project</button>` : ""}
+      </div>
+    </article>`;
+  }
+
+  // Analysts organising the groups: everything the person running a group
+  // can do, plus putting people in, moving them between groups, taking them
+  // out, and choosing a lead. Groups an Analyst made stay even when empty.
+  const groupOptions = (exceptId, placeholder) => `<option value="">${esc(placeholder)}</option>${pj.projects
+    .filter((g) => g.id !== exceptId).map((g) => `<option value="${esc(g.id)}">${esc(g.name)}</option>`).join("")}`;
+
+  function managedProjectHtml(p) {
+    const edit = pjEditing === p.id;
+    const runBy = p.owner ? `run by ${esc(p.owner_name)}` : "run by the Analysts";
+    return `<article class="card bc-pj" id="pj-${esc(p.id)}">
+      ${edit ? `<div class="bc-form">
+          <input class="msp-input" id="pjEditName" maxlength="80" value="${esc(p.name)}" aria-label="Group name">
+          <textarea class="msp-input" id="pjEditDesc" maxlength="2000" aria-label="Description">${esc(p.description)}</textarea>
+          <div class="bc-actions"><button class="btn primary" data-pj="save" data-id="${esc(p.id)}">Save</button>
+            <button class="btn ghost" data-pj="cancel-edit">Cancel</button></div></div>`
+        : `<div class="bc-pj-top"><h3>${esc(p.name)}</h3>
+            <span class="bc-meta">${p.members.length} member${p.members.length === 1 ? "" : "s"} · ${runBy}${p.managed ? " · made by an Analyst" : ""}</span></div>
+          ${p.description ? `<p class="bc-pj-desc">${linkify(p.description)}</p>` : ""}`}
+      <div class="bc-pj-code"><strong>${esc(p.code)}</strong>
+        <span>Join code. Anyone in the Bootcamp who enters it joins this group straight away.</span>
+        <button class="btn ghost" data-pj="copy" data-code="${esc(p.code)}">Copy</button>
+        <button class="btn ghost" data-pj="newcode" data-id="${esc(p.id)}" title="The old code stops working">New code</button></div>
+      ${(p.requests || []).length ? `<div class="bc-pj-sub">Asking to join</div>${p.requests.map((r) => `
+        <div class="bc-pj-req"><div><strong>${esc(r.name)}</strong> · <a href="mailto:${esc(r.email)}">${esc(r.email)}</a></div>
+          <button class="btn primary" data-pj="accept" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Accept</button>
+          <button class="btn ghost" data-pj="decline" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Decline</button></div>`).join("")}` : ""}
+      <div class="bc-pj-sub">Members</div>
+      <div class="bc-pj-members">${p.members.map((m) => `
+        <div class="bc-pj-member bc-pj-manage">
+          <span>${esc(m.name)}${m.is_owner ? '<span class="bc-pj-lead">lead</span>' : ""}
+            ${m.email ? `<br><a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : ""}</span>
+          <span class="bc-pj-tools">
+            ${m.is_owner ? "" : `<button class="btn ghost" data-pj="lead" data-id="${esc(p.id)}" data-uid="${esc(m.uid)}">Make lead</button>`}
+            ${pj.projects.length > 1 ? `<select class="msp-input bc-pj-select" data-pj-move="${esc(m.uid)}" aria-label="Move ${esc(m.name)} to another group">${groupOptions(p.id, "Move to…")}</select>` : ""}
+            <button class="btn ghost" data-pj="unassign" data-id="${esc(p.id)}" data-uid="${esc(m.uid)}" data-name="${esc(m.name)}">Remove</button>
+          </span></div>`).join("") || '<p class="bc-empty" style="margin:8px 0;">Nobody yet.</p>'}</div>
+      ${(pj.undecided || []).length ? `<select class="msp-input bc-pj-select bc-pj-add" data-pj-add="${esc(p.id)}" aria-label="Add someone to ${esc(p.name)}">
+          <option value="">Add someone not in a group…</option>${pj.undecided.map((u) => `<option value="${esc(u.uid)}">${esc(u.name)}</option>`).join("")}</select>` : ""}
+      <div class="bc-pj-actions">
+        ${edit ? "" : `<button class="btn ghost" data-pj="edit" data-id="${esc(p.id)}">Edit name and description</button>`}
+        <button class="btn ghost" data-pj="remove" data-id="${esc(p.id)}">Remove group</button>
       </div>
     </article>`;
   }
@@ -523,7 +568,8 @@
         Not in a project yet · ${list.length}</h4>
       ${list.length ? `<div class="card" style="padding:4px 18px;"><div class="bc-pj-members" style="border-top:0;">${list.map((m) => `
         <div class="bc-pj-member"><span>${esc(m.name)}${m.uid === pj.me ? '<span class="bc-pj-lead">you</span>' : ""}</span>
-          ${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : '<span class="msp-muted">no email on file</span>'}</div>`).join("")}
+          <span class="bc-pj-tools">${m.email ? `<a href="mailto:${esc(m.email)}">${esc(m.email)}</a>` : '<span class="msp-muted">no email on file</span>'}
+          ${pj.can_moderate && pj.projects.length ? `<select class="msp-input bc-pj-select" data-pj-move="${esc(m.uid)}" aria-label="Put ${esc(m.name)} in a group">${groupOptions(null, "Assign to…")}</select>` : ""}</span></div>`).join("")}
         </div></div>` : '<p class="bc-empty">Everyone is in a project.</p>'}`;
   }
 
@@ -539,9 +585,15 @@
           <div class="bc-actions"><button class="btn primary" data-pj="join">Join</button></div>
           <p class="bc-hint">Ask whoever runs a project for its code, or press Request to join on it below.</p></div>
       </div>` : "";
-    $("#projectsView").innerHTML = `${start}${mine.map(myProjectHtml).join("")}
-      ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : "Projects"}</h4>` : ""}
-      ${others.map(otherProjectHtml).join("")}
+    const createGroup = pj.can_moderate ? `<div class="card bc-form" style="padding:16px 18px;margin-bottom:18px;">
+        <h3 style="margin:0;">Create a group</h3>
+        <p class="bc-hint">Analysts only. Then add people to it below, or move them across from other groups.</p>
+        <input class="msp-input" id="pjGroupName" maxlength="80" placeholder="Group name, e.g. Group 1: Momentum signals" aria-label="Group name">
+        <textarea class="msp-input" id="pjGroupDesc" maxlength="2000" placeholder="What the group is working on (optional)" aria-label="Description"></textarea>
+        <div class="bc-actions"><button class="btn primary" data-pj="create-group">Create group</button></div></div>` : "";
+    $("#projectsView").innerHTML = `${start}${createGroup}${mine.map(myProjectHtml).join("")}
+      ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : pj.can_moderate ? "Groups" : "Projects"}</h4>` : ""}
+      ${others.map(pj.can_moderate ? managedProjectHtml : otherProjectHtml).join("")}
       ${!pj.projects.length ? `<p class="bc-empty">No projects yet.${pj.is_member ? " Start the first one above." : ""}</p>` : ""}
       ${undecidedHtml()}`;
   }
@@ -558,8 +610,13 @@
     if (!b || !pj) return;
     const act = b.dataset.pj, id = b.dataset.id ? encodeURIComponent(b.dataset.id) : "";
     try {
-      if (act === "edit") { pjEditing = true; drawProjects(); return; }
-      if (act === "cancel-edit") { pjEditing = false; drawProjects(); return; }
+      if (act === "edit") { pjEditing = b.dataset.id; drawProjects(); return; }
+      if (act === "cancel-edit") { pjEditing = null; drawProjects(); return; }
+      if (act === "unassign" && !b.dataset.sure) {
+        b.dataset.sure = "1"; b.textContent = `Remove ${b.dataset.name}?`;
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Remove"; } }, 4000);
+        return;
+      }
       if (act === "leave") { pjLeaving = b.dataset.id; drawProjects(); return; }
       if (act === "leave-no") { pjLeaving = null; drawProjects(); return; }
       if (act === "copy") {
@@ -581,7 +638,7 @@
         showMsg(`You've joined ${d.name || "the project"}.`, true);
       } else if (act === "save") {
         await send("PUT", `/bootcamp/projects/${id}`, { name: $("#pjEditName").value, description: $("#pjEditDesc").value });
-        pjEditing = false; showMsg("Saved.", true);
+        pjEditing = null; showMsg("Saved.", true);
       } else if (act === "newcode") {
         await send("POST", `/bootcamp/projects/${id}/code`); showMsg("New code made. The old one no longer works.", true);
       } else if (act === "request") {
@@ -594,10 +651,33 @@
         const d = await send("POST", `/bootcamp/projects/${id}/leave`);
         pjLeaving = null; showMsg(d.removed ? "You've left, and the project has been removed." : "You've left the project.", true);
       } else if (act === "remove") {
-        await send("DELETE", `/bootcamp/projects/${id}`); showMsg("Project removed.", true);
+        await send("DELETE", `/bootcamp/projects/${id}`); showMsg("Removed.", true);
+      } else if (act === "create-group") {
+        await send("POST", "/bootcamp/projects/groups", { name: $("#pjGroupName").value, description: $("#pjGroupDesc").value });
+        showMsg("Group created. Add people to it below.", true);
+      } else if (act === "lead") {
+        await send("POST", `/bootcamp/projects/${id}/lead`, { uid: b.dataset.uid }); showMsg("Lead changed.", true);
+      } else if (act === "unassign") {
+        await send("DELETE", `/bootcamp/projects/${id}/members/${encodeURIComponent(b.dataset.uid)}`);
+        showMsg(`${b.dataset.name} is out of the group.`, true);
       }
       await loadProjects();
     } catch (err) { showMsg(err.message, false); b.disabled = false; }
+  });
+
+  // Analysts' menus: put someone in a group (moving them out of any other),
+  // or add someone not yet in one.
+  document.addEventListener("change", async (e) => {
+    const sel = e.target.closest("[data-pj-move], [data-pj-add]");
+    if (!sel || !pj || !sel.value) return;
+    const [projectId, uid] = sel.dataset.pjAdd ? [sel.dataset.pjAdd, sel.value] : [sel.value, sel.dataset.pjMove];
+    sel.disabled = true;
+    try {
+      await send("POST", `/bootcamp/projects/${encodeURIComponent(projectId)}/members`, { uid });
+      const group = pj.projects.find((g) => g.id === projectId);
+      showMsg(`Added to ${group ? group.name : "the group"}.`, true);
+      await loadProjects();
+    } catch (err) { showMsg(err.message, false); sel.disabled = false; sel.value = ""; }
   });
 
   // Posts / Attendance / Group projects, remembered in the address.

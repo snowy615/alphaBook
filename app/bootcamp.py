@@ -669,6 +669,12 @@ async def mark_attendance(session_id: str, req: AttendanceIn, user: User = Depen
 # requests to the others. When the owner leaves, the longest-standing member
 # takes over; a project nobody is left in is removed. Analysts see them all
 # and can remove one.
+#
+# Analysts can also organise the groups themselves: create groups (these stay
+# even when empty, and an Analyst-made group is run by the Analysts unless
+# they make someone its lead), assign anyone in the Bootcamp to a group
+# (moving them out of any other), take people out, and do anything the person
+# running a group can (rename it, see its code, accept requests).
 
 PROJECTS = "bootcamp_projects"
 PROJECT_NAME_MAX = 80
@@ -731,6 +737,27 @@ def _owner_only(project: Dict[str, Any], user: User) -> None:
         raise HTTPException(403, "Only the person running the project can do that")
 
 
+async def _manager_only(project: Dict[str, Any], user: User) -> None:
+    """Whoever runs the group, or any Analyst."""
+    if project.get("owner") != str(user.id) and await access_of(user) != ACCESS_EDITOR:
+        raise HTTPException(403, "Only the person running the project, or an Analyst, can do that")
+
+
+def _without(project: Dict[str, Any], uid: str) -> Optional[Dict[str, Any]]:
+    """The change that takes ``uid`` out of a project, or None if the project
+    should go: a member-made project nobody is left in. An Analyst-made group
+    stays, empty. If they ran it, the longest-standing member takes over."""
+    members = [u for u in project.get("members") or [] if u != uid]
+    if not members and not project.get("managed"):
+        return None
+    joined = dict(project.get("joined") or {})
+    joined.pop(uid, None)
+    change: Dict[str, Any] = {"members": members, "joined": joined}
+    if project.get("owner") == uid:
+        change["owner"] = min(members, key=lambda u: (_iso(joined.get(u)) or "", members.index(u))) if members else None
+    return change
+
+
 async def _withdraw_requests(uid: str, keep: Optional[str] = None) -> None:
     """Someone who's joined a project no longer wants into the others."""
     for pid, p in (await _all_projects()).items():
@@ -764,6 +791,7 @@ async def list_projects(user: User = Depends(require_reader)):
     for pid, p in projects.items():
         members = list(p.get("members") or [])
         is_owner = p.get("owner") == uid
+        manages = is_owner or access == ACCESS_EDITOR
         view = {
             "id": pid, "name": p.get("name") or "", "description": p.get("description") or "",
             "owner": p.get("owner"), "owner_name": who(p.get("owner"))["name"] if p.get("owner") else "",
@@ -771,8 +799,9 @@ async def list_projects(user: User = Depends(require_reader)):
             "is_member": uid in members, "is_owner": is_owner,
             "requested": uid in (p.get("requests") or {}),
             "created_at": _iso(p.get("created_at")),
+            "managed": bool(p.get("managed")), "can_manage": manages,
         }
-        if is_owner:
+        if manages:
             view["code"] = p.get("code")
             view["requests"] = [{**who(u), "at": _iso(r.get("at"))} for u, r in (p.get("requests") or {}).items()]
         out.append(view)
@@ -806,20 +835,20 @@ async def create_project(req: ProjectIn, user: User = Depends(require_member)):
 
 
 @router.put("/projects/{project_id}")
-async def update_project(project_id: str, req: ProjectIn, user: User = Depends(require_member)):
-    """Rename it or change the description: whoever runs it."""
+async def update_project(project_id: str, req: ProjectIn, user: User = Depends(require_reader)):
+    """Rename it or change the description: whoever runs it, or an Analyst."""
     ref, project = await _load_project(project_id)
-    _owner_only(project, user)
+    await _manager_only(project, user)
     await ref.update({**_checked_project(req.name, req.description), "updated_at": _now()})
     return {"ok": True}
 
 
 @router.post("/projects/{project_id}/code")
-async def new_code(project_id: str, user: User = Depends(require_member)):
+async def new_code(project_id: str, user: User = Depends(require_reader)):
     """A fresh join code (the old one stops working), say if it got around."""
     async with _projects_lock:
         ref, project = await _load_project(project_id)
-        _owner_only(project, user)
+        await _manager_only(project, user)
         code = _new_code(await _all_projects())
         await ref.update({"code": code})
     return {"ok": True, "code": code}
@@ -874,11 +903,11 @@ class RequestDecision(BaseModel):
 
 
 @router.post("/projects/{project_id}/requests/{member_uid}")
-async def decide_request(project_id: str, member_uid: str, req: RequestDecision, user: User = Depends(require_member)):
-    """The owner lets someone in, or doesn't."""
+async def decide_request(project_id: str, member_uid: str, req: RequestDecision, user: User = Depends(require_reader)):
+    """Whoever runs the group (or an Analyst) lets someone in, or doesn't."""
     async with _projects_lock:
         ref, project = await _load_project(project_id)
-        _owner_only(project, user)
+        await _manager_only(project, user)
         requests = dict(project.get("requests") or {})
         if member_uid not in requests:
             raise HTTPException(404, "That request isn't there any more")
@@ -901,18 +930,12 @@ async def leave_project(project_id: str, user: User = Depends(require_member)):
     uid = str(user.id)
     async with _projects_lock:
         ref, project = await _load_project(project_id)
-        members = list(project.get("members") or [])
-        if uid not in members:
+        if uid not in (project.get("members") or []):
             raise HTTPException(400, "You're not in this project")
-        members.remove(uid)
-        if not members:
+        change = _without(project, uid)
+        if change is None:
             await ref.delete()             # nobody left
             return {"ok": True, "removed": True}
-        joined = dict(project.get("joined") or {})
-        joined.pop(uid, None)
-        change: Dict[str, Any] = {"members": members, "joined": joined}
-        if project.get("owner") == uid:   # the longest-standing member takes over
-            change["owner"] = min(members, key=lambda u: (_iso(joined.get(u)) or "", members.index(u)))
         await ref.update(change)
     return {"ok": True, "removed": False}
 
@@ -922,4 +945,70 @@ async def remove_project(project_id: str, user: User = Depends(require_editor)):
     """Analysts can take a project down (say it was a test, or abandoned)."""
     ref, _ = await _load_project(project_id)
     await ref.delete()
+    return {"ok": True}
+
+
+# ── Analysts organising the groups ───────────────────────────────────────────
+
+@router.post("/projects/groups")
+async def create_group(req: ProjectIn, user: User = Depends(require_editor)):
+    """An Analyst-made group: starts empty, stays even when empty, and is run
+    by the Analysts until they make one of its members the lead."""
+    fields = _checked_project(req.name, req.description)
+    async with _projects_lock:
+        project = {**fields, "owner": None, "members": [], "joined": {}, "requests": {}, "managed": True,
+                   "code": _new_code(await _all_projects()), "created_at": _now(), "created_by": str(user.id)}
+        ref = db_module.db.collection(PROJECTS).document()
+        await ref.set(project)
+    return {"ok": True, "id": ref.id}
+
+
+class AssignIn(BaseModel):
+    uid: str
+
+
+@router.post("/projects/{project_id}/members")
+async def assign_member(project_id: str, req: AssignIn, user: User = Depends(require_editor)):
+    """Put someone in the Bootcamp into this group, taking them out of any
+    other they're in (and withdrawing their requests elsewhere)."""
+    uid = req.uid
+    if uid not in await _roster():
+        raise HTTPException(400, "That person isn't in the Bootcamp")
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if uid in (project.get("members") or []):
+            return {"ok": True}
+        for pid, other in (await _all_projects()).items():
+            if pid != project_id and uid in (other.get("members") or []):
+                change = _without(other, uid)
+                other_ref = db_module.db.collection(PROJECTS).document(pid)
+                await (other_ref.delete() if change is None else other_ref.update(change))
+        await ref.update(_add_member(project, uid))
+    await _withdraw_requests(uid, keep=project_id)
+    return {"ok": True}
+
+
+@router.delete("/projects/{project_id}/members/{member_uid}")
+async def unassign_member(project_id: str, member_uid: str, user: User = Depends(require_editor)):
+    """Take someone out of a group; they go back to not being in one."""
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if member_uid not in (project.get("members") or []):
+            raise HTTPException(404, "They're not in this group")
+        change = _without(project, member_uid)
+        if change is None:
+            await ref.delete()
+            return {"ok": True, "removed": True}
+        await ref.update(change)
+    return {"ok": True, "removed": False}
+
+
+@router.post("/projects/{project_id}/lead")
+async def make_lead(project_id: str, req: AssignIn, user: User = Depends(require_editor)):
+    """Make a member the group's lead: they run it (code, requests, name)."""
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if req.uid not in (project.get("members") or []):
+            raise HTTPException(400, "Only someone in the group can lead it")
+        await ref.update({"owner": req.uid})
     return {"ok": True}
