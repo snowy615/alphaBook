@@ -973,3 +973,74 @@ class TestWeek7:
         assert [a["name"] for a in out["analysts"]] == ["Warren Jin"]
         assert not {c.name for c in campers.scans} & {"users", "applications"}
         assert _projects(CAMPER)["analysts"] == []
+
+
+# ── Group submissions ───────────────────────────────────────────────────────
+
+@pytest.fixture
+def group(campers):
+    gid = run(bc.create_group(bc.ProjectIn(name="Group 1"), ANALYST))["id"]
+    for uid in ("bc1", "bc2"):
+        run(bc.assign_member(gid, bc.AssignIn(uid=uid), ANALYST))
+    return gid
+
+
+def _sub(user, gid):
+    return next(p for p in _projects(user)["projects"] if p["id"] == gid).get("submission")
+
+
+class TestSubmissions:
+    def test_any_member_adds_and_removes_any_file_and_analysts_see_it(self, group, campers):
+        run(bc.add_submission_file(group, _upload("report.pdf"), CAMPER))
+        out = run(bc.add_submission_file(group, _upload("model.ipynb", b"{}", "application/json"), BEN))["submission"]
+        assert [f["name"] for f in out["files"]] == ["report.pdf", "model.ipynb"]
+        assert out["files"][0]["by_name"] == "Amy" and out["updated_by_name"] == "Ben Ng"
+        assert all(path.startswith(f"bootcamp/projects/{group}/") for path in campers.bucket.blobs)
+        seen = _sub(ANALYST, group)                                          # Analysts see it, can't change it
+        assert len(seen["files"]) == 2 and seen["can_edit"] is False and _sub(BEN, group)["can_edit"] is True
+        amys = out["files"][0]["id"]
+        run(bc.remove_submission_file(group, amys, BEN))                     # Ben takes off Amy's file
+        assert [f["name"] for f in _sub(CAMPER, group)["files"]] == ["model.ipynb"] and len(campers.bucket.blobs) == 1
+
+    def test_nobody_else_sees_or_changes_it(self, group):
+        f = run(bc.add_submission_file(group, _upload("report.pdf"), CAMPER))["submission"]["files"][0]
+        assert _sub(CY, group) is None                                       # another camper: not even the section
+        for call in (lambda: run(bc.add_submission_file(group, _upload("x.pdf"), CY)),
+                     lambda: run(bc.remove_submission_file(group, f["id"], CY)),
+                     lambda: run(bc.set_submission_note(group, bc.SubmissionNoteIn(note="hi"), CY)),
+                     lambda: run(bc.download_submission_file(group, f["id"], user=CY)),
+                     lambda: run(bc.view_submission_file(group, f["id"], CY)),
+                     lambda: run(bc.add_submission_file(group, _upload("x.pdf"), ANALYST)),
+                     lambda: run(bc.remove_submission_file(group, f["id"], ANALYST))):
+            with pytest.raises(HTTPException) as exc:
+                call()
+            assert exc.value.status_code == 403
+        assert _body(run(bc.download_submission_file(group, f["id"], user=ANALYST))) == b"%PDF-1.4 slides"
+        assert _body(run(bc.download_submission_file(group, f["id"], user=BEN))) == b"%PDF-1.4 slides"
+
+    def test_the_note_and_the_rules_on_files(self, group):
+        run(bc.set_submission_note(group, bc.SubmissionNoteIn(note="  Start with report.pdf  "), BEN))
+        assert _sub(ANALYST, group)["note"] == "Start with report.pdf"
+        with pytest.raises(HTTPException):
+            run(bc.add_submission_file(group, _upload("virus.exe", b"MZ"), CAMPER))
+        with pytest.raises(HTTPException):
+            run(bc.add_submission_file(group, _upload("empty.pdf", b""), CAMPER))
+
+    def test_slides_open_in_the_office_viewer_for_analysts(self, group):
+        from urllib.parse import parse_qs, unquote, urlparse
+        pptx = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        f = run(bc.add_submission_file(group, _upload("Final.pptx", b"PK deck", pptx), CAMPER))["submission"]["files"][0]
+        loc = run(bc.view_submission_file(group, f["id"], ANALYST)).headers["location"]
+        src = parse_qs(urlparse(loc).query)["src"][0]
+        token = src.split("/shared/")[1].split("/")[0]
+        assert _body(run(bc.shared_file(token, unquote(src.rsplit("/", 1)[1])))) == b"PK deck"
+
+    def test_files_go_when_the_group_does(self, group, campers):
+        run(bc.add_submission_file(group, _upload("report.pdf"), CAMPER))
+        run(bc.remove_project(group, ANALYST))
+        assert campers.bucket.blobs == {}
+
+    def test_files_go_when_the_last_member_leaves_a_members_project(self, campers):
+        pid = _start()["id"]
+        run(bc.add_submission_file(pid, _upload("report.pdf"), CAMPER))
+        assert run(bc.leave_project(pid, CAMPER))["removed"] and campers.bucket.blobs == {}

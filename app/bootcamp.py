@@ -499,6 +499,11 @@ async def shared_file(token: str, name: str):
     post_id, _, file_id = claim.partition("/")
     if not post_id or not file_id:
         raise HTTPException(404, "This link has expired. Open the file again from the Bootcamp page.")
+    if post_id.startswith(SUBMISSION_CLAIM):
+        _, project = await _load_project(post_id[len(SUBMISSION_CLAIM):])
+        entry = _submission_entry(project, file_id)
+        data = await asyncio.to_thread(db_module.bucket.blob(entry["blob"]).download_as_bytes)
+        return _file_response(entry, data, inline=True)
     entry, data = await _file(post_id, file_id)
     return _file_response(entry, data, inline=True)
 
@@ -804,6 +809,8 @@ async def list_projects(user: User = Depends(require_reader)):
             "created_at": _iso(p.get("created_at")),
             "managed": bool(p.get("managed")), "can_manage": manages,
         }
+        if uid in members or access == ACCESS_EDITOR:
+            view["submission"] = _submission_view(p, uid in members)
         if manages:
             view["code"] = p.get("code")
             view["requests"] = [{**who(u), "at": _iso(r.get("at"))} for u, r in (p.get("requests") or {}).items()]
@@ -946,6 +953,7 @@ async def leave_project(project_id: str, user: User = Depends(require_member)):
         change = _without(project, uid)
         if change is None:
             await ref.delete()             # nobody left
+            await _discard_submission(project)
             return {"ok": True, "removed": True}
         await ref.update(change)
     return {"ok": True, "removed": False}
@@ -959,6 +967,7 @@ async def remove_project(project_id: str, user: User = Depends(require_editor)):
     await _drop_calendar_event(project.get("checkin") or {})
     await ref.delete()
     await db_module.db.collection(NOTES).document(project_id).delete()
+    await _discard_submission(project)
     return {"ok": True}
 
 
@@ -997,6 +1006,8 @@ async def assign_member(project_id: str, req: AssignIn, user: User = Depends(req
                 change = _without(other, uid)
                 other_ref = db_module.db.collection(PROJECTS).document(pid)
                 await (other_ref.delete() if change is None else other_ref.update(change))
+                if change is None:
+                    await _discard_submission(other)
         await ref.update(_add_member(project, uid))
     await _withdraw_requests(uid, keep=project_id)
     return {"ok": True}
@@ -1012,6 +1023,7 @@ async def unassign_member(project_id: str, member_uid: str, user: User = Depends
         change = _without(project, member_uid)
         if change is None:
             await ref.delete()
+            await _discard_submission(project)
             return {"ok": True, "removed": True}
         await ref.update(change)
     return {"ok": True, "removed": False}
@@ -1389,3 +1401,158 @@ async def message_group(project_id: str, req: GroupMessageIn, user: User = Depen
         sent = list(((doc.to_dict() or {}).get("messages") or []) if doc.exists else [])
         await ref.set({"messages": (sent + [record])[-50:]}, merge=True)
     return {"ok": True, "sent_to": record["to"], "cc": cc}
+
+
+# ── Group submissions ────────────────────────────────────────────────────────
+# Each group hands in its work here: files plus a short note, kept on the
+# group's own document. Anyone in the group can add files, take any of them
+# off and change the note; Analysts can open everything but change nothing;
+# nobody else sees it at all. Files live in storage under the group, and go
+# when the group does.
+SUBMISSION_FILES = 30
+SUBMISSION_NOTE_MAX = 3000
+SUBMISSION_CLAIM = "sub:"          # marks a view link as one for a submission file
+
+
+def _submission_view(project: Dict[str, Any], editable: bool) -> Dict[str, Any]:
+    sub = project.get("submission") or {}
+    return {"files": [{"id": f["id"], "name": f.get("name") or "", "size": f.get("size") or 0,
+                       "view": viewer_of(f.get("name") or "", f.get("size") or 0),
+                       "by_name": f.get("uploaded_by_name") or "", "at": _iso(f.get("uploaded_at"))}
+                      for f in sub.get("files") or []],
+            "note": sub.get("note") or "", "updated_at": _iso(sub.get("updated_at")),
+            "updated_by_name": sub.get("updated_by_name") or "", "can_edit": editable}
+
+
+def _submission_entry(project: Dict[str, Any], file_id: str) -> Dict[str, Any]:
+    entry = next((f for f in (project.get("submission") or {}).get("files") or [] if f.get("id") == file_id), None)
+    if entry is None:
+        raise HTTPException(404, "No such file")
+    return entry
+
+
+async def _discard_submission(project: Dict[str, Any]) -> None:
+    paths = [f["blob"] for f in (project.get("submission") or {}).get("files") or [] if f.get("blob")]
+    if paths and db_module.bucket:
+        await asyncio.to_thread(_delete_blobs, paths)
+
+
+async def _in_group(project_id: str, user: User) -> tuple:
+    """The group, if this person is in it: the only people who change its submission."""
+    ref, project = await _load_project(project_id)
+    if str(user.id) not in (project.get("members") or []):
+        raise HTTPException(403, "Only the group's members can change its submission")
+    return ref, project
+
+
+async def _can_see(project_id: str, user: User) -> Dict[str, Any]:
+    """The group, if this person may see its submission: its members and Analysts."""
+    _, project = await _load_project(project_id)
+    if str(user.id) not in (project.get("members") or []) and await access_of(user) != ACCESS_EDITOR:
+        raise HTTPException(403, "Only the group and the Analysts can see this submission")
+    return project
+
+
+def _touched(sub: Dict[str, Any], name: str) -> Dict[str, Any]:
+    return {**sub, "updated_at": _now(), "updated_by_name": name}
+
+
+@router.post("/projects/{project_id}/submission/files")
+async def add_submission_file(project_id: str, file: UploadFile = File(...), user: User = Depends(require_reader)):
+    """Add one file to the group's submission."""
+    if not db_module.bucket:
+        raise HTTPException(500, "Storage not configured")
+    _, project = await _in_group(project_id, user)
+    if len((project.get("submission") or {}).get("files") or []) >= SUBMISSION_FILES:
+        raise HTTPException(400, f"A submission can have up to {SUBMISSION_FILES} files. Take one off first.")
+    name = _safe_name(file.filename or "")
+    if _extension(name) not in ALLOWED_EXTENSIONS:
+        raise HTTPException(400, "That kind of file can't be uploaded. Slides, documents, spreadsheets, notebooks, "
+                                 "code, images and zips are fine.")
+    content = await file.read(FILE_MAX_BYTES + 1)
+    if len(content) > FILE_MAX_BYTES:
+        raise HTTPException(400, f"Files can be up to {FILE_MAX_BYTES // (1024 * 1024)} MB")
+    if not content:
+        raise HTTPException(400, "That file is empty")
+    file_id = uuid.uuid4().hex[:12]
+    blob_path = f"bootcamp/projects/{project_id}/{file_id}/{name}"
+    content_type = file.content_type or "application/octet-stream"
+    await asyncio.to_thread(db_module.bucket.blob(blob_path).upload_from_string, content, content_type=content_type)
+    who = await _name_of(user)
+    entry = {"id": file_id, "name": name, "size": len(content), "content_type": content_type, "blob": blob_path,
+             "uploaded_at": _now(), "uploaded_by": str(user.id), "uploaded_by_name": who}
+    async with _projects_lock:              # read again: someone else may have added one meanwhile
+        try:
+            ref, project = await _in_group(project_id, user)
+        except HTTPException:
+            await asyncio.to_thread(_delete_blobs, [blob_path])
+            raise
+        sub = dict(project.get("submission") or {})
+        sub["files"] = list(sub.get("files") or []) + [entry]
+        await ref.update({"submission": _touched(sub, who)})
+        project["submission"] = _touched(sub, who)
+    return {"ok": True, "submission": _submission_view(project, True)}
+
+
+@router.delete("/projects/{project_id}/submission/files/{file_id}")
+async def remove_submission_file(project_id: str, file_id: str, user: User = Depends(require_reader)):
+    """Take a file off the submission, whoever in the group put it there."""
+    async with _projects_lock:
+        ref, project = await _in_group(project_id, user)
+        sub = dict(project.get("submission") or {})
+        gone = _submission_entry(project, file_id)
+        sub["files"] = [f for f in sub.get("files") or [] if f.get("id") != file_id]
+        sub = _touched(sub, await _name_of(user))
+        await ref.update({"submission": sub})
+        project["submission"] = sub
+    if db_module.bucket and gone.get("blob"):
+        await asyncio.to_thread(_delete_blobs, [gone["blob"]])
+    return {"ok": True, "submission": _submission_view(project, True)}
+
+
+class SubmissionNoteIn(BaseModel):
+    note: str = ""
+
+
+@router.put("/projects/{project_id}/submission/note")
+async def set_submission_note(project_id: str, req: SubmissionNoteIn, user: User = Depends(require_reader)):
+    """The note that goes with the files: what's in them, where to start."""
+    note = (req.note or "").strip()
+    if len(note) > SUBMISSION_NOTE_MAX:
+        raise HTTPException(400, f"Keep the note under {SUBMISSION_NOTE_MAX:,} characters")
+    async with _projects_lock:
+        ref, project = await _in_group(project_id, user)
+        sub = _touched({**(project.get("submission") or {}), "note": note}, await _name_of(user))
+        await ref.update({"submission": sub})
+        project["submission"] = sub
+    return {"ok": True, "submission": _submission_view(project, True)}
+
+
+@router.get("/projects/{project_id}/submission/files/{file_id}", include_in_schema=False)
+async def download_submission_file(project_id: str, file_id: str, inline: bool = False,
+                                   user: User = Depends(require_reader)):
+    """Download a submission file (or show it, with ?inline=1): the group and Analysts only."""
+    if not db_module.bucket:
+        raise HTTPException(500, "Storage not configured")
+    entry = _submission_entry(await _can_see(project_id, user), file_id)
+    url = _signed_url(entry, inline)
+    if url:
+        return _no_store(RedirectResponse(url, status_code=303))
+    data = await asyncio.to_thread(db_module.bucket.blob(entry["blob"]).download_as_bytes)
+    return _file_response(entry, data, inline)
+
+
+@router.get("/projects/{project_id}/submission/files/{file_id}/view", include_in_schema=False)
+async def view_submission_file(project_id: str, file_id: str, user: User = Depends(require_reader)):
+    """Open a submission file to read, as with lecture materials."""
+    entry = _submission_entry(await _can_see(project_id, user), file_id)
+    how = viewer_of(entry.get("name") or "", entry.get("size") or 0)
+    base = f"/bootcamp/projects/{quote(project_id)}/submission/files/{quote(file_id)}"
+    if how == "browser":
+        url = _signed_url(entry, inline=True) if db_module.bucket else None
+        return _no_store(RedirectResponse(url or f"{base}?inline=1", status_code=303))
+    if how == "office":
+        token = _view_token(SUBMISSION_CLAIM + project_id, file_id)
+        src = f"{BASE_URL}/bootcamp/shared/{token}/{quote(entry.get('name') or 'file')}"
+        return RedirectResponse(OFFICE_VIEWER + quote(src, safe=""), status_code=303)
+    raise HTTPException(400, "That file can't be opened in the browser: download it instead")

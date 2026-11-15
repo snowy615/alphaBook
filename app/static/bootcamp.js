@@ -504,6 +504,7 @@
           <button class="btn primary" data-pj="accept" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Accept</button>
           <button class="btn ghost" data-pj="decline" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Decline</button></div>`).join("")}` : ""}
       ${w7MemberHtml(p)}
+      ${submissionHtml(p)}
       <div class="bc-pj-sub">Members</div>${memberRows(p)}
       ${pjLeaving === p.id ? `<div class="bc-pj-confirm"><span>Leave <strong>${esc(p.name)}</strong>?
           ${p.members.length === 1 ? "You're the only member, so the project will be removed." : p.is_owner ? "The longest-standing member will take over running it." : "You'll need the code or a new request to rejoin."}</span>
@@ -529,6 +530,78 @@
       </div>
     </article>`;
   }
+
+  // ── Group submissions ─────────────────────────────────────────────────────
+  // The group's handed-in work: files and a note. Anyone in the group adds
+  // or takes off files and edits the note; Analysts open them; nobody else
+  // sees the section at all (the server doesn't send it to them).
+  const subNote = {};                // project id -> the note being written, kept across redraws
+  function subFileRow(p, f, canEdit) {
+    const ext = (f.name.split(".").pop() || "").slice(0, 5);
+    const base = `/bootcamp/projects/${esc(p.id)}/submission/files/${esc(f.id)}`;
+    const viewTitle = f.view === "office" ? "Opens in Microsoft's Office viewer, in a new tab" : "Opens in a new tab";
+    return `<div class="bc-file">
+      <span class="bc-file-ext">${esc(ext)}</span>
+      <span>${f.view ? `<a href="${base}/view" target="_blank" rel="noopener" title="${viewTitle}">${esc(f.name)}</a>`
+                     : `<a href="${base}" download>${esc(f.name)}</a>`}
+        <span class="bc-meta" style="display:block;">${esc(f.by_name)}${f.at ? ` · ${esc(when(f.at))}` : ""}</span></span>
+      <span class="bc-file-size">${sizeLabel(f.size || 0)}</span>
+      ${f.view ? `<a class="btn ghost bc-file-btn" href="${base}/view" target="_blank" rel="noopener" title="${viewTitle}">View</a>` : ""}
+      <a class="btn ghost bc-file-btn" href="${base}" download>Download</a>
+      ${canEdit ? `<button class="btn ghost bc-file-x" data-pj="sub-rm" data-id="${esc(p.id)}" data-file="${esc(f.id)}" data-name="${esc(f.name)}" title="Take ${esc(f.name)} off" aria-label="Take ${esc(f.name)} off">✕</button>` : ""}
+    </div>`;
+  }
+  function submissionHtml(p) {
+    const sub = p.submission;
+    if (!sub) return "";
+    const status = sub.files.length
+      ? `${sub.files.length} file${sub.files.length === 1 ? "" : "s"}${sub.updated_at ? ` · last changed by ${esc(sub.updated_by_name)}, ${esc(when(sub.updated_at))}` : ""}`
+      : "Nothing handed in yet";
+    const note = subNote[p.id] !== undefined ? subNote[p.id] : sub.note;
+    return `<div class="bc-notes bc-sub"><div class="bc-pj-sub">Submission · only ${sub.can_edit ? "your group" : "the group"} and the Analysts see this</div>
+      <div class="bc-meta" style="margin:2px 0 4px;">${status}</div>
+      ${sub.files.map((f) => subFileRow(p, f, sub.can_edit)).join("")}
+      ${sub.can_edit ? `
+        <div class="bc-w7-book"><label class="btn ghost" style="cursor:pointer;">Add files
+          <input type="file" multiple hidden data-sub-files="${esc(p.id)}"></label>
+          <span class="bc-meta" id="subProg-${esc(p.id)}">Anyone in the group can add files or take them off. Up to 25 MB each.</span></div>
+        <textarea class="msp-input" data-sub-note="${esc(p.id)}" maxlength="3000" rows="3" placeholder="A note for the Analysts: what's in the files, where to start" aria-label="Submission note">${esc(note)}</textarea>
+        <div class="bc-w7-book"><button class="btn ghost" data-pj="sub-note" data-id="${esc(p.id)}">Save note</button></div>`
+        : sub.note ? `<p class="bc-pj-desc" style="white-space:pre-wrap;">${linkify(sub.note)}</p>` : ""}
+    </div>`;
+  }
+  // Analysts: which groups have handed something in.
+  function subSummaryHtml() {
+    if (!pj.can_moderate) return "";
+    const groups = pj.projects.filter((p) => p.submission && p.members.length);
+    if (!groups.length) return "";
+    const done = groups.filter((p) => p.submission.files.length), not = groups.filter((p) => !p.submission.files.length);
+    return `<div class="card" style="padding:14px 18px;margin-bottom:18px;"><h3 style="margin:0 0 6px;">Submissions · ${done.length} of ${groups.length} groups</h3>
+      ${done.length ? done.map((p) => `<div class="bc-meta"><a href="#pj-${esc(p.id)}">${esc(p.name)}</a>: ${p.submission.files.length} file${p.submission.files.length === 1 ? "" : "s"}${p.submission.updated_at ? `, last changed ${esc(when(p.submission.updated_at))}` : ""}</div>`).join("") : ""}
+      ${not.length ? `<p class="bc-hint" style="margin-top:8px;">Nothing yet: ${not.map((p) => esc(p.name)).join(", ")}</p>` : ""}</div>`;
+  }
+  async function uploadSubmission(id, files) {
+    const prog = $(`#subProg-${CSS.escape(id)}`), failed = [];
+    let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+      if (files[i].size > 25 * 1024 * 1024) { failed.push(`${files[i].name} (over 25 MB)`); continue; }
+      if (prog) prog.textContent = `Uploading ${i + 1} of ${files.length}: ${files[i].name}…`;
+      const form = new FormData();
+      form.append("file", files[i]);
+      try { await api(`/bootcamp/projects/${encodeURIComponent(id)}/submission/files`, { method: "POST", body: form }); ok++; }
+      catch (err) { failed.push(`${files[i].name} (${err.message})`); }
+    }
+    if (failed.length) showMsg(`Couldn't upload ${failed.join("; ")}`, false);
+    else if (ok) showMsg(`${ok} file${ok === 1 ? "" : "s"} added to the submission.`, true);
+    await loadProjects();
+  }
+  document.addEventListener("change", (e) => {
+    const inp = e.target.closest("input[data-sub-files]");
+    if (inp && inp.files.length) { const files = [...inp.files]; inp.value = ""; uploadSubmission(inp.dataset.subFiles, files); }
+  });
+  document.addEventListener("input", (e) => {
+    if (e.target.dataset && e.target.dataset.subNote) subNote[e.target.dataset.subNote] = e.target.value;
+  });
 
   // ── Week 7 check-ins ──────────────────────────────────────────────────────
   // Members mark when they're free (the interview grid, for 22–28 Nov);
@@ -685,6 +758,7 @@
           </span></div>`).join("") || '<p class="bc-empty" style="margin:8px 0;">Nobody yet.</p>'}</div>
       ${(pj.undecided || []).length ? `<select class="msp-input bc-pj-select bc-pj-add" data-pj-add="${esc(p.id)}" aria-label="Add someone to ${esc(p.name)}">
           <option value="">Add someone not in a group…</option>${pj.undecided.map((u) => `<option value="${esc(u.uid)}">${esc(u.name)}</option>`).join("")}</select>` : ""}
+      ${submissionHtml(p)}
       ${groupMailHtml(p)}
       ${w7AnalystHtml(p)}
       <div class="bc-pj-actions">
@@ -725,7 +799,7 @@
         <input class="msp-input" id="pjGroupName" maxlength="80" placeholder="Group name, e.g. Group 1: Momentum signals" aria-label="Group name">
         <textarea class="msp-input" id="pjGroupDesc" maxlength="2000" placeholder="What the group is working on (optional)" aria-label="Description"></textarea>
         <div class="bc-actions"><button class="btn primary" data-pj="create-group">Create group</button></div></div>` : "";
-    $("#projectsView").innerHTML = `${start}${w7SummaryHtml()}${createGroup}${mine.map(myProjectHtml).join("")}
+    $("#projectsView").innerHTML = `${start}${w7SummaryHtml()}${subSummaryHtml()}${createGroup}${mine.map(myProjectHtml).join("")}
       ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : pj.can_moderate ? "Groups" : "Projects"}</h4>` : ""}
       ${others.map(pj.can_moderate ? managedProjectHtml : otherProjectHtml).join("")}
       ${!pj.projects.length ? `<p class="bc-empty">No projects yet.${pj.is_member ? " Start the first one above." : ""}</p>` : ""}
@@ -756,6 +830,11 @@
       if (act === "copy") {
         try { await navigator.clipboard.writeText(b.dataset.code); showMsg("Code copied.", true); }
         catch { showMsg(`The code is ${b.dataset.code}`, true); }
+        return;
+      }
+      if (act === "sub-rm" && !b.dataset.sure) {
+        b.dataset.sure = "1"; b.textContent = `Take off ${b.dataset.name}?`;
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "✕"; } }, 4000);
         return;
       }
       if (act === "remove" && !b.dataset.sure) {
@@ -794,6 +873,13 @@
       } else if (act === "w7-cancel") {
         if (!b.dataset.sure) { b.dataset.sure = "1"; b.disabled = false; b.textContent = "Sure? The group will be told"; return; }
         await send("DELETE", `/bootcamp/projects/${id}/checkin`); showMsg("Check-in cancelled and the group told.", true);
+      } else if (act === "sub-rm") {
+        await send("DELETE", `/bootcamp/projects/${id}/submission/files/${encodeURIComponent(b.dataset.file)}`);
+        showMsg(`${b.dataset.name} taken off the submission.`, true);
+      } else if (act === "sub-note") {
+        await send("PUT", `/bootcamp/projects/${id}/submission/note`, { note: subNote[b.dataset.id] !== undefined ? subNote[b.dataset.id]
+          : ((pj.projects.find((x) => x.id === b.dataset.id) || {}).submission || {}).note || "" });
+        delete subNote[b.dataset.id]; showMsg("Note saved.", true);
       } else if (act === "mail") {
         const d = mailDraft[b.dataset.id] || {}, off = d.off || new Set();
         const p = pj.projects.find((x) => x.id === b.dataset.id);
