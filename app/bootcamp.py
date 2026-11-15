@@ -1094,11 +1094,14 @@ async def checkin_extras(projects: Dict[str, Dict[str, Any]], uid: str, editor: 
     and the group's availability for its members and for Analysts, the
     viewer's own marks, and the Analysts' notes for Analysts alone."""
     notes: Dict[str, List[Dict[str, Any]]] = {}
+    sent: Dict[str, List[Dict[str, Any]]] = {}
     if editor and projects:
         refs = [db_module.db.collection(NOTES).document(pid) for pid in projects]
         async for snap in db_module.db.get_all(refs):
             if snap.exists:
-                notes[snap.id] = list((snap.to_dict() or {}).get("notes") or [])
+                data = snap.to_dict() or {}
+                notes[snap.id] = list(data.get("notes") or [])
+                sent[snap.id] = list(data.get("messages") or [])
     out: Dict[str, Dict[str, Any]] = {}
     for pid, p in projects.items():
         is_member = uid in (p.get("members") or [])
@@ -1110,6 +1113,7 @@ async def checkin_extras(projects: Dict[str, Dict[str, Any]], uid: str, editor: 
             extra["mine"] = list((p.get("availability") or {}).get(uid) or [])
         if editor:
             extra["notes"] = [{**n, "at": _iso(n.get("at"))} for n in notes.get(pid, [])]
+            extra["messages"] = [{**m, "at": _iso(m.get("at"))} for m in sent.get(pid, [])][-MESSAGES_SHOWN:]
         out[pid] = extra
     return out
 
@@ -1305,7 +1309,7 @@ async def add_note(project_id: str, req: NoteIn, user: User = Depends(require_ed
         note = {"id": uuid.uuid4().hex[:10], "text": text, "by": str(user.id), "by_name": await _name_of(user),
                 "at": _now()}
         notes.append(note)
-        await ref.set({"notes": notes})
+        await ref.set({"notes": notes}, merge=True)
     return {"ok": True, "note": {**note, "at": _iso(note["at"])}}
 
 
@@ -1321,5 +1325,67 @@ async def delete_note(project_id: str, note_id: str, user: User = Depends(requir
             raise HTTPException(404, "No such note")
         if mine.get("by") != str(user.id) and not user.is_admin:
             raise HTTPException(403, "Only the Analyst who wrote a note can delete it")
-        await ref.set({"notes": [n for n in notes if n.get("id") != note_id]})
+        await ref.set({"notes": [n for n in notes if n.get("id") != note_id]}, merge=True)
     return {"ok": True}
+
+
+# ── Emailing a group ─────────────────────────────────────────────────────────
+# Any Analyst can write to a group: one email with the chosen members all on
+# it and the Analyst who wrote it copied, so it's one thread anyone can
+# reply-all on (to sort out a room, say). Only that Analyst is copied; the
+# others see a line saying it was sent, in the same Analyst-only document as
+# the notes.
+MESSAGE_SUBJECT_MAX = 150
+MESSAGE_BODY_MAX = 5000
+MESSAGES_SHOWN = 10
+
+
+class GroupMessageIn(BaseModel):
+    subject: str = ""
+    body: str
+    members: Optional[List[str]] = None      # who gets it; everyone in the group if left out
+
+
+def _message_body(body: str) -> str:
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", html.escape(body)) if b.strip()]
+    return "".join(f"<p>{_linked(b).replace(chr(10), '<br>')}</p>" for b in blocks)
+
+
+@router.post("/projects/{project_id}/message")
+async def message_group(project_id: str, req: GroupMessageIn, user: User = Depends(require_editor)):
+    """One email to the members chosen, the sending Analyst on Cc."""
+    body = (req.body or "").strip()
+    if not body:
+        raise HTTPException(400, "Write the message")
+    if len(body) > MESSAGE_BODY_MAX:
+        raise HTTPException(400, f"Keep the message under {MESSAGE_BODY_MAX:,} characters")
+    _, project = await _load_project(project_id)
+    members = list(project.get("members") or [])
+    chosen = members if req.members is None else [u for u in members if u in set(req.members)]
+    if not chosen:
+        raise HTTPException(400, "Choose at least one member of the group")
+    roster = await _bootcamp()
+    people = [(roster[u]["name"], [a.strip() for a in roster[u]["to"].split(",") if a.strip()])
+              for u in chosen if u in roster and roster[u]["to"]]
+    if not people:
+        raise HTTPException(400, "None of them has an email on file")
+    me = next((a for a in await _list_reviewers() if a["id"] == str(user.id)), None)
+    cc = (me or {}).get("email") or (user.email or "")
+    name = await _name_of(user)
+    group = project.get("name") or "your group"
+    subject = " ".join((req.subject or "").split())[:MESSAGE_SUBJECT_MAX] or f"Bootcamp group: {group}"
+    to = ", ".join(a for _, addrs in people for a in addrs)
+    html_body = (f"<p>Hi {', '.join(html.escape(n.split()[0]) for n, _ in people)},</p>{_message_body(body)}"
+                 f"<p>{html.escape(name)}</p>"
+                 f'<p style="color:#555;font-size:13px;">Reply all so everyone in {html.escape(group)} sees your answer.</p>')
+    ok = await mailer.send_email(to=to, cc=cc or None, subject=subject, title="Quant Bootcamp", body_html=html_body)
+    if not ok:
+        raise HTTPException(502, "The email couldn't be sent. Try again in a minute.")
+    record = {"id": uuid.uuid4().hex[:10], "subject": subject, "by": str(user.id), "by_name": name,
+              "to": [n for n, _ in people], "at": _now()}
+    ref = db_module.db.collection(NOTES).document(project_id)
+    async with _projects_lock:
+        doc = await ref.get()
+        sent = list(((doc.to_dict() or {}).get("messages") or []) if doc.exists else [])
+        await ref.set({"messages": (sent + [record])[-50:]}, merge=True)
+    return {"ok": True, "sent_to": record["to"], "cc": cc}

@@ -235,6 +235,20 @@
     } catch (err) { showMsg(err.message, false); btn.disabled = false; }
   });
 
+  // Keep what an Analyst is writing to a group through redraws.
+  const draftOf = (id) => (mailDraft[id] = mailDraft[id] || { subject: "", body: "", off: new Set() });
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.dataset.mailSubject) draftOf(t.dataset.mailSubject).subject = t.value;
+    else if (t.dataset.mailBody) draftOf(t.dataset.mailBody).body = t.value;
+  });
+  document.addEventListener("change", (e) => {
+    const t = e.target;
+    if (!t.dataset.mailTo) return;
+    const off = draftOf(t.dataset.mailTo).off;
+    if (t.checked) off.delete(t.value); else off.add(t.value);
+  });
+
   document.addEventListener("change", async (e) => {
     const inp = e.target.closest('input[data-act="addfiles"]');
     if (!inp || !inp.files.length) return;
@@ -523,6 +537,23 @@
   // which invites the whole group. Analysts' notes on a group stay theirs.
   const w7Mine = {};                 // project id -> Set of slot ms (the member's own, while editing)
   const w7Pick = {};                 // project id -> slot ms an Analyst has picked to book
+  const mailDraft = {};              // project id -> {subject, body, off: Set of uids left off}, kept across redraws
+
+  // Analysts: one email to the group, the sender copied, so everyone can
+  // reply all on the same thread. Untick anyone it isn't for.
+  function groupMailHtml(p) {
+    if (!p.members.length) return "";
+    const d = mailDraft[p.id] || {}, off = d.off || new Set();
+    const sent = (p.week7 && p.week7.messages) || [];
+    return `<div class="bc-notes bc-mail"><div class="bc-pj-sub">Email the group</div>
+      <p class="bc-hint" style="margin:2px 0 6px;">One email with everyone ticked on it and you on Cc, so anyone can reply all, for example to sort out where to meet.</p>
+      <div class="bc-mail-to">${p.members.map((m) => `<label><input type="checkbox" data-mail-to="${esc(p.id)}" value="${esc(m.uid)}"${off.has(m.uid) ? "" : " checked"}> ${esc(m.name)}</label>`).join("")}</div>
+      <input class="msp-input" data-mail-subject="${esc(p.id)}" maxlength="150" placeholder="Subject (default: Bootcamp group: ${esc(p.name)})" aria-label="Subject" value="${esc(d.subject || "")}">
+      <textarea class="msp-input" data-mail-body="${esc(p.id)}" maxlength="5000" rows="4" placeholder="Your message" aria-label="Message">${esc(d.body || "")}</textarea>
+      <div class="bc-w7-book"><button class="btn primary" data-pj="mail" data-id="${esc(p.id)}">Send email</button></div>
+      ${sent.length ? `<div class="bc-mail-sent">${sent.slice().reverse().map((m) => `<div class="bc-meta">${esc(when(m.at))} · ${esc(m.by_name)}: “${esc(m.subject)}” to ${esc((m.to || []).join(", "))}</div>`).join("")}</div>` : ""}
+    </div>`;
+  }
   let w7SaveTimer = null;
   const ms = (iso) => Date.parse(iso);
 
@@ -591,7 +622,6 @@
         <span class="bc-meta">${picked ? `Picked: ${esc(new Date(picked).toLocaleString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}` : "Pick a slot above"}</span>
         <select class="msp-input" id="w7Analyst-${esc(p.id)}" aria-label="Analyst taking the check-in">${(pj.analysts || []).map((a) =>
           `<option value="${esc(a.id)}"${(b ? b.analyst_id : me) === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>
-        <input class="msp-input" id="w7Msg-${esc(p.id)}" maxlength="1000" placeholder="Note for the group (optional)" aria-label="Note for the group">
         <button class="btn primary" data-pj="w7-book" data-id="${esc(p.id)}" ${picked && p.members.length ? "" : "disabled"}>${b ? "Move check-in" : "Book check-in"}</button>
         ${b ? `<button class="btn ghost" data-pj="w7-cancel" data-id="${esc(p.id)}">Cancel check-in</button>` : ""}
       </div>
@@ -655,6 +685,7 @@
           </span></div>`).join("") || '<p class="bc-empty" style="margin:8px 0;">Nobody yet.</p>'}</div>
       ${(pj.undecided || []).length ? `<select class="msp-input bc-pj-select bc-pj-add" data-pj-add="${esc(p.id)}" aria-label="Add someone to ${esc(p.name)}">
           <option value="">Add someone not in a group…</option>${pj.undecided.map((u) => `<option value="${esc(u.uid)}">${esc(u.name)}</option>`).join("")}</select>` : ""}
+      ${groupMailHtml(p)}
       ${w7AnalystHtml(p)}
       <div class="bc-pj-actions">
         ${edit ? "" : `<button class="btn ghost" data-pj="edit" data-id="${esc(p.id)}">Edit name and description</button>`}
@@ -757,13 +788,21 @@
         await send("DELETE", `/bootcamp/projects/${id}`); showMsg("Removed.", true);
       } else if (act === "w7-book") {
         const d = await send("POST", `/bootcamp/projects/${id}/checkin`, {
-          when: new Date(w7Pick[b.dataset.id]).toISOString(), analyst_id: $(`#w7Analyst-${CSS.escape(b.dataset.id)}`).value,
-          message: $(`#w7Msg-${CSS.escape(b.dataset.id)}`).value });
+          when: new Date(w7Pick[b.dataset.id]).toISOString(), analyst_id: $(`#w7Analyst-${CSS.escape(b.dataset.id)}`).value });
         delete w7Pick[b.dataset.id];
         showMsg(`Booked for ${d.checkin.label}.${d.emailed ? " The group and the Analyst have their invites." : " (The invite email couldn't be sent.)"}`, d.emailed);
       } else if (act === "w7-cancel") {
         if (!b.dataset.sure) { b.dataset.sure = "1"; b.disabled = false; b.textContent = "Sure? The group will be told"; return; }
         await send("DELETE", `/bootcamp/projects/${id}/checkin`); showMsg("Check-in cancelled and the group told.", true);
+      } else if (act === "mail") {
+        const d = mailDraft[b.dataset.id] || {}, off = d.off || new Set();
+        const p = pj.projects.find((x) => x.id === b.dataset.id);
+        const to = p.members.map((m) => m.uid).filter((u) => !off.has(u));
+        if (!to.length) { showMsg("Tick at least one member.", false); b.disabled = false; return; }
+        if (!(d.body || "").trim()) { showMsg("Write the message first.", false); b.disabled = false; return; }
+        const r = await send("POST", `/bootcamp/projects/${id}/message`, { subject: d.subject || "", body: d.body, members: to });
+        delete mailDraft[b.dataset.id];
+        showMsg(`Sent to ${r.sent_to.join(", ")}${r.cc ? `, with you (${r.cc}) on Cc` : ""}.`, true);
       } else if (act === "note-add") {
         await send("POST", `/bootcamp/projects/${id}/notes`, { text: $(`#w7Note-${CSS.escape(b.dataset.id)}`).value });
       } else if (act === "note-del") {

@@ -180,6 +180,11 @@
     .bc-notes { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 8px; }
     .bc-note { font-size: 13.5px; padding: 6px 0; border-bottom: 1px solid var(--border); white-space: pre-wrap; }
     .bc-note:last-child { border-bottom: 0; }
+    .bc-mail .msp-input { display: block; width: 100%; box-sizing: border-box; margin: 6px 0; font-size: 13.5px; font-family: inherit; }
+    .bc-mail-to { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; }
+    .bc-mail-to label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+    .bc-mail-sent { margin-top: 8px; }
+    .bc-mail-sent .bc-meta { display: block; margin-top: 2px; }
     .bc-note .bc-meta { display: block; margin-top: 2px; }
     .bc-checkins td, .bc-checkins th { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13.5px; }
     .bc-checkins th { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
@@ -262,7 +267,7 @@
   </div>
 
   <script src="/static/availability.js?v=3"></script>
-  <script src="/static/bootcamp.js?v=10"></script>
+  <script src="/static/bootcamp.js?v=11"></script>
 </body>
 
 </html>

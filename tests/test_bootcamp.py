@@ -39,8 +39,8 @@ class _Ref:
     async def get(self):
         return _Doc(self._store, self.id)
 
-    async def set(self, data):
-        self._store[self.id] = dict(data)
+    async def set(self, data, merge=False):
+        self._store[self.id] = {**(self._store.get(self.id) or {}), **data} if merge else dict(data)
 
     async def update(self, patch):
         self._store[self.id].update(patch)
@@ -938,6 +938,35 @@ class TestWeek7:
             run(bc.delete_note(gid, notes[0]["id"], hao))                  # only its author
         run(bc.delete_note(gid, notes[0]["id"], ANALYST))
         assert _w7(hao, gid)["notes"] == []
+
+    def test_emailing_the_group_is_one_email_with_the_sender_copied(self, week7, campers):
+        gid = week7["gid"]
+        campers.collections["users"]["an2"] = {"username": "hao", "full_name": "Hao Li", "membership": mb.M_QUANT_ANALYST,
+                                               "email": "hao@ox.ac.uk"}
+        bc._analysts_cache.clear()
+        hao = User(id="an2", username="hao", email="hao@ox.ac.uk")
+        out = run(bc.message_group(gid, bc.GroupMessageIn(body="Room 2 at 3pm?\n\nReply all."), hao))
+        mail = week7["sent"][-1]
+        assert len(week7["sent"]) == 1                                      # one email, not one each
+        assert "amy@ox.ac.uk" in mail["to"] and "ben@ox.ac.uk" in mail["to"]
+        assert mail["cc"] == "hao@ox.ac.uk"                                 # only the Analyst who wrote it
+        assert "Room 2 at 3pm?" in mail["body"] and mail["subject"] == "Bootcamp group: Group 1"
+        assert out["sent_to"] == ["Amy", "Ben Ng"]
+        log = _w7(ANALYST, gid)["messages"]                                 # every Analyst sees it went
+        assert [m["by_name"] for m in log] == ["Hao Li"] and "messages" not in _w7(CAMPER, gid)
+
+    def test_emailing_only_the_members_ticked(self, week7):
+        gid = week7["gid"]
+        run(bc.add_note(gid, bc.NoteIn(text="keep me"), ANALYST))
+        run(bc.message_group(gid, bc.GroupMessageIn(subject="Just you", body="Hi", members=["bc2", "outsider"]), ANALYST))
+        mail = week7["sent"][-1]
+        assert "ben@ox.ac.uk" in mail["to"] and "amy" not in mail["to"] and mail["subject"] == "Just you"
+        assert [n["text"] for n in _w7(ANALYST, gid)["notes"]] == ["keep me"]   # the log doesn't wipe the notes
+        for bad in (bc.GroupMessageIn(body="  "), bc.GroupMessageIn(body="Hi", members=["outsider"])):
+            with pytest.raises(HTTPException):
+                run(bc.message_group(gid, bad, ANALYST))
+        with pytest.raises(HTTPException):
+            run(bc.require_editor(CAMPER))
 
     def test_analysts_get_the_list_of_analysts_without_a_scan(self, week7, campers):
         out = _projects(ANALYST)
