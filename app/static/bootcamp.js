@@ -489,6 +489,7 @@
         <div class="bc-pj-req"><div><strong>${esc(r.name)}</strong> · <a href="mailto:${esc(r.email)}">${esc(r.email)}</a></div>
           <button class="btn primary" data-pj="accept" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Accept</button>
           <button class="btn ghost" data-pj="decline" data-id="${esc(p.id)}" data-uid="${esc(r.uid)}">Decline</button></div>`).join("")}` : ""}
+      ${w7MemberHtml(p)}
       <div class="bc-pj-sub">Members</div>${memberRows(p)}
       ${pjLeaving === p.id ? `<div class="bc-pj-confirm"><span>Leave <strong>${esc(p.name)}</strong>?
           ${p.members.length === 1 ? "You're the only member, so the project will be removed." : p.is_owner ? "The longest-standing member will take over running it." : "You'll need the code or a new request to rejoin."}</span>
@@ -513,6 +514,107 @@
         ${pj.can_moderate ? `<button class="btn ghost" data-pj="remove" data-id="${esc(p.id)}">Remove project</button>` : ""}
       </div>
     </article>`;
+  }
+
+  // ── Week 7 check-ins ──────────────────────────────────────────────────────
+  // Members mark when they're free (the interview grid, for 22–28 Nov);
+  // everyone in the group sees how many of them are free in each slot. An
+  // Analyst picks a slot and books a 30-minute check-in with one Analyst,
+  // which invites the whole group. Analysts' notes on a group stay theirs.
+  const w7Mine = {};                 // project id -> Set of slot ms (the member's own, while editing)
+  const w7Pick = {};                 // project id -> slot ms an Analyst has picked to book
+  let w7SaveTimer = null;
+  const ms = (iso) => Date.parse(iso);
+
+  function w7Counts(p) {
+    const counts = new Map();
+    for (const [key, names] of Object.entries(p.week7.availability.who || {})) counts.set(ms(key), names);
+    return counts;
+  }
+
+  function w7Grid(p, mode) {
+    const days = window.AlphaAvailability.buildDays(window.AlphaAvailability.GROUP_WINDOW);
+    if (!days.length) return '<p class="bc-empty">Week 7 has passed.</p>';
+    const counts = w7Counts(p), size = p.week7.availability.size || 1;
+    const mine = w7Mine[p.id], picked = w7Pick[p.id];
+    let html = '<div class="aval-wrap"><table class="aval-grid"><thead><tr><th class="aval-daylabel">Day</th>';
+    days[0].slots.forEach((sl) => { html += `<th>${esc(sl.label)}</th>`; });
+    html += "</tr></thead><tbody>";
+    for (const day of days) {
+      html += `<tr><td class="aval-daylabel">${esc(day.label)}</td>`;
+      for (const sl of day.slots) {
+        const names = counts.get(sl.ts) || [];
+        const n = names.length;
+        const heat = n ? `background: rgba(27, 117, 188, ${0.12 + 0.6 * n / size});` : "";
+        const cls = [mode === "member" && mine && mine.has(sl.ts) ? "is-selected" : "",
+                     n && n === size && size > 1 ? "is-all" : "", picked === sl.ts ? "is-picked" : ""].join(" ");
+        const tip = `${day.label}, ${sl.label}${n ? ` · free: ${names.join(", ")}` : ""}`;
+        html += `<td><button type="button" class="aval-cell-btn ${cls}" data-w7="${mode}" data-id="${esc(p.id)}" data-ts="${sl.ts}"
+          style="${mode === "member" && mine && mine.has(sl.ts) ? "" : heat}" title="${esc(tip)}" aria-label="${esc(tip)}">${n ? n : ""}</button></td>`;
+      }
+      html += "</tr>";
+    }
+    return html + "</tbody></table></div>";
+  }
+
+  function w7Status(p) {
+    const a = p.week7.availability;
+    return `${a.filled.length} of ${a.size} have marked their times${a.missing.length ? ` · waiting on ${esc(a.missing.join(", "))}` : ""}`;
+  }
+
+  function w7Booked(b) {
+    return `<div class="bc-w7-booked"><strong>Check-in booked: ${esc(b.label)}</strong> (30 min) with ${esc(b.analyst_name)}
+      ${b.meet_link ? `<br>Google Meet: <a href="${esc(b.meet_link)}" target="_blank" rel="noopener">${esc(b.meet_link)}</a>` : ""}
+      ${b.message ? `<br><span class="msp-muted">“${esc(b.message)}”</span>` : ""}</div>`;
+  }
+
+  function w7MemberHtml(p) {
+    if (!p.week7) return "";
+    if (!w7Mine[p.id]) w7Mine[p.id] = new Set((p.week7.mine || []).map(ms));
+    const b = p.week7.booked;
+    return `<div class="bc-w7"><div class="bc-pj-sub">Week 7 check-in · 22–28 November</div>
+      ${b ? w7Booked(b) : `<p class="bc-hint">Click the half hours you're free (London time). The number in each slot is how many
+        of your group are free then; an Analyst picks one and the whole group gets an invite. <span id="w7Saved-${esc(p.id)}"></span></p>
+        ${w7Grid(p, "member")}<div class="bc-w7-key">${w7Status(p)} · green: you · outlined: everyone free</div>`}</div>`;
+  }
+
+  function w7AnalystHtml(p) {
+    if (!p.week7) return "";
+    const b = p.week7.booked, picked = w7Pick[p.id];
+    const me = (pj.analysts || []).some((a) => a.id === pj.me) ? pj.me : "";
+    const notes = p.week7.notes || [];
+    return `<div class="bc-w7"><div class="bc-pj-sub">Week 7 check-in · 22–28 November</div>
+      ${b ? w7Booked(b) : ""}
+      <div class="bc-w7-key">${w7Status(p)}. Numbers are how many are free; outlined: the whole group. Click a slot to pick it.</div>
+      ${w7Grid(p, "analyst")}
+      <div class="bc-w7-book">
+        <span class="bc-meta">${picked ? `Picked: ${esc(new Date(picked).toLocaleString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}` : "Pick a slot above"}</span>
+        <select class="msp-input" id="w7Analyst-${esc(p.id)}" aria-label="Analyst taking the check-in">${(pj.analysts || []).map((a) =>
+          `<option value="${esc(a.id)}"${(b ? b.analyst_id : me) === a.id ? " selected" : ""}>${esc(a.name)}</option>`).join("")}</select>
+        <input class="msp-input" id="w7Msg-${esc(p.id)}" maxlength="1000" placeholder="Note for the group (optional)" aria-label="Note for the group">
+        <button class="btn primary" data-pj="w7-book" data-id="${esc(p.id)}" ${picked && p.members.length ? "" : "disabled"}>${b ? "Move check-in" : "Book check-in"}</button>
+        ${b ? `<button class="btn ghost" data-pj="w7-cancel" data-id="${esc(p.id)}">Cancel check-in</button>` : ""}
+      </div>
+      <div class="bc-notes"><div class="bc-pj-sub">Analyst notes · only Analysts see these</div>
+        ${notes.map((n) => `<div class="bc-note">${linkify(n.text)}<span class="bc-meta">${esc(n.by_name)} · ${esc(when(n.at))}
+          ${n.by === pj.me ? ` · <a href="#" data-pj="note-del" data-id="${esc(p.id)}" data-note="${esc(n.id)}">delete</a>` : ""}</span></div>`).join("")
+          || '<p class="bc-empty" style="margin:4px 0;">No notes yet.</p>'}
+        <div class="bc-w7-book"><input class="msp-input" id="w7Note-${esc(p.id)}" maxlength="2000" placeholder="Add a note on this group" aria-label="Add a note">
+          <button class="btn ghost" data-pj="note-add" data-id="${esc(p.id)}">Add note</button></div>
+      </div></div>`;
+  }
+
+  // Analysts: every booked check-in in one place, soonest first.
+  function w7SummaryHtml() {
+    if (!pj.can_moderate || !pj.projects.length) return "";
+    const booked = pj.projects.filter((p) => p.week7 && p.week7.booked).sort((a, b) => a.week7.booked.when.localeCompare(b.week7.booked.when));
+    const waiting = pj.projects.filter((p) => p.week7 && !p.week7.booked && p.members.length);
+    return `<div class="card" style="padding:14px 18px;margin-bottom:18px;"><h3 style="margin:0 0 6px;">Week 7 check-ins</h3>
+      ${booked.length ? `<table class="bc-checkins" style="width:100%;border-collapse:collapse;"><thead><tr><th>When</th><th>Group</th><th>With</th><th>Meet</th></tr></thead><tbody>
+        ${booked.map((p) => { const b = p.week7.booked; return `<tr class="${b.analyst_id === pj.me ? "is-mine" : ""}"><td>${esc(b.label)}</td><td>${esc(p.name)}</td>
+          <td>${esc(b.analyst_name)}${b.analyst_id === pj.me ? " (you)" : ""}</td><td>${b.meet_link ? `<a href="${esc(b.meet_link)}" target="_blank" rel="noopener">join</a>` : "—"}</td></tr>`; }).join("")}
+        </tbody></table>` : '<p class="bc-empty" style="margin:0;">None booked yet.</p>'}
+      ${waiting.length ? `<p class="bc-hint" style="margin-top:8px;">Not booked yet: ${waiting.map((p) => esc(p.name)).join(", ")}</p>` : ""}</div>`;
   }
 
   // Analysts organising the groups: everything the person running a group
@@ -553,6 +655,7 @@
           </span></div>`).join("") || '<p class="bc-empty" style="margin:8px 0;">Nobody yet.</p>'}</div>
       ${(pj.undecided || []).length ? `<select class="msp-input bc-pj-select bc-pj-add" data-pj-add="${esc(p.id)}" aria-label="Add someone to ${esc(p.name)}">
           <option value="">Add someone not in a group…</option>${pj.undecided.map((u) => `<option value="${esc(u.uid)}">${esc(u.name)}</option>`).join("")}</select>` : ""}
+      ${w7AnalystHtml(p)}
       <div class="bc-pj-actions">
         ${edit ? "" : `<button class="btn ghost" data-pj="edit" data-id="${esc(p.id)}">Edit name and description</button>`}
         <button class="btn ghost" data-pj="remove" data-id="${esc(p.id)}">Remove group</button>
@@ -591,7 +694,7 @@
         <input class="msp-input" id="pjGroupName" maxlength="80" placeholder="Group name, e.g. Group 1: Momentum signals" aria-label="Group name">
         <textarea class="msp-input" id="pjGroupDesc" maxlength="2000" placeholder="What the group is working on (optional)" aria-label="Description"></textarea>
         <div class="bc-actions"><button class="btn primary" data-pj="create-group">Create group</button></div></div>` : "";
-    $("#projectsView").innerHTML = `${start}${createGroup}${mine.map(myProjectHtml).join("")}
+    $("#projectsView").innerHTML = `${start}${w7SummaryHtml()}${createGroup}${mine.map(myProjectHtml).join("")}
       ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : pj.can_moderate ? "Groups" : "Projects"}</h4>` : ""}
       ${others.map(pj.can_moderate ? managedProjectHtml : otherProjectHtml).join("")}
       ${!pj.projects.length ? `<p class="bc-empty">No projects yet.${pj.is_member ? " Start the first one above." : ""}</p>` : ""}
@@ -652,6 +755,20 @@
         pjLeaving = null; showMsg(d.removed ? "You've left, and the project has been removed." : "You've left the project.", true);
       } else if (act === "remove") {
         await send("DELETE", `/bootcamp/projects/${id}`); showMsg("Removed.", true);
+      } else if (act === "w7-book") {
+        const d = await send("POST", `/bootcamp/projects/${id}/checkin`, {
+          when: new Date(w7Pick[b.dataset.id]).toISOString(), analyst_id: $(`#w7Analyst-${CSS.escape(b.dataset.id)}`).value,
+          message: $(`#w7Msg-${CSS.escape(b.dataset.id)}`).value });
+        delete w7Pick[b.dataset.id];
+        showMsg(`Booked for ${d.checkin.label}.${d.emailed ? " The group and the Analyst have their invites." : " (The invite email couldn't be sent.)"}`, d.emailed);
+      } else if (act === "w7-cancel") {
+        if (!b.dataset.sure) { b.dataset.sure = "1"; b.disabled = false; b.textContent = "Sure? The group will be told"; return; }
+        await send("DELETE", `/bootcamp/projects/${id}/checkin`); showMsg("Check-in cancelled and the group told.", true);
+      } else if (act === "note-add") {
+        await send("POST", `/bootcamp/projects/${id}/notes`, { text: $(`#w7Note-${CSS.escape(b.dataset.id)}`).value });
+      } else if (act === "note-del") {
+        e.preventDefault();
+        await send("DELETE", `/bootcamp/projects/${id}/notes/${encodeURIComponent(b.dataset.note)}`);
       } else if (act === "create-group") {
         await send("POST", "/bootcamp/projects/groups", { name: $("#pjGroupName").value, description: $("#pjGroupDesc").value });
         showMsg("Group created. Add people to it below.", true);
@@ -663,6 +780,40 @@
       }
       await loadProjects();
     } catch (err) { showMsg(err.message, false); b.disabled = false; }
+  });
+
+  // Week-7 grid clicks: a member toggles their own half hours (saved a
+  // moment later); an Analyst picks the slot to book.
+  document.addEventListener("click", (e) => {
+    const cell = e.target.closest("[data-w7]");
+    if (!cell || !pj) return;
+    const id = cell.dataset.id, ts = Number(cell.dataset.ts);
+    const p = pj.projects.find((x) => x.id === id);
+    if (!p) return;
+    if (cell.dataset.w7 === "analyst") {
+      w7Pick[id] = w7Pick[id] === ts ? undefined : ts;
+      drawProjects();
+      return;
+    }
+    const mine = w7Mine[id];
+    if (mine.has(ts)) mine.delete(ts); else mine.add(ts);
+    // Show the change straight away, counts included, then save.
+    const who = p.week7.availability.who, key = Object.keys(who).find((k) => ms(k) === ts) || new Date(ts).toISOString();
+    const myName = (p.members.find((m) => m.uid === pj.me) || {}).name || "you";
+    who[key] = (who[key] || []).filter((n) => n !== myName).concat(mine.has(ts) ? [myName] : []);
+    const filled = p.week7.availability.filled, missing = p.week7.availability.missing;
+    if (mine.size && !filled.includes(myName)) { filled.push(myName); missing.splice(missing.indexOf(myName), 1); }
+    drawProjects();
+    const note = $(`#w7Saved-${CSS.escape(id)}`);
+    if (note) note.textContent = "Saving…";
+    clearTimeout(w7SaveTimer);
+    w7SaveTimer = setTimeout(async () => {
+      try {
+        await send("PUT", `/bootcamp/projects/${encodeURIComponent(id)}/availability`,
+          { slots: [...mine].sort((a, b) => a - b).map((t) => new Date(t).toISOString()) });
+        const n = $(`#w7Saved-${CSS.escape(id)}`); if (n) n.textContent = "Saved.";
+      } catch (err) { showMsg(err.message, false); }
+    }, 600);
   });
 
   // Analysts' menus: put someone in a group (moving them out of any other),

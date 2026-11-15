@@ -70,13 +70,21 @@ window.AlphaAvailability = (function () {
     return new Date(utcMs).toLocaleDateString("en-GB", { timeZone: TZ, weekday: "short", month: "short", day: "numeric" });
   }
 
-  // Returns an array of days (today, floored at WINDOW_START, through
-  // WINDOW_END) — each { label, slots: [{ ts, key, label }] }.
-  function buildDays() {
-    const start = cmp(londonToday(), WINDOW_START) > 0 ? londonToday() : WINDOW_START;
+  // The Bootcamp's week-7 group check-ins (Sun 22 – Sat 28 November), same
+  // hours and half hours. Keep in step with CHECKIN_FIRST_DAY/LAST_DAY in
+  // app/bootcamp.py.
+  const GROUP_WINDOW = { start: { y: 2026, m: 11, d: 22 }, end: { y: 2026, m: 11, d: 28 } };
+
+  // Returns an array of days (today, floored at the window's start, through
+  // its end) — each { label, slots: [{ ts, key, label }] }. The interview
+  // window unless another { start, end } is given.
+  function buildDays(window) {
+    const first = (window && window.start) || WINDOW_START;
+    const last = (window && window.end) || WINDOW_END;
+    const start = cmp(londonToday(), first) > 0 ? londonToday() : first;
     const days = [];
     let cur = start;
-    while (cmp(cur, WINDOW_END) <= 0) {
+    while (cmp(cur, last) <= 0) {
       const slots = [];
       for (let h = START_HOUR; h <= END_HOUR; h++) {
         for (let m = 0; m < 60; m += SLOT_MINUTES) {
@@ -90,5 +98,5 @@ window.AlphaAvailability = (function () {
     return days;
   }
 
-  return { buildDays };
+  return { buildDays, GROUP_WINDOW };
 })();

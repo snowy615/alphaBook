@@ -826,3 +826,121 @@ class TestAnalystGroups:
         assert p["name"] == "Renamed by an Analyst" and [m["uid"] for m in p["members"]] == ["bc1", "bc2"]
         with pytest.raises(HTTPException):
             run(bc.update_project(own, bc.ProjectIn(name="Not mine"), BEN))   # an ordinary member still can't
+
+
+# ── Week 7 group check-ins ──────────────────────────────────────────────────
+
+SUN_9 = "2026-11-22T09:00:00Z"          # 9am London (GMT in November)
+SUN_930 = "2026-11-22T09:30:00Z"
+
+
+@pytest.fixture
+def week7(campers, monkeypatch):
+    sent, events, deleted = [], [], []
+
+    async def fake_send(to, subject, title, body_html, cta_label=None, cta_url=None, ics=None, cc=None, **_):
+        sent.append({"to": to, "cc": cc, "subject": subject, "body": body_html, "ics": ics})
+        return True
+
+    async def fake_event(**kw):
+        events.append(kw)
+        return {"event_id": f"ev{len(events)}", "meet_link": "https://meet.google.com/abc", "ical_uid": f"uid{len(events)}",
+                "organizer_email": "admin@alphabook.uk", "sequence": 0}
+
+    async def fake_delete(event_id):
+        deleted.append(event_id)
+        return True
+    monkeypatch.setattr(bc.mailer, "send_email", fake_send)
+    monkeypatch.setattr(bc.gcal, "create_meet_event", fake_event)
+    monkeypatch.setattr(bc.gcal, "delete_event", fake_delete)
+    campers.collections["users"]["an1"]["email"] = "warren@ox.ac.uk"
+    campers.collections["users"]["bc1"]["email"] = "amy@gmail.com"
+    bc._analysts_cache.clear()
+    gid = run(bc.create_group(bc.ProjectIn(name="Group 1"), ANALYST))["id"]
+    for uid in ("bc1", "bc2"):
+        run(bc.assign_member(gid, bc.AssignIn(uid=uid), ANALYST))
+    return {"gid": gid, "sent": sent, "events": events, "deleted": deleted}
+
+
+def _w7(viewer, gid):
+    return next(p for p in _projects(viewer)["projects"] if p["id"] == gid).get("week7")
+
+
+class TestWeek7:
+    def test_slots_must_be_week_7_half_hours_in_the_day(self):
+        assert bc.checkin_slot(SUN_9).hour == 9
+        for bad in ("2026-11-21T09:00:00Z", "2026-11-29T09:00:00Z", "2026-11-22T09:15:00Z",
+                    "2026-11-22T06:30:00Z", "2026-11-22T19:00:00Z", "2026-11-22T09:00:00"):
+            with pytest.raises(ValueError):
+                bc.checkin_slot(bad)
+
+    def test_members_mark_their_own_times_and_see_the_group_overlap(self, week7):
+        gid = week7["gid"]
+        run(bc.set_availability(gid, bc.AvailabilityIn(slots=[SUN_9, SUN_930]), CAMPER))
+        run(bc.set_availability(gid, bc.AvailabilityIn(slots=[SUN_9]), BEN))
+        mine = _w7(CAMPER, gid)
+        assert mine["mine"] == [SUN_9, SUN_930]
+        assert mine["availability"]["who"][SUN_9] == ["Amy", "Ben Ng"] and mine["availability"]["missing"] == []
+        assert "notes" not in mine                                          # members never see the notes
+
+    def test_only_the_groups_own_members_can_mark(self, week7):
+        with pytest.raises(HTTPException) as exc:
+            run(bc.set_availability(week7["gid"], bc.AvailabilityIn(slots=[SUN_9]), CY))
+        assert exc.value.status_code == 403
+        with pytest.raises(HTTPException):
+            run(bc.set_availability(week7["gid"], bc.AvailabilityIn(slots=["2026-11-30T09:00:00Z"]), CAMPER))
+
+    def test_others_dont_see_a_groups_week_7(self, week7):
+        assert _w7(CY, week7["gid"]) is None
+
+    def test_booking_invites_the_whole_group_and_the_analyst(self, week7):
+        gid = week7["gid"]
+        out = run(bc.book_checkin(gid, bc.CheckinIn(when=SUN_9, analyst_id="an1", message="Bring your plan"), ANALYST))
+        assert out["emailed"] and out["checkin"]["analyst_name"] == "Warren Jin"
+        ev = week7["events"][-1]
+        assert set(ev["attendee_emails"]) >= {"amy@ox.ac.uk", "ben@ox.ac.uk", "warren@ox.ac.uk"}
+        assert (ev["end"] - ev["start"]).total_seconds() == 30 * 60
+        mail = week7["sent"][-1]
+        assert "amy@ox.ac.uk" in mail["to"] and "ben@ox.ac.uk" in mail["to"] and mail["cc"] == "warren@ox.ac.uk"
+        assert b"BEGIN:VCALENDAR" in mail["ics"] and "Bring your plan" in mail["body"]
+        booked = _w7(BEN, gid)["booked"]
+        assert booked["meet_link"] == "https://meet.google.com/abc" and booked["when"] == SUN_9
+
+    def test_moving_replaces_the_old_event(self, week7):
+        gid = week7["gid"]
+        run(bc.book_checkin(gid, bc.CheckinIn(when=SUN_9, analyst_id="an1"), ANALYST))
+        run(bc.book_checkin(gid, bc.CheckinIn(when=SUN_930, analyst_id="an1"), ANALYST))
+        assert week7["deleted"] == ["ev1"] and "moved to" in week7["sent"][-1]["subject"]
+
+    def test_cancelling_tells_the_group(self, week7):
+        gid = week7["gid"]
+        run(bc.book_checkin(gid, bc.CheckinIn(when=SUN_9, analyst_id="an1"), ANALYST))
+        run(bc.cancel_checkin(gid, ANALYST))
+        assert _w7(CAMPER, gid)["booked"] is None and "cancelled" in week7["sent"][-1]["subject"]
+
+    def test_only_analysts_book_and_a_real_analyst_takes_it(self, week7):
+        with pytest.raises(HTTPException):
+            run(bc.require_editor(CAMPER))
+        with pytest.raises(HTTPException) as exc:
+            run(bc.book_checkin(week7["gid"], bc.CheckinIn(when=SUN_9, analyst_id="bc1"), ANALYST))
+        assert "Analyst" in exc.value.detail
+
+    def test_notes_are_shared_between_analysts_and_hidden_from_members(self, week7, campers):
+        gid = week7["gid"]
+        run(bc.add_note(gid, bc.NoteIn(text="Strong on data, weak on the write-up"), ANALYST))
+        campers.collections["users"]["an2"] = {"username": "hao", "full_name": "Hao", "membership": mb.M_QUANT_ANALYST,
+                                               "email": "hao@ox.ac.uk"}
+        hao = User(id="an2", username="hao")
+        notes = _w7(hao, gid)["notes"]
+        assert [n["text"] for n in notes] == ["Strong on data, weak on the write-up"] and notes[0]["by_name"] == "Warren Jin"
+        assert "notes" not in _w7(CAMPER, gid)
+        with pytest.raises(HTTPException):
+            run(bc.delete_note(gid, notes[0]["id"], hao))                  # only its author
+        run(bc.delete_note(gid, notes[0]["id"], ANALYST))
+        assert _w7(hao, gid)["notes"] == []
+
+    def test_analysts_get_the_list_of_analysts_without_a_scan(self, week7, campers):
+        out = _projects(ANALYST)
+        assert [a["name"] for a in out["analysts"]] == ["Warren Jin"]
+        assert not {c.name for c in campers.scans} & {"users", "applications"}
+        assert _projects(CAMPER)["analysts"] == []

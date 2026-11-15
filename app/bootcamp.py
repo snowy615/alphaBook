@@ -44,7 +44,7 @@ import string
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
@@ -55,9 +55,12 @@ from google.cloud.firestore_v1.base_query import FieldFilter
 from pydantic import BaseModel
 
 from app import db as db_module
+from app import gcal
 from app import mailer
 from app import membership as mb
-from app.applications import BASE_URL, COLLECTION as APPLICATIONS, bootcamp_schedule
+from app.applications import (
+    BASE_URL, COLLECTION as APPLICATIONS, LONDON_TZ, _fmt_when, _meet_block, bootcamp_schedule,
+)
 from app.auth import ALGORITHM, SECRET_KEY, current_user
 from app.models import User
 
@@ -810,8 +813,16 @@ async def list_projects(user: User = Depends(require_reader)):
     # looking for a group (or for teammates) can find each other.
     placed = {u for p in projects.values() for u in p.get("members") or []}
     undecided = sorted(({"uid": u, **who(u)} for u in roster if u not in placed), key=lambda m: m["name"].lower())
-    return {"projects": out, "is_member": access == ACCESS_READER, "can_moderate": access == ACCESS_EDITOR,
-            "in_project": any(v["is_member"] for v in out), "undecided": undecided, "me": uid}
+    editor = access == ACCESS_EDITOR
+    extras = await checkin_extras(projects, uid, editor, roster)
+    for view in out:
+        if view["id"] in extras:
+            view["week7"] = extras[view["id"]]
+    return {"projects": out, "is_member": access == ACCESS_READER, "can_moderate": editor,
+            "in_project": any(v["is_member"] for v in out), "undecided": undecided, "me": uid,
+            "analysts": [{"id": a["id"], "name": a["name"]} for a in await _list_reviewers()] if editor else [],
+            "week7": {"first_day": CHECKIN_FIRST_DAY.isoformat(), "last_day": CHECKIN_LAST_DAY.isoformat(),
+                      "minutes": CHECKIN_MINUTES}}
 
 
 class ProjectIn(BaseModel):
@@ -942,9 +953,12 @@ async def leave_project(project_id: str, user: User = Depends(require_member)):
 
 @router.delete("/projects/{project_id}")
 async def remove_project(project_id: str, user: User = Depends(require_editor)):
-    """Analysts can take a project down (say it was a test, or abandoned)."""
-    ref, _ = await _load_project(project_id)
+    """Analysts can take a project down (say it was a test, or abandoned).
+    Its check-in comes off the calendar and its notes go with it."""
+    ref, project = await _load_project(project_id)
+    await _drop_calendar_event(project.get("checkin") or {})
     await ref.delete()
+    await db_module.db.collection(NOTES).document(project_id).delete()
     return {"ok": True}
 
 
@@ -1011,4 +1025,301 @@ async def make_lead(project_id: str, req: AssignIn, user: User = Depends(require
         if req.uid not in (project.get("members") or []):
             raise HTTPException(400, "Only someone in the group can lead it")
         await ref.update({"owner": req.uid})
+    return {"ok": True}
+
+
+# ── Week 7 group check-ins ───────────────────────────────────────────────────
+# Each member of a group marks when they're free in week 7 on the same kind
+# of grid as the interviews (London half hours, 7am to 7pm). The group sees
+# how many of them are free in each slot; an Analyst picks one and books a
+# 30-minute check-in with one Analyst. That makes a Google Meet on the
+# Alpha Fund calendar with every member and the Analyst as guests, and one
+# email to the whole group with the Analyst copied in, invite attached.
+# Analysts keep notes on each group, shared between them and never shown to
+# the members: they're stored apart from the group, so no member's view of
+# it can ever carry them.
+
+CHECKIN_FIRST_DAY = dt.date(2026, 11, 22)       # keep in step with GROUP_WINDOW in availability.js
+CHECKIN_LAST_DAY = dt.date(2026, 11, 28)
+CHECKIN_FIRST_HOUR, CHECKIN_LAST_HOUR = 7, 18   # London; the last slot starts 18:30
+CHECKIN_MINUTES = 30
+NOTES = "bootcamp_group_notes"
+NOTE_MAX = 2000
+
+
+def checkin_slot(raw: Any) -> dt.datetime:
+    """One half-hour slot in the week-7 window, as UTC; ValueError otherwise."""
+    when = raw if isinstance(raw, dt.datetime) else dt.datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+    if when.tzinfo is None:
+        raise ValueError("a slot needs a timezone")
+    local = when.astimezone(LONDON_TZ)
+    if not CHECKIN_FIRST_DAY <= local.date() <= CHECKIN_LAST_DAY:
+        raise ValueError("outside week 7")
+    if not CHECKIN_FIRST_HOUR <= local.hour <= CHECKIN_LAST_HOUR or local.minute not in (0, 30) or local.second:
+        raise ValueError("not a half-hour slot between 7am and 7pm")
+    return when.astimezone(dt.timezone.utc).replace(microsecond=0)
+
+
+def _slot_key(when: dt.datetime) -> str:
+    return when.strftime("%Y-%m-%dT%H:%M:00Z")
+
+
+def _availability_view(project: Dict[str, Any], roster: Dict[str, Dict[str, str]]) -> Dict[str, Any]:
+    """How many of the group are free in each slot, and who: members only
+    (someone who has left no longer counts)."""
+    members = list(project.get("members") or [])
+    marked = project.get("availability") or {}
+    who: Dict[str, List[str]] = {}
+    for uid in members:
+        for key in marked.get(uid) or []:
+            who.setdefault(key, []).append(roster.get(uid, {}).get("name", "?"))
+    filled = [roster.get(u, {}).get("name", "?") for u in members if marked.get(u)]
+    missing = [roster.get(u, {}).get("name", "?") for u in members if not marked.get(u)]
+    return {"who": who, "filled": filled, "missing": missing, "size": len(members)}
+
+
+def _checkin_view(checkin: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not checkin.get("when"):
+        return None
+    when = checkin["when"]
+    return {"when": _slot_key(when) if isinstance(when, dt.datetime) else str(when),
+            "label": _fmt_when(when) if isinstance(when, dt.datetime) else str(when),
+            "analyst_id": checkin.get("analyst_id"), "analyst_name": checkin.get("analyst_name") or "",
+            "meet_link": checkin.get("meet_link"), "message": checkin.get("message") or ""}
+
+
+async def checkin_extras(projects: Dict[str, Dict[str, Any]], uid: str, editor: bool,
+                         roster: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, Any]]:
+    """Per group, what this viewer may see of week 7: the booked check-in
+    and the group's availability for its members and for Analysts, the
+    viewer's own marks, and the Analysts' notes for Analysts alone."""
+    notes: Dict[str, List[Dict[str, Any]]] = {}
+    if editor and projects:
+        refs = [db_module.db.collection(NOTES).document(pid) for pid in projects]
+        async for snap in db_module.db.get_all(refs):
+            if snap.exists:
+                notes[snap.id] = list((snap.to_dict() or {}).get("notes") or [])
+    out: Dict[str, Dict[str, Any]] = {}
+    for pid, p in projects.items():
+        is_member = uid in (p.get("members") or [])
+        if not (is_member or editor):
+            continue
+        extra: Dict[str, Any] = {"booked": _checkin_view(p.get("checkin") or {}),
+                                 "availability": _availability_view(p, roster)}
+        if is_member:
+            extra["mine"] = list((p.get("availability") or {}).get(uid) or [])
+        if editor:
+            extra["notes"] = [{**n, "at": _iso(n.get("at"))} for n in notes.get(pid, [])]
+        out[pid] = extra
+    return out
+
+
+_analysts_cache: Dict[int, tuple] = {}
+
+
+async def _list_reviewers() -> List[Dict[str, str]]:
+    """The Analysts (and admins) who can take a check-in, with an email to
+    invite: two small queries, kept five minutes, not a scan of every account."""
+    key, now = id(db_module.db), time.monotonic()
+    hit = _analysts_cache.get(key)
+    if hit and now - hit[0] < BOOTCAMP_SECONDS:
+        return hit[1]
+    users = db_module.db.collection("users")
+    fields = ["full_name", "username", "email", "membership", "track", "is_admin"]
+    found: Dict[str, Dict[str, Any]] = {}
+    for q in (users.where(filter=FieldFilter("membership", "in", sorted(mb.ANALYST_MEMBERSHIPS))),
+              users.where(filter=FieldFilter("is_admin", "==", True))):
+        for d in await q.select(fields).get():
+            found[d.id] = d.to_dict() or {}
+    out = [{"id": uid, "name": (u.get("full_name") or "").strip() or u.get("username") or uid, "email": u["email"]}
+           for uid, u in found.items()
+           if u.get("email") and (u.get("is_admin") or mb.membership_of(u) in mb.ANALYST_MEMBERSHIPS)]
+    out.sort(key=lambda a: a["name"].lower())
+    _analysts_cache[key] = (now, out)
+    return out
+
+
+class AvailabilityIn(BaseModel):
+    slots: List[str]
+
+
+@router.put("/projects/{project_id}/availability")
+async def set_availability(project_id: str, req: AvailabilityIn, user: User = Depends(require_member)):
+    """A member's own free slots in week 7, for their own group."""
+    uid = str(user.id)
+    if len(req.slots) > 7 * 24 * 2:
+        raise HTTPException(400, "Too many slots")
+    try:
+        keys = sorted({_slot_key(checkin_slot(s)) for s in req.slots})
+    except ValueError as exc:
+        raise HTTPException(400, f"That isn't a week-7 slot ({exc})")
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if uid not in (project.get("members") or []):
+            raise HTTPException(403, "You can only mark your availability for your own group")
+        availability = dict(project.get("availability") or {})
+        availability[uid] = keys
+        await ref.update({"availability": availability})
+    return {"ok": True, "slots": keys}
+
+
+class CheckinIn(BaseModel):
+    when: str
+    analyst_id: str
+    message: str = ""
+
+
+async def _drop_calendar_event(checkin: Dict[str, Any]) -> None:
+    if checkin.get("gcal_event_id"):
+        try:
+            await gcal.delete_event(checkin["gcal_event_id"])
+        except Exception:
+            pass                            # best effort: the booking itself matters more
+
+
+async def _group_addresses(project: Dict[str, Any]) -> List[Tuple[str, List[str]]]:
+    """Each member's name and the addresses they hear from us at."""
+    roster = await _bootcamp()
+    return [(roster[u]["name"], [a.strip() for a in roster[u]["to"].split(",") if a.strip()])
+            for u in project.get("members") or [] if u in roster and roster[u]["to"]]
+
+
+def _checkin_ics(project: Dict[str, Any], checkin: Dict[str, Any], people: List[Tuple[str, List[str]]]) -> bytes:
+    when = checkin["when"]
+    end = when + dt.timedelta(minutes=CHECKIN_MINUTES)
+    guests = [(name, addrs[0]) for name, addrs in people] + [(checkin["analyst_name"], checkin["analyst_email"])]
+    first, more = guests[0], guests[1:]
+    common = dict(summary=f"Bootcamp check-in: {project.get('name') or 'your group'}",
+                  description=f"Week 7 group check-in with {checkin['analyst_name']}."
+                              + (f"\nJoin with Google Meet: {checkin['meet_link']}" if checkin.get("meet_link") else ""),
+                  start=when, end=end, attendee_name=first[0], attendee_email=first[1],
+                  more_attendees=more, location=checkin.get("meet_link") or "Online, details to follow")
+    if checkin.get("gcal_ical_uid") and checkin.get("gcal_organizer"):
+        return mailer.build_ics_invite(uid=checkin["gcal_ical_uid"], uid_domain=None, organizer_name="Alpha Fund",
+                                       organizer_email=checkin["gcal_organizer"],
+                                       sequence=checkin.get("gcal_sequence") or 0, **common)
+    return mailer.build_ics_invite(uid=f"checkin-{_slot_key(when)}-{uuid.uuid4().hex[:8]}", method="PUBLISH",
+                                   organizer_name="Alpha Fund", organizer_email="admin@alphabook.uk", **common)
+
+
+async def _email_group(project: Dict[str, Any], checkin: Dict[str, Any], *, subject: str, title: str,
+                       intro: str, ics: Optional[bytes]) -> bool:
+    """One email to the whole group with the Analyst copied: a shared thread,
+    so a reply-all reaches everyone if anything needs to change."""
+    people = await _group_addresses(project)
+    to = ", ".join(a for _, addrs in people for a in addrs)
+    analyst_email = checkin.get("analyst_email") or ""
+    if not to and not analyst_email:
+        return False
+    names = ", ".join(html.escape(n) for n, _ in people) or "everyone"
+    analyst = html.escape(checkin.get("analyst_name") or "an Analyst")
+    note = (f'<p style="color:#555;">A note from {analyst}: &ldquo;{html.escape(checkin["message"])}&rdquo;</p>'
+            if checkin.get("message") else "")
+    body = (f"<p>Hi {names},</p><p>{intro}</p>{_meet_block(checkin)}"
+            f"<p><strong>Group:</strong> {html.escape(project.get('name') or '')}<br>"
+            f"<strong>With:</strong> {analyst}"
+            + (f', <a href="mailto:{html.escape(analyst_email)}">{html.escape(analyst_email)}</a>' if analyst_email else "")
+            + f"</p>{note}<p>If anything needs to change, reply all to this email.</p>")
+    return await mailer.send_email(to=to or analyst_email, cc=analyst_email if to else None, subject=subject,
+                                   title=title, body_html=body, ics=ics,
+                                   cta_label="Open the Bootcamp page", cta_url=f"{BASE_URL}/bootcamp#projects")
+
+
+@router.post("/projects/{project_id}/checkin")
+async def book_checkin(project_id: str, req: CheckinIn, user: User = Depends(require_editor)):
+    """Book (or move) a group's 30-minute week-7 check-in with one Analyst.
+    Invites go to every member and the Analyst; booking again replaces the
+    old time, and the old calendar event goes."""
+    try:
+        when = checkin_slot(req.when)
+    except ValueError as exc:
+        raise HTTPException(400, f"Pick a week-7 slot ({exc})")
+    analyst = next((a for a in await _list_reviewers() if a["id"] == req.analyst_id), None)
+    if analyst is None:
+        raise HTTPException(400, "Choose an Analyst with an email on file")
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        if not project.get("members"):
+            raise HTTPException(400, "There's nobody in this group to meet yet")
+        previous = project.get("checkin") or {}
+        await _drop_calendar_event(previous)
+        people = await _group_addresses(project)
+        created = await gcal.create_meet_event(
+            summary=f"Bootcamp check-in: {project.get('name') or 'group'}",
+            description=f"Week 7 group check-in with {analyst['name']}.",
+            start=when, end=when + dt.timedelta(minutes=CHECKIN_MINUTES),
+            attendee_emails=[a for _, addrs in people for a in addrs] + [analyst["email"]],
+        ) or {}
+        checkin = {"when": when, "analyst_id": analyst["id"], "analyst_name": analyst["name"],
+                   "analyst_email": analyst["email"], "message": (req.message or "").strip()[:1000],
+                   "meet_link": created.get("meet_link"), "gcal_event_id": created.get("event_id"),
+                   "gcal_ical_uid": created.get("ical_uid"), "gcal_organizer": created.get("organizer_email"),
+                   "gcal_sequence": created.get("sequence"),
+                   "booked_by": str(user.id), "booked_at": _now()}
+        await ref.update({"checkin": checkin})
+    moved = previous.get("when") and previous.get("when") != when
+    sent = await _email_group(
+        project, checkin, ics=_checkin_ics(project, checkin, people),
+        subject=f"Bootcamp check-in {'moved to' if moved else 'booked for'} {_fmt_when(when)}",
+        title="Check-in moved" if moved else "Check-in booked",
+        intro=(f"Your group's 30-minute week-7 check-in is "
+               f"{'now' if moved else ''} on <strong>{_fmt_when(when)}</strong>. There's nothing to confirm."
+               + (f" This replaces {_fmt_when(previous['when'])}." if moved else "")))
+    return {"ok": True, "checkin": _checkin_view(checkin), "emailed": sent}
+
+
+@router.delete("/projects/{project_id}/checkin")
+async def cancel_checkin(project_id: str, user: User = Depends(require_editor)):
+    """Call a check-in off: the calendar event goes and the group is told."""
+    async with _projects_lock:
+        ref, project = await _load_project(project_id)
+        checkin = project.get("checkin") or {}
+        if not checkin.get("when"):
+            raise HTTPException(404, "This group has no check-in booked")
+        await _drop_calendar_event(checkin)
+        await ref.update({"checkin": {}})
+    await _email_group(project, checkin, ics=None, subject=f"Bootcamp check-in on {_fmt_when(checkin['when'])} cancelled",
+                       title="Check-in cancelled",
+                       intro=f"Your group's check-in on <strong>{_fmt_when(checkin['when'])}</strong> has been "
+                             f"cancelled. An Analyst will be in touch about a new time.")
+    return {"ok": True}
+
+
+class NoteIn(BaseModel):
+    text: str
+
+
+@router.post("/projects/{project_id}/notes")
+async def add_note(project_id: str, req: NoteIn, user: User = Depends(require_editor)):
+    """A note on a group, for the Analysts only."""
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Write the note")
+    if len(text) > NOTE_MAX:
+        raise HTTPException(400, f"Keep notes under {NOTE_MAX:,} characters")
+    await _load_project(project_id)
+    ref = db_module.db.collection(NOTES).document(project_id)
+    async with _projects_lock:
+        doc = await ref.get()
+        notes = list(((doc.to_dict() or {}).get("notes") or []) if doc.exists else [])
+        note = {"id": uuid.uuid4().hex[:10], "text": text, "by": str(user.id), "by_name": await _name_of(user),
+                "at": _now()}
+        notes.append(note)
+        await ref.set({"notes": notes})
+    return {"ok": True, "note": {**note, "at": _iso(note["at"])}}
+
+
+@router.delete("/projects/{project_id}/notes/{note_id}")
+async def delete_note(project_id: str, note_id: str, user: User = Depends(require_editor)):
+    """Take back a note you wrote."""
+    ref = db_module.db.collection(NOTES).document(project_id)
+    async with _projects_lock:
+        doc = await ref.get()
+        notes = list(((doc.to_dict() or {}).get("notes") or []) if doc.exists else [])
+        mine = next((n for n in notes if n.get("id") == note_id), None)
+        if mine is None:
+            raise HTTPException(404, "No such note")
+        if mine.get("by") != str(user.id) and not user.is_admin:
+            raise HTTPException(403, "Only the Analyst who wrote a note can delete it")
+        await ref.set({"notes": [n for n in notes if n.get("id") != note_id]})
     return {"ok": True}

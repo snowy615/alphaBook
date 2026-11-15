@@ -5099,7 +5099,7 @@ class TestAvailabilityReminder:
         js = Path(ap.__file__).parent.joinpath("static", "availability.js").read_text()
         assert "const WINDOW_END = { y: 2026, m: 10, d: 25 };" in js
         for page in ("apply.html", "applications_admin.html"):
-            assert "availability.js?v=2" in Path(ap.__file__).parent.joinpath("templates", page).read_text()
+            assert "availability.js?v=3" in Path(ap.__file__).parent.joinpath("templates", page).read_text()
 
 
 

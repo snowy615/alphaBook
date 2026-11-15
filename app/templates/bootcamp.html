@@ -154,6 +154,36 @@
     .bc-pj-tools .btn { padding: 3px 10px; font-size: 12.5px; }
     .bc-pj-select { width: auto; padding: 4px 8px; font-size: 13px; max-width: 220px; }
     .bc-pj-add { margin-top: 10px; max-width: 320px; }
+
+    /* Week-7 check-ins: the same grid as the interviews */
+    .aval-wrap { overflow: auto; max-height: 420px; margin: 6px 0 8px; border: 1px solid var(--border); }
+    .aval-grid { border-collapse: separate; border-spacing: 0; table-layout: fixed; font-size: 12px; }
+    .aval-grid th, .aval-grid td { border: 1px solid var(--border); padding: 0; text-align: center; width: 46px; }
+    .aval-grid thead th { padding: 8px 2px; font-weight: 600; color: var(--muted); font-size: 11px; white-space: nowrap;
+                          background: var(--bg); position: sticky; top: 0; z-index: 1; }
+    .aval-daylabel { width: 96px !important; padding: 0 10px !important; text-align: left !important; white-space: nowrap;
+                     font-weight: 600; font-size: 12.5px; background: var(--bg); position: sticky; left: 0; z-index: 2; }
+    .aval-cell-btn { width: 100%; height: 30px; border: none; background: var(--panel); cursor: pointer; display: block;
+                     padding: 0; margin: 0; font: inherit; font-size: 11px; font-weight: 700; color: var(--text); }
+    .aval-cell-btn:hover { outline: 2px solid var(--brand); outline-offset: -2px; }
+    .aval-cell-btn.is-selected { background: var(--green); color: #04130c; }
+    .aval-cell-btn.is-all { box-shadow: inset 0 0 0 2px var(--green); }
+    .aval-cell-btn.is-picked { outline: 3px solid #f5b83d; outline-offset: -3px; }
+    .aval-cell-btn:disabled { cursor: default; }
+    .bc-w7 { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 10px; }
+    .bc-w7-booked { padding: 10px 12px; border: 1px solid var(--green); background: rgba(53, 201, 139, .08); font-size: 14px; }
+    .bc-w7-booked a { color: var(--brand); }
+    .bc-w7-key { font-size: 12px; color: var(--muted); }
+    .bc-w7-book { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+    .bc-w7-book .msp-input { width: auto; padding: 6px 8px; font-size: 13px; }
+    .bc-w7-book input.msp-input { flex: 1 1 200px; }
+    .bc-notes { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 8px; }
+    .bc-note { font-size: 13.5px; padding: 6px 0; border-bottom: 1px solid var(--border); white-space: pre-wrap; }
+    .bc-note:last-child { border-bottom: 0; }
+    .bc-note .bc-meta { display: block; margin-top: 2px; }
+    .bc-checkins td, .bc-checkins th { padding: 7px 8px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13.5px; }
+    .bc-checkins th { font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+    .bc-checkins tr.is-mine td { background: var(--brand-wash); }
   </style>
 </head>
 
@@ -231,7 +261,8 @@
     </div>
   </div>
 
-  <script src="/static/bootcamp.js?v=9"></script>
+  <script src="/static/availability.js?v=3"></script>
+  <script src="/static/bootcamp.js?v=10"></script>
 </body>
 
 </html>
