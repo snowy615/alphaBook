@@ -1044,3 +1044,40 @@ class TestSubmissions:
         pid = _start()["id"]
         run(bc.add_submission_file(pid, _upload("report.pdf"), CAMPER))
         assert run(bc.leave_project(pid, CAMPER))["removed"] and campers.bucket.blobs == {}
+
+
+# ── Mini-project presentation slots ─────────────────────────────────────────
+
+class TestPresentations:
+    def test_the_slots(self):
+        slots = bc.presentation_slots()
+        assert len(slots) == 18 and slots[0]["key"] == "2026-12-02T17:00" and slots[-1]["time"] == "19:40–20:00"
+        assert {s["venue"] for s in slots[:9]} == {"Exeter College"} and {s["venue"] for s in slots[9:]} == {"Pembroke College"}
+
+    def test_any_member_books_moves_and_frees_one_slot(self, group):
+        run(bc.book_presentation(group, bc.PresentationIn(slot="2026-12-02T17:00"), CAMPER))
+        run(bc.book_presentation(group, bc.PresentationIn(slot="2026-12-03T18:20"), BEN))     # moves, still one
+        mine = next(p for p in _projects(CAMPER)["projects"] if p["id"] == group)
+        assert mine["presentation"] == "2026-12-03T18:20"
+        sched = _projects(CY)["presentations"]                               # everyone sees what's taken
+        taken = [s for s in sched["slots"] if s.get("taken")]
+        assert [s["key"] for s in taken] == ["2026-12-03T18:20"] and taken[0]["taken"]["group_name"] == "Group 1"
+        run(bc.cancel_presentation(group, CAMPER))
+        assert not any(s.get("taken") for s in _projects(CY)["presentations"]["slots"])
+
+    def test_one_group_per_slot_and_only_members_or_analysts(self, group, campers):
+        other = run(bc.create_group(bc.ProjectIn(name="Group 2"), ANALYST))["id"]
+        run(bc.assign_member(other, bc.AssignIn(uid="bc3"), ANALYST))
+        run(bc.book_presentation(group, bc.PresentationIn(slot="2026-12-02T17:20"), CAMPER))
+        with pytest.raises(HTTPException) as exc:
+            run(bc.book_presentation(other, bc.PresentationIn(slot="2026-12-02T17:20"), CY))
+        assert exc.value.status_code == 409
+        with pytest.raises(HTTPException) as exc:
+            run(bc.book_presentation(group, bc.PresentationIn(slot="2026-12-02T17:40"), CY))   # not her group
+        assert exc.value.status_code == 403
+        with pytest.raises(HTTPException):
+            run(bc.book_presentation(group, bc.PresentationIn(slot="2026-12-02T16:40"), CAMPER))  # not a slot
+        run(bc.book_presentation(other, bc.PresentationIn(slot="2026-12-02T17:40"), ANALYST))     # Analysts can
+        run(bc.cancel_presentation(group, ANALYST))
+        sched = _projects(ANALYST)["presentations"]
+        assert sched["booked"] == 1 and sched["unbooked"] == ["Group 1"]

@@ -182,6 +182,15 @@
     .bc-note:last-child { border-bottom: 0; }
     .bc-sub textarea.msp-input { display: block; width: 100%; box-sizing: border-box; margin: 8px 0 0; font-size: 13.5px; font-family: inherit; }
     .bc-sub .bc-file a { font-weight: 600; }
+    .bc-pres-days { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 22px; margin-top: 8px; }
+    .bc-pres-slot { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; min-height: 34px; }
+    .bc-pres-slot:last-child { border-bottom: 0; }
+    .bc-pres-time { font-variant-numeric: tabular-nums; font-weight: 600; flex: none; width: 92px; }
+    .bc-pres-who { flex: 1; overflow-wrap: anywhere; }
+    .bc-pres-slot .btn { padding: 3px 10px; font-size: 12.5px; flex: none; }
+    .bc-pres-slot.is-taken .bc-pres-who { color: var(--muted); }
+    .bc-pres-slot.is-ours { background: var(--brand-wash); padding-left: 6px; padding-right: 6px; }
+    .bc-pres-slot.is-ours .bc-pres-who { font-weight: 700; }
     .bc-mail .msp-input { display: block; width: 100%; box-sizing: border-box; margin: 6px 0; font-size: 13.5px; font-family: inherit; }
     .bc-mail-to { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 13.5px; }
     .bc-mail-to label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
@@ -269,7 +278,7 @@
   </div>
 
   <script src="/static/availability.js?v=3"></script>
-  <script src="/static/bootcamp.js?v=12"></script>
+  <script src="/static/bootcamp.js?v=13"></script>
 </body>
 
 </html>

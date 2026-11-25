@@ -811,6 +811,7 @@ async def list_projects(user: User = Depends(require_reader)):
         }
         if uid in members or access == ACCESS_EDITOR:
             view["submission"] = _submission_view(p, uid in members)
+        view["presentation"] = (p.get("presentation") or {}).get("slot")
         if manages:
             view["code"] = p.get("code")
             view["requests"] = [{**who(u), "at": _iso(r.get("at"))} for u, r in (p.get("requests") or {}).items()]
@@ -829,7 +830,8 @@ async def list_projects(user: User = Depends(require_reader)):
             "in_project": any(v["is_member"] for v in out), "undecided": undecided, "me": uid,
             "analysts": [{"id": a["id"], "name": a["name"]} for a in await _list_reviewers()] if editor else [],
             "week7": {"first_day": CHECKIN_FIRST_DAY.isoformat(), "last_day": CHECKIN_LAST_DAY.isoformat(),
-                      "minutes": CHECKIN_MINUTES}}
+                      "minutes": CHECKIN_MINUTES},
+            "presentations": _presentation_schedule(projects, editor)}
 
 
 class ProjectIn(BaseModel):
@@ -1556,3 +1558,87 @@ async def view_submission_file(project_id: str, file_id: str, user: User = Depen
         src = f"{BASE_URL}/bootcamp/shared/{token}/{quote(entry.get('name') or 'file')}"
         return RedirectResponse(OFFICE_VIEWER + quote(src, safe=""), status_code=303)
     raise HTTPException(400, "That file can't be opened in the browser: download it instead")
+
+
+# ── Mini-project presentation slots ─────────────────────────────────────────
+# Twenty-minute slots on two evenings. Each group books one, and any member of
+# the group can book, move or cancel it; Analysts can do it for any group.
+# Everyone in the Bootcamp sees which slots are taken, by which group. The
+# booking lives on the group's document; the one-instance lock keeps two
+# groups from taking the same slot at once.
+PRESENTATION_DAYS = ((dt.date(2026, 12, 2), "Exeter College"), (dt.date(2026, 12, 3), "Pembroke College"))
+PRESENTATION_START = dt.time(17, 0)
+PRESENTATION_END = dt.time(20, 0)
+PRESENTATION_MINUTES = 20
+
+
+def presentation_slots() -> List[Dict[str, str]]:
+    """Every slot, in order: key (London time, "2026-12-02T17:00"), day, venue, times."""
+    out = []
+    for day, venue in PRESENTATION_DAYS:
+        t = dt.datetime.combine(day, PRESENTATION_START)
+        end = dt.datetime.combine(day, PRESENTATION_END)
+        while t + dt.timedelta(minutes=PRESENTATION_MINUTES) <= end:
+            stop = t + dt.timedelta(minutes=PRESENTATION_MINUTES)
+            out.append({"key": t.strftime("%Y-%m-%dT%H:%M"), "day": day.isoformat(),
+                        "day_label": f"{day.strftime('%A')} {day.day} {day.strftime('%B')}", "venue": venue,
+                        "time": f"{t.strftime('%H:%M')}–{stop.strftime('%H:%M')}"})
+            t = stop
+    return out
+
+
+_SLOT_KEYS = {s["key"] for s in presentation_slots()}
+
+
+def _presentation_schedule(projects: Dict[str, Dict[str, Any]], editor: bool) -> Dict[str, Any]:
+    taken = {}
+    for pid, p in projects.items():
+        slot = (p.get("presentation") or {}).get("slot")
+        if slot:
+            taken[slot] = {"group_id": pid, "group_name": p.get("name") or "",
+                           "by_name": (p.get("presentation") or {}).get("by_name") or ""}
+    slots = [{**s, **({"taken": taken[s["key"]]} if s["key"] in taken else {})} for s in presentation_slots()]
+    booked = sum(1 for p in projects.values() if (p.get("presentation") or {}).get("slot"))
+    groups = [p for p in projects.values() if p.get("members")]
+    out: Dict[str, Any] = {"slots": slots, "minutes": PRESENTATION_MINUTES, "booked": booked, "groups": len(groups)}
+    if editor:
+        out["unbooked"] = sorted(p.get("name") or "" for p in groups if not (p.get("presentation") or {}).get("slot"))
+    return out
+
+
+async def _group_or_analyst(project_id: str, user: User) -> tuple:
+    ref, project = await _load_project(project_id)
+    if str(user.id) not in (project.get("members") or []) and await access_of(user) != ACCESS_EDITOR:
+        raise HTTPException(403, "Only the group's members or an Analyst can book its slot")
+    return ref, project
+
+
+class PresentationIn(BaseModel):
+    slot: str
+
+
+@router.put("/projects/{project_id}/presentation")
+async def book_presentation(project_id: str, req: PresentationIn, user: User = Depends(require_reader)):
+    """Book (or move) the group's presentation slot."""
+    if req.slot not in _SLOT_KEYS:
+        raise HTTPException(400, "That isn't one of the presentation slots")
+    async with _projects_lock:
+        ref, project = await _group_or_analyst(project_id, user)
+        for pid, other in (await _all_projects()).items():
+            if pid != project_id and (other.get("presentation") or {}).get("slot") == req.slot:
+                raise HTTPException(409, f"{other.get('name') or 'Another group'} has just taken that slot. Pick another.")
+        booking = {"slot": req.slot, "by": str(user.id), "by_name": await _name_of(user), "at": _now()}
+        await ref.update({"presentation": booking})
+    slot = next(s for s in presentation_slots() if s["key"] == req.slot)
+    return {"ok": True, "slot": slot}
+
+
+@router.delete("/projects/{project_id}/presentation")
+async def cancel_presentation(project_id: str, user: User = Depends(require_reader)):
+    """Free the group's slot."""
+    async with _projects_lock:
+        ref, project = await _group_or_analyst(project_id, user)
+        if not (project.get("presentation") or {}).get("slot"):
+            raise HTTPException(400, "This group hasn't booked a slot")
+        await ref.update({"presentation": None})
+    return {"ok": True}

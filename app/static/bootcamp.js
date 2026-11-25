@@ -531,6 +531,54 @@
     </article>`;
   }
 
+  // ── Mini-project presentations ────────────────────────────────────────────
+  // Twenty-minute slots on two evenings; one per group. Members book for their
+  // own group; Analysts choose a group first and can book or free any slot.
+  let presFor = "";                  // Analysts: the group they're booking for
+  function presentationHtml() {
+    const sched = pj.presentations;
+    if (!sched || !sched.slots.length) return "";
+    const mine = pj.projects.find((p) => p.is_member);
+    const target = pj.can_moderate ? pj.projects.find((p) => p.id === presFor) : mine;
+    const days = [];
+    sched.slots.forEach((sl) => {
+      let d = days.find((x) => x.day === sl.day);
+      if (!d) days.push(d = { day: sl.day, label: sl.day_label, venue: sl.venue, slots: [] });
+      d.slots.push(sl);
+    });
+    const myBooked = target && target.presentation;
+    const slotBtn = (sl) => {
+      const t = sl.taken;
+      const ours = t && target && t.group_id === target.id;
+      if (t) {
+        return `<div class="bc-pres-slot${ours ? " is-ours" : " is-taken"}"><span class="bc-pres-time">${esc(sl.time)}</span>
+          <span class="bc-pres-who">${esc(t.group_name)}</span>
+          ${ours || pj.can_moderate ? `<button class="btn ghost" data-pj="pres-cancel" data-id="${esc(t.group_id)}" data-name="${esc(t.group_name)}">Free</button>` : ""}</div>`;
+      }
+      return `<div class="bc-pres-slot"><span class="bc-pres-time">${esc(sl.time)}</span><span class="bc-pres-who msp-muted">free</span>
+        ${target ? `<button class="btn${myBooked ? " ghost" : " primary"}" data-pj="pres-book" data-id="${esc(target.id)}" data-slot="${esc(sl.key)}">${myBooked ? "Move here" : "Book"}</button>` : ""}</div>`;
+    };
+    const intro = pj.can_moderate
+      ? `<div class="bc-w7-book"><select class="msp-input" id="presFor" aria-label="Group to book for">
+           <option value="">Book or move a slot for…</option>${pj.projects.filter((p) => p.members.length).map((p) =>
+             `<option value="${esc(p.id)}"${p.id === presFor ? " selected" : ""}>${esc(p.name)}${p.presentation ? " (booked)" : ""}</option>`).join("")}</select>
+         <span class="bc-meta">${sched.booked} of ${sched.groups} groups booked${(sched.unbooked || []).length ? `. Not yet: ${sched.unbooked.map(esc).join(", ")}` : ""}</span></div>`
+      : mine ? `<p class="bc-hint">One ${sched.minutes}-minute slot per group. Anyone in ${esc(mine.name)} can book, move or free it.
+           ${mine.presentation ? `<strong>Booked: ${esc(slotLabel(mine.presentation))}.</strong>` : "<strong>Not booked yet.</strong>"}</p>`
+      : '<p class="bc-hint">Join a group to book its slot.</p>';
+    return `<div class="card" style="padding:14px 18px;margin-bottom:18px;"><h3 style="margin:0 0 6px;">Mini-project presentations</h3>
+      ${intro}
+      <div class="bc-pres-days">${days.map((d) => `<div class="bc-pres-day"><div class="bc-pj-sub">${esc(d.label)} · ${esc(d.venue)}</div>
+        ${d.slots.map(slotBtn).join("")}</div>`).join("")}</div></div>`;
+  }
+  function slotLabel(key) {
+    const sl = ((pj.presentations || {}).slots || []).find((x) => x.key === key);
+    return sl ? `${sl.day_label}, ${sl.time}, ${sl.venue}` : key;
+  }
+  document.addEventListener("change", (e) => {
+    if (e.target.id === "presFor") { presFor = e.target.value; drawProjects(); }
+  });
+
   // ── Group submissions ─────────────────────────────────────────────────────
   // The group's handed-in work: files and a note. Anyone in the group adds
   // or takes off files and edits the note; Analysts open them; nobody else
@@ -799,7 +847,7 @@
         <input class="msp-input" id="pjGroupName" maxlength="80" placeholder="Group name, e.g. Group 1: Momentum signals" aria-label="Group name">
         <textarea class="msp-input" id="pjGroupDesc" maxlength="2000" placeholder="What the group is working on (optional)" aria-label="Description"></textarea>
         <div class="bc-actions"><button class="btn primary" data-pj="create-group">Create group</button></div></div>` : "";
-    $("#projectsView").innerHTML = `${start}${w7SummaryHtml()}${subSummaryHtml()}${createGroup}${mine.map(myProjectHtml).join("")}
+    $("#projectsView").innerHTML = `${start}${presentationHtml()}${w7SummaryHtml()}${subSummaryHtml()}${createGroup}${mine.map(myProjectHtml).join("")}
       ${others.length ? `<h4 class="evt-section-title" style="font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 10px;">${mine.length ? "Other projects" : pj.can_moderate ? "Groups" : "Projects"}</h4>` : ""}
       ${others.map(pj.can_moderate ? managedProjectHtml : otherProjectHtml).join("")}
       ${!pj.projects.length ? `<p class="bc-empty">No projects yet.${pj.is_member ? " Start the first one above." : ""}</p>` : ""}
@@ -830,6 +878,11 @@
       if (act === "copy") {
         try { await navigator.clipboard.writeText(b.dataset.code); showMsg("Code copied.", true); }
         catch { showMsg(`The code is ${b.dataset.code}`, true); }
+        return;
+      }
+      if (act === "pres-cancel" && !b.dataset.sure) {
+        b.dataset.sure = "1"; b.textContent = `Free ${b.dataset.name}'s slot?`;
+        setTimeout(() => { if (b.isConnected) { delete b.dataset.sure; b.textContent = "Free"; } }, 4000);
         return;
       }
       if (act === "sub-rm" && !b.dataset.sure) {
@@ -873,6 +926,11 @@
       } else if (act === "w7-cancel") {
         if (!b.dataset.sure) { b.dataset.sure = "1"; b.disabled = false; b.textContent = "Sure? The group will be told"; return; }
         await send("DELETE", `/bootcamp/projects/${id}/checkin`); showMsg("Check-in cancelled and the group told.", true);
+      } else if (act === "pres-book") {
+        const r = await send("PUT", `/bootcamp/projects/${id}/presentation`, { slot: b.dataset.slot });
+        showMsg(`Booked: ${r.slot.day_label}, ${r.slot.time}, ${r.slot.venue}.`, true);
+      } else if (act === "pres-cancel") {
+        await send("DELETE", `/bootcamp/projects/${id}/presentation`); showMsg("Slot freed.", true);
       } else if (act === "sub-rm") {
         await send("DELETE", `/bootcamp/projects/${id}/submission/files/${encodeURIComponent(b.dataset.file)}`);
         showMsg(`${b.dataset.name} taken off the submission.`, true);
