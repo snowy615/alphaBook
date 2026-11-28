@@ -121,7 +121,7 @@
         const gone = !p.hand.includes(c);
         const locked = p.locked === c && !gone;
         return `<span class="lbd-mini${gone ? " is-gone" : ""}${locked ? " is-locked" : ""}"
-          title="${gone ? `${c} played` : locked ? `${c} locked this round` : `${c} in hand`}">${c}</span>`;
+          title="${gone ? `${c} played` : locked ? `${c} locked ${state.phase === "result" ? "next" : "this"} round` : `${c} in hand`}">${c}</span>`;
       }).join("")}</span>`;
     }
 
@@ -150,26 +150,47 @@
       const live = state.players.filter((p) => p.status === "active");
       const done = state.players.filter((p) => p.status !== "active");
       const rows = [...live.sort((a, b) => b.score - a.score || b.tokens - a.tokens), ...done];
-      return rows.map((p) => `
+      // In the final, where each player would finish if it ended now.
+      const PLACE = [["lbd-b-prize", "1st · prize"], ["lbd-b-safe", "2nd · safe"], ["lbd-b-out", "3rd · eliminated"]];
+      const place = (p) => {
+        if (!state.final_stage || p.status !== "active" || live.length !== 3) return "";
+        const [cls, text] = PLACE[live.indexOf(p)] || [];
+        return cls ? `<span class="lbd-badge lbd-place ${cls}">${text}</span>` : "";
+      };
+      return rows.map((p) => {
+        const strip = p.status === "active" ? handStrip(p) : '<span class="msp-muted">left the table</span>';
+        return `
         <tr class="${p.is_me ? "is-me" : ""}${p.status !== "active" ? " is-off" : ""}${state.result && state.result.winner_id === p.user_id ? " is-winner" : ""}">
-          <td class="lbd-name">${name(p)} ${badge(p)}<div class="lbd-hand-inline">${handStrip(p)}</div></td>
+          <td class="lbd-name">${name(p)} ${badge(p)} ${place(p)}<div class="lbd-hand-inline">${strip}</div></td>
           <td class="lbd-num">${p.status === "active" ? p.score : "—"}</td>
           <td class="lbd-num">${p.tokens}</td>
           <td class="lbd-pair">${pairCell(p)}</td>
-          <td class="lbd-hand-col">${handStrip(p)}</td>
-        </tr>`).join("");
+          <td class="lbd-hand-col">${strip}</td>
+        </tr>`;
+      }).join("");
     }
 
     function header() {
-      const phaseLabel = { reveal: "Reveal two", play: "Play one", result: "Result" }[state.phase] || "";
-      const cp = state.final_stage
-        ? `Final: rounds 13–${state.rounds}. Top scorer wins the prize, last is eliminated.`
-        : `Checkpoint after round ${state.next_checkpoint}: the top scorer survives.`;
+      const steps = [["reveal", "Reveal two"], ["play", "Play one"], ["result", "Result"]];
+      const left = state.seconds_left, total = state.phase_total || 1;
+      const pct = Math.max(0, Math.min(100, (left / total) * 100));
+      const urgent = state.phase !== "result" && left <= 10;
+      let cp;
+      if (state.final_stage) cp = `The final: after round ${state.rounds} the top scorer wins the prize and last place is eliminated.`;
+      else if (state.is_checkpoint_round) cp = "Checkpoint round: after this round the top scorer survives and leaves.";
+      else cp = `Next checkpoint after round ${state.next_checkpoint}: the top scorer then survives.`;
+      const live = state.players.filter((p) => p.status === "active");
+      const top = live.slice().sort((a, b) => b.score - a.score || b.tokens - a.tokens)[0];
+      const leader = top && top.score > 0 ? ` Leading: <strong>${esc(top.username)}</strong> on ${top.score}.` : "";
       return `<div class="lbd-head card">
-        <div><div class="lbd-round">Round ${state.round} <span>of ${state.rounds}</span></div>
-          <div class="msp-muted">Set ${state.set} of 3 · ${esc(cp)}</div></div>
-        <div class="lbd-clock"><div class="lbd-phase">${phaseLabel}</div>
-          <div class="lbd-secs">${state.seconds_left}<span>s</span></div></div>
+        <div class="lbd-head-main">
+          <div class="lbd-round">Round ${state.round} <span>of ${state.rounds} · set ${state.set} of 3</span></div>
+          <div class="lbd-cp${state.is_checkpoint_round || state.final_stage ? " is-hot" : ""}">${cp}${leader}</div>
+          <ol class="lbd-steps">${steps.map(([k, label], i) =>
+            `<li class="${state.phase === k ? "is-on" : ""}">${i + 1} · ${label}</li>`).join("")}</ol>
+        </div>
+        <div class="lbd-clock${urgent ? " is-urgent" : ""}"><div class="lbd-secs">${left}<span>s</span></div>
+          <div class="lbd-bar"><span style="width:${pct}%"></span></div></div>
       </div>`;
     }
 
@@ -196,7 +217,32 @@
           <strong>${esc(last.username)}</strong> is eliminated${SETTLED[d.elimination] || ""}.</div>`;
       }
       if (r.reset) extra.push("Hands reset: everyone has 1 to 8 again.");
-      return `<div class="lbd-result">${head} <span class="msp-muted">${extra.join(" ")}</span>${banner}</div>`;
+      const me = state.players.find((p) => p.is_me);
+      let mine = "";
+      if (me && me.played) {
+        if (r.winner_id === me.user_id) mine = `Your ${me.played} won the round.`;
+        else if (r.cancelled.includes(me.played)) mine = `Your ${me.played} was matched, so it cancelled out.`;
+        else if (r.value) mine = `Your ${me.played} stood alone, but ${r.value} was lower.`;
+      }
+      return `<div class="lbd-result">${head} <span class="msp-muted">${extra.join(" ")}</span>
+        ${mine ? `<div class="lbd-mine">${mine}</div>` : ""}${banner}</div>`;
+    }
+
+    function previousLine() {
+      const r = state.previous;
+      if (!r) return "";
+      const what = r.winner ? `${esc(r.winner)} won with a lone ${r.value}` : "nobody won (every number was matched)";
+      return `<div class="lbd-prev">Last round: ${what}${r.cancelled.length ? `; ${r.cancelled.join(", ")} cancelled` : ""}.</div>`;
+    }
+
+    // How many of the others showed each number, for the play decision.
+    function shownByOthers() {
+      const counts = {};
+      state.players.forEach((p) => {
+        if (p.is_me || p.status !== "active" || !p.revealed) return;
+        p.revealed.forEach((c) => { counts[c] = (counts[c] || 0) + 1; });
+      });
+      return counts;
     }
 
     function actionPanel() {
@@ -225,7 +271,9 @@
             <span class="lbd-card-sm">${my.revealed[1]}</span>. Waiting for ${waiting} more…</div>`;
         }
         return `<div class="lbd-action">
-          <div class="lbd-prompt">Pick two cards to show the table. You'll play one of them.</div>
+          <div class="lbd-prompt">${my.available.length === 2
+            ? `Only ${my.available[0]} and ${my.available[1]} can be shown this round, so they're picked for you.`
+            : "Pick two cards to show the table. You'll play one of them."}</div>
           <div class="lbd-hand">${CARDS.map((c) => {
             const has = my.hand.includes(c), locked = my.locked === c && has, ok = my.available.includes(c);
             return `<button type="button" class="lbd-card${picked.includes(c) ? " is-picked" : ""}${locked ? " is-locked" : ""}${!has ? " is-gone" : ""}"
@@ -238,9 +286,18 @@
         if (my.played) {
           return `<div class="lbd-action">You played <span class="lbd-card-sm is-played">${my.played}</span>. Waiting for ${waiting} more…</div>`;
         }
+        const shown = shownByOthers();
+        const others = state.players.filter((p) => !p.is_me && p.status === "active").length;
         return `<div class="lbd-action">
-          <div class="lbd-prompt">Everyone's pairs are showing below. Play one of yours: the other is locked next round.</div>
-          <div class="lbd-hand">${(my.revealed || []).map((c) => `<button type="button" class="lbd-card lbd-card-play" data-play="${c}">${c}</button>`).join("")}</div>
+          <div class="lbd-prompt">Play one of your two. The other is locked next round.</div>
+          <div class="lbd-hand">${(my.revealed || []).map((c) => {
+            const n = shown[c] || 0;
+            return `<button type="button" class="lbd-card lbd-card-play" data-play="${c}">${c}
+              <span class="lbd-play-label">Play ${c}</span>
+              <span class="lbd-shown${n ? " is-risky" : ""}">${n ? `${n} other${n === 1 ? "" : "s"} showed ${c}` : "nobody else showed it"}</span></button>`;
+          }).join("")}</div>
+          <div class="lbd-tally">On show from the other ${others}: ${CARDS.filter((c) => shown[c]).map((c) =>
+            `<span class="lbd-tally-item"><strong>${c}</strong>×${shown[c]}</span>`).join("") || "nothing"}</div>
         </div>`;
       }
       return "";
@@ -251,7 +308,9 @@
       return `<div class="lbd-lobby">
         <div class="card msp-panel"><div class="head"><h3>Table</h3><span class="msp-muted">${state.players.length} of ${state.seats} seated</span></div>
           <div class="msp-panel-body">
-            <div class="lbd-code-row"><span class="msp-muted">Join code</span><strong class="lbd-code">${esc(state.join_code)}</strong></div>
+            <div class="lbd-code-row"><span class="msp-muted">Join code</span><strong class="lbd-code">${esc(state.join_code)}</strong>
+              <button class="btn ghost" id="copyCode" type="button">Copy</button></div>
+            <p class="msp-muted" style="margin:0 0 8px;">Friends join at alphabook.uk/lone-bid with this code.</p>
             <ul class="lbd-seats">${state.players.map((p) => `<li>${name(p)}</li>`).join("")}
               ${Array.from({ length: empty }, () => '<li class="msp-muted">empty seat: a bot takes it</li>').join("")}</ul>
           </div></div>
@@ -265,7 +324,17 @@
           : `<p class="msp-muted">${esc(state.host_name)} will start the game. Empty seats are filled with bots.</p>
              ${state.joined ? '<button class="btn ghost" id="leaveBtn">Give up my seat</button>' : ""}`}
           </div></div>
+        <div class="card msp-panel lbd-howto-wide">${howTo()}</div>
       </div>`;
+    }
+
+    function howTo() {
+      return `<div class="head"><h3>How to win a round</h3></div><div class="msp-panel-body"><ol class="lbd-howto">
+        <li>Pick two cards to show. Everyone's pairs appear at once.</li>
+        <li>Play one of your two. The other can't be shown next round.</li>
+        <li>Numbers played twice or more cancel. The <strong>lowest number left</strong> wins its value in points, plus a token.</li>
+        <li>Top scorer after rounds 3, 6, 9 and 12 survives. Points reset, tokens stay and break ties.</li>
+      </ol></div>`;
     }
 
     function finished() {
@@ -273,13 +342,15 @@
         <tr class="${r.user_id === state.me ? "is-me" : ""}">
           <td>${i + 1}</td><td>${esc(r.username)}${r.user_id === state.me ? ' <span class="lbd-you">you</span>' : ""}</td>
           <td><span class="lbd-badge ${(STATUS[r.status] || [""])[0]}">${esc(r.label)}${r.status === "survived" ? ` · round ${r.out_round}` : ""}</span></td>
-          <td class="lbd-num">${r.rounds_won}</td><td class="lbd-num">${r.tokens}</td></tr>`).join("");
+          <td class="lbd-num">${r.rounds_won}</td><td class="lbd-num">${r.points_total}</td></tr>`).join("");
       return `<div class="card msp-panel"><div class="head"><h3>Game over</h3></div>
         <div class="msp-panel-body"><div class="lbd-scroll"><table class="msp-table lbd-final">
-          <thead><tr><th></th><th>Player</th><th>Outcome</th><th>Rounds won</th><th>Tokens</th></tr></thead>
+          <thead><tr><th></th><th>Player</th><th>Outcome</th><th class="lbd-num">Rounds won (tokens)</th><th class="lbd-num">Points scored</th></tr></thead>
           <tbody>${rows}</tbody></table></div>
           <div id="fbkBox" style="margin-top:14px;"></div>
-          <div style="margin-top:14px;"><a class="btn primary" href="/lone-bid">New table</a></div></div></div>`;
+          <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="btn primary" id="againBtn" type="button">Play again</button>
+            <a class="btn ghost" href="/leaderboard">Leaderboard</a></div></div></div>`;
     }
 
     function sidePanel() {
@@ -287,7 +358,8 @@
         `<li><span class="msp-muted">R${h.round}</span> ${h.winner ? `${esc(h.winner)} · ${h.value}` : '<span class="msp-muted">no winner</span>'}${h.survivor
           ? `<div class="lbd-hist-cp">Checkpoint: ${esc(h.survivor)} survives</div>` : ""}</li>`).join("");
       return `<div class="card msp-panel"><div class="head"><h3>Rounds</h3></div>
-        <div class="msp-panel-body"><ul class="lbd-hist">${hist || '<li class="msp-muted">No rounds yet.</li>'}</ul></div></div>`;
+        <div class="msp-panel-body"><ul class="lbd-hist">${hist || '<li class="msp-muted">No rounds yet.</li>'}</ul></div></div>
+        <div class="card msp-panel">${howTo()}</div>`;
     }
 
     // Only redraw what changed: the clock ticks every second, but rebuilding
@@ -319,11 +391,17 @@
         return;
       }
       put("lbdHead", header());
-      put("lbdMain", `${resultPanel()}${actionPanel()}
+      put("lbdMain", `${resultPanel()}${previousLine()}${actionPanel()}
         <div class="card lbd-scroll"><table class="msp-table lbd-table">
-          <thead><tr><th>Player</th><th>Pts</th><th>Tok</th><th>${state.phase === "reveal" ? "Pair" : "Pair · played"}</th><th class="lbd-hand-col">Hand</th></tr></thead>
+          <thead><tr><th>Player</th><th class="lbd-num"><span class="lbd-long">Points</span><span class="lbd-short">Pts</span></th>
+            <th class="lbd-num"><span class="lbd-long">Tokens</span><span class="lbd-short">Tok</span></th>
+            <th>${state.phase === "reveal" ? "Pair" : "Pair · played"}</th><th class="lbd-hand-col">Cards left</th></tr></thead>
           <tbody>${tableRows()}</tbody></table>
-          <p class="msp-muted lbd-key">Dim cards are gone for this set; the outlined one is locked for this round.</p></div>`);
+          <div class="lbd-key"><span><span class="lbd-card-sm is-won">2</span> won</span>
+            <span><span class="lbd-card-sm is-cancelled">3</span> matched, cancelled</span>
+            <span><span class="lbd-card-sm is-played">5</span> played</span>
+            <span><span class="lbd-mini is-locked">4</span> locked ${state.phase === "result" ? "next" : "this"} round</span>
+            <span><span class="lbd-mini is-gone">6</span> gone this set</span></div></div>`);
       put("lbdSide", sidePanel());
     }
 
@@ -341,6 +419,15 @@
       if (playBtn) { send("play", { card: Number(playBtn.dataset.play) }); return; }
       if (e.target.closest("#revealBtn") && picked.length === 2) { send("reveal", { cards: picked }); return; }
       if (e.target.closest("#startBtn")) { send("start", { bot_level: botLevel }); return; }
+      if (e.target.closest("#copyCode")) {
+        navigator.clipboard.writeText(state.join_code).then(() => flash("Code copied."), () => flash(`The code is ${state.join_code}`));
+        return;
+      }
+      if (e.target.closest("#againBtn")) {
+        api("/lone-bid/create", {}).then((res) => { window.location.href = `/lone-bid/game/${res.game_id}`; },
+                                         (err) => flash(err.message, true));
+        return;
+      }
       if (e.target.closest("#leaveBtn")) {
         api(`/lone-bid/game/${gameId}/leave`, {}).then(() => { window.location.href = "/lone-bid"; }, (err) => flash(err.message, true));
       }

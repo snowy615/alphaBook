@@ -9188,3 +9188,62 @@ body.tut-locked {
   .lbd-head { padding: 12px 14px; }
 }
 .lbd-hist-cp { font-size: 12px; font-weight: 700; color: var(--brand); margin-top: 2px; }
+
+/* Lone Bid: round header with steps and a countdown bar */
+.lbd-head { flex-wrap: nowrap; align-items: flex-start; }
+.lbd-head-main { flex: 1; min-width: 0; }
+.lbd-cp { font-size: 13.5px; color: var(--muted); margin-top: 2px; }
+.lbd-cp.is-hot { color: var(--text); font-weight: 600; }
+.lbd-steps { list-style: none; display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 0; padding: 0; }
+.lbd-steps li { font-size: 11px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--muted);
+  border: 1px solid var(--border); padding: 2px 8px; }
+.lbd-steps li.is-on { color: var(--brand); border-color: var(--brand); background: var(--brand-wash); }
+.lbd-clock { flex: none; min-width: 74px; }
+.lbd-clock.is-urgent .lbd-secs { color: var(--red); }
+.lbd-bar { height: 4px; background: var(--border); margin-top: 6px; }
+.lbd-bar span { display: block; height: 100%; background: var(--brand); transition: width .9s linear; }
+.lbd-clock.is-urgent .lbd-bar span { background: var(--red); }
+
+/* results, the previous round, and your own card */
+.lbd-mine { margin-top: 6px; font-weight: 600; }
+.lbd-prev { font-size: 13px; color: var(--muted); padding: 0 2px; }
+
+/* the play step */
+.lbd-card-play { width: auto; min-width: 128px; height: auto; padding: 10px 12px 9px; display: flex; flex-direction: column;
+  align-items: center; gap: 3px; font-size: 34px; line-height: 1.1; }
+.lbd-play-label { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--brand); }
+.lbd-shown { font-size: 11.5px; font-weight: 600; color: var(--green); }
+.lbd-shown.is-risky { color: var(--red); }
+.lbd-tally { font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.lbd-tally-item strong { color: var(--text); }
+
+/* table headers and colour key */
+.lbd-short { display: none; }
+.lbd-key { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; font-size: 12px; color: var(--muted); margin: 8px 12px 12px; }
+.lbd-key > span { display: inline-flex; align-items: center; gap: 5px; }
+.lbd-key .lbd-card-sm { margin-right: 0; }
+
+/* how-to card */
+.lbd-howto { margin: 0; padding-left: 18px; font-size: 13.5px; line-height: 1.55; }
+.lbd-howto li + li { margin-top: 4px; }
+.lbd-howto-wide { grid-column: 1 / -1; }
+
+@media (max-width: 600px) {
+  .lbd-long { display: none; }
+  .lbd-short { display: inline; }
+  .lbd-hand { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 5px; }
+  .lbd-hand .lbd-card { width: auto; height: 54px; font-size: 19px; }
+  .lbd-hand .lbd-card-play { grid-column: span 4; height: auto; font-size: 30px; min-width: 0; }
+  .lbd-lock { font-size: 7.5px; }
+  .lbd-round span { display: block; font-size: 12.5px; }
+  .lbd-secs { font-size: 24px; }
+}
+.lbd-example { border-left: 3px solid var(--brand); background: var(--brand-wash); padding: 10px 14px; margin: 10px 0 4px; font-size: 14px; }
+.lbd-lobby { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 700px) { .lbd-lobby { grid-template-columns: minmax(0, 1fr); } }
+.lbd-key .lbd-mini.is-gone { opacity: .35; }
+@media (max-width: 600px) {
+  .lbd-steps { gap: 4px; flex-wrap: nowrap; }
+  .lbd-steps li { font-size: 9.5px; padding: 2px 5px; letter-spacing: .02em; white-space: nowrap; }
+}
+.lbd-place { opacity: .85; }

@@ -535,6 +535,17 @@ def _seconds_left(game: dict) -> int:
     return max(0, math.ceil((deadline - _now()).total_seconds())) if deadline else 0
 
 
+def _phase_total(game: dict) -> int:
+    """How long the current step lasts in all, for the countdown bar."""
+    phase = game.get("phase")
+    if phase == "reveal":
+        return REVEAL_SECONDS
+    if phase == "play":
+        return PLAY_SECONDS
+    last = game.get("last") or {}
+    return CHECKPOINT_SECONDS if (last.get("checkpoint") or last.get("final")) else RESULT_SECONDS
+
+
 def _public_player(game: dict, p: dict, viewer: str) -> Dict[str, Any]:
     phase = game.get("phase")
     uid = p["user_id"]
@@ -564,7 +575,8 @@ def state_view(game: dict, game_id: str, user: User) -> Dict[str, Any]:
         "game_id": game_id, "status": game.get("status"), "join_code": game.get("join_code", ""),
         "is_host": game.get("created_by") == uid or user.is_admin, "joined": me is not None,
         "me": uid, "seats": SEATS, "round": rnd, "rounds": ROUNDS, "set": set_of(rnd),
-        "phase": game.get("phase"), "seconds_left": _seconds_left(game),
+        "phase": game.get("phase"), "seconds_left": _seconds_left(game), "phase_total": _phase_total(game),
+        "is_checkpoint_round": rnd in CHECKPOINTS, "is_reset_round": rnd in RESETS,
         "checkpoints": list(CHECKPOINTS), "resets": list(RESETS),
         "next_checkpoint": next_checkpoint(rnd) if rnd else CHECKPOINTS[0],
         "final_stage": rnd > CHECKPOINTS[-1],
@@ -581,6 +593,13 @@ def state_view(game: dict, game_id: str, user: User) -> Dict[str, Any]:
         out["my"] = {"status": me.get("status"), "available": available(me) if me.get("status") == "active" else [],
                      "locked": me.get("locked"), "hand": sorted(me.get("hand") or []),
                      "revealed": (game.get("reveals") or {}).get(uid), "played": (game.get("plays") or {}).get(uid)}
+    if game.get("phase") in ("reveal", "play") and game.get("last"):
+        # What just happened stays on screen through the next round.
+        last = game["last"]
+        out["previous"] = {"round": last["round"], "value": last.get("value"),
+                           "winner": (player(game, last["winner"]) or {}).get("username") if last.get("winner") else None,
+                           "cancelled": last.get("cancelled") or [],
+                           "mine": (last.get("plays") or {}).get(uid)}
     if game.get("phase") in ("result", "done") and game.get("last"):
         last = game["last"]
         names = {p["user_id"]: p["username"] for p in players(game)}
