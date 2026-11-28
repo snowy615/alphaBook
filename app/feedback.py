@@ -685,7 +685,61 @@ def _dark_pool(p: Dict[str, Any]) -> Dict[str, Any]:
     return _fb(headline, grade, stats, notes)
 
 
+def _lone_bid(p: Dict[str, Any]) -> Dict[str, Any]:
+    outcome = p.get("outcome") or "eliminated"
+    played = int(p.get("rounds_played", 0)) or 1
+    won = int(p.get("rounds_won", 0))
+    cancelled = int(p.get("cancelled", 0))
+    tokens = int(p.get("tokens", 0))
+    out_round = p.get("out_round")
+
+    if outcome == "winner":
+        grade, headline = "great", "You won the final and took the prize."
+    elif outcome == "survived":
+        grade = "great" if (out_round or 99) <= 6 else "good"
+        headline = f"You topped the checkpoint after round {out_round} and walked out safe."
+    elif outcome == "runner_up":
+        grade, headline = "good", "Second in the final: you survive, but the prize got away."
+    else:
+        grade, headline = "poor", "Last in the final, so you're eliminated."
+
+    stats = [
+        {"label": "Rounds won", "value": f"{won} of {played}"},
+        {"label": "Tokens", "value": str(tokens)},
+        {"label": "Points scored", "value": str(int(p.get("points_total", 0)))},
+        {"label": "Cancelled", "value": str(cancelled)},
+    ]
+
+    notes: List[Note] = []
+    if won and int(p.get("best_win", 0)) >= 5:
+        notes.append({"kind": "win", "text":
+                      f"You won a round with a {int(p['best_win'])}. A high lone card is worth far more than "
+                      "a 1, and it wins whenever the low cards cancel each other out."})
+    elif won:
+        notes.append({"kind": "win", "text":
+                      "You found the lone low card. Wins are worth their face value, so the same "
+                      "read on a higher card pays more."})
+    if cancelled >= max(3, played // 3):
+        notes.append({"kind": "gap", "text":
+                      f"Your card was matched and cancelled {cancelled} times. Before you play, count how many "
+                      "others revealed each of your two numbers: a number shown by two or more people "
+                      "is likely to be doubled."})
+    if not won:
+        notes.append({"kind": "gap", "text":
+                      "You never had the lowest lone card. When everyone fights over 1s and 2s they "
+                      "cancel, which is when a 3 or 4 quietly wins."})
+    notes.append({"kind": "tip", "text":
+                  "Everyone can see what's left in every hand and which card each player has locked. "
+                  "Use it: a player with no low cards left can't undercut you."})
+    if outcome in ("runner_up", "eliminated"):
+        notes.append({"kind": "tip", "text":
+                      "Only the top scorer survives each checkpoint, so near one it pays to take a risk "
+                      "on a bigger card rather than collect small wins."})
+    return _fb(headline, grade, stats, notes)
+
+
 ANALYSERS: Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]] = {
+    "lone_bid": _lone_bid,
     "toxic_flow": _toxic_flow,
     "crash_ledger": _crash_ledger,
     "mental_math": _mental_math,

@@ -144,6 +144,14 @@ MODES: Dict[str, Dict[str, Any]] = {
         "kind": "per_game",
         "blurb": "Bluffing where every claim is collateralised.",
     },
+    "lone_bid": {
+        "label": "Lone Bid",
+        "metric": "Survival score",
+        "unit": "",
+        "href": "/lone-bid",
+        "kind": "per_game",
+        "blurb": "Lowest unique number wins; the top scorer at each checkpoint survives.",
+    },
     "dark_pool": {
         "label": "Dark Pool",
         "metric": "Final capital",

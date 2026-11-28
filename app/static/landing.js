@@ -105,6 +105,15 @@
         mode: "toxic_flow",
       },
       {
+        icon: ICON.cards,
+        name: "Lone Bid",
+        blurb: "Cards 1 to 8: show two, play one, and the lowest number nobody else played wins. " +
+               "Only the top scorer survives each checkpoint. Bots fill empty seats.",
+        chips: ["7 players", "Game theory", "18 rounds"],
+        href: "/lone-bid",
+        mode: "lone_bid",
+      },
+      {
         icon: ICON.pool,
         name: "Dark Pool",
         blurb: "Hidden tiles, staged reveals, real bets — but every time you actually face a bet, " +

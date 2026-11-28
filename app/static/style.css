@@ -9102,3 +9102,89 @@ body.tut-locked {
 .lbx-strategy { font-size: 12.5px; line-height: 1.5; color: var(--muted); }
 .lbx-strategy strong { color: var(--text); }
 .lbx-skill { font-weight: 700; font-variant-numeric: tabular-nums; }
+
+/* ── Lone Bid ────────────────────────────────────────────────────────────────
+   The round clock on top; your hand and the round's result above the table of
+   players, whose pairs, plays and remaining cards are all public. */
+
+.lbd-page { padding-bottom: 40px; }
+.lbd-loading { padding: 60px; text-align: center; color: var(--muted); }
+
+.lbd-head { display: flex; justify-content: space-between; align-items: center; gap: 14px;
+  padding: 14px 18px; margin-bottom: 14px; flex-wrap: wrap; }
+.lbd-round { font-size: 22px; font-weight: 700; }
+.lbd-round span { font-size: 14px; color: var(--muted); font-weight: 600; }
+.lbd-clock { text-align: right; }
+.lbd-phase { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--brand); }
+.lbd-secs { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.lbd-secs span { font-size: 14px; color: var(--muted); margin-left: 2px; }
+
+.lbd-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(220px, 280px); gap: 14px; align-items: start; }
+.lbd-main, .lbd-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+@media (max-width: 860px) { .lbd-board { grid-template-columns: minmax(0, 1fr); } }
+
+.lbd-action { border: 1px solid var(--border); background: var(--panel); padding: 14px 16px; }
+.lbd-prompt { font-weight: 600; margin-bottom: 10px; }
+.lbd-hand { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.lbd-card { position: relative; width: 52px; height: 70px; border: 1px solid var(--border-strong); background: var(--raised);
+  color: var(--text); font-size: 24px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; }
+.lbd-card:hover:not(:disabled) { border-color: var(--brand); }
+.lbd-card.is-picked { border-color: var(--brand); background: var(--brand-wash); box-shadow: inset 0 -3px 0 var(--brand); }
+.lbd-card:disabled { cursor: not-allowed; }
+.lbd-card.is-gone { opacity: .25; }
+.lbd-card.is-locked { opacity: .55; border-style: dashed; }
+.lbd-card-play { width: 70px; height: 92px; font-size: 32px; }
+.lbd-lock { position: absolute; left: 0; right: 0; bottom: 4px; font-size: 9px; font-weight: 700; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--muted); }
+
+.lbd-result { border: 1px solid var(--brand); background: var(--brand-wash); padding: 12px 16px; }
+.lbd-banner { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); font-weight: 600; }
+
+.lbd-scroll { overflow-x: auto; }
+.lbd-table td, .lbd-table th { vertical-align: middle; white-space: nowrap; }
+.lbd-table tr.is-me td { background: var(--brand-wash); }
+.lbd-table tr.is-off td { opacity: .6; }
+.lbd-table tr.is-winner td { box-shadow: inset 0 -2px 0 var(--green); }
+.lbd-name { font-weight: 600; }
+.lbd-num { text-align: right; font-variant-numeric: tabular-nums; }
+.lbd-pair { min-width: 70px; }
+.lbd-key { font-size: 12px; margin: 8px 12px 10px; }
+.lbd-you { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--brand);
+  border: 1px solid var(--brand); padding: 0 4px; margin-left: 2px; }
+
+.lbd-card-sm { display: inline-block; min-width: 22px; padding: 2px 5px; margin-right: 3px; text-align: center;
+  border: 1px solid var(--border-strong); font-weight: 700; font-variant-numeric: tabular-nums; }
+.lbd-card-sm.is-played { border-color: var(--brand); color: var(--brand); }
+.lbd-card-sm.is-cancelled { border-color: var(--red); color: var(--red); text-decoration: line-through; }
+.lbd-card-sm.is-won { border-color: var(--green); color: var(--green); background: rgba(53, 201, 139, .12); }
+
+.lbd-strip { display: inline-flex; gap: 2px; }
+.lbd-mini { width: 15px; text-align: center; font-size: 11px; font-weight: 700; border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums; }
+.lbd-mini.is-gone { opacity: .2; }
+.lbd-mini.is-locked { border: 1px dashed var(--brand); color: var(--brand); }
+
+.lbd-badge { font-size: 9.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 5px;
+  margin-left: 4px; border: 1px solid var(--border-strong); color: var(--muted); }
+.lbd-b-ready { color: var(--green); border-color: var(--green); }
+.lbd-b-safe { color: var(--brand); border-color: var(--brand); }
+.lbd-b-prize { color: #e0b33a; border-color: #e0b33a; }
+.lbd-b-out { color: var(--red); border-color: var(--red); }
+
+.lbd-hist { list-style: none; margin: 0; padding: 0; font-size: 13px; max-height: 360px; overflow-y: auto; }
+.lbd-hist li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+
+.lbd-lobby { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; }
+.lbd-code-row { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; }
+.lbd-code { font-size: 24px; letter-spacing: .14em; font-variant-numeric: tabular-nums; }
+.lbd-seats { margin: 0; padding-left: 18px; line-height: 1.9; }
+.lbd-hand-inline { display: none; margin-top: 4px; }
+@media (max-width: 600px) {
+  .lbd-hand-col { display: none; }
+  .lbd-hand-inline { display: block; }
+  .lbd-table td, .lbd-table th { padding: 7px 6px; }
+  .lbd-table td.lbd-name { white-space: normal; }
+  .lbd-card { width: 40px; height: 56px; font-size: 20px; }
+  .lbd-head { padding: 12px 14px; }
+}
+.lbd-hist-cp { font-size: 12px; font-weight: 700; color: var(--brand); margin-top: 2px; }

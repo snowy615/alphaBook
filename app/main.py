@@ -1031,6 +1031,9 @@ app.include_router(crash_ledger.router)
 from app import toxic_flow
 app.include_router(toxic_flow.router)
 
+from app import lone_bid
+app.include_router(lone_bid.router)
+
 from app import dark_pool
 app.include_router(dark_pool.router)
 
